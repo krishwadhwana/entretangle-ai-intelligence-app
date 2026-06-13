@@ -23,6 +23,7 @@ import {
   copyAudienceFrom,
 } from "./audience";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
+import { getFinancialModel } from "./store";
 import {
   isRunCancelledError,
   markRunCancelled,
@@ -93,11 +94,21 @@ async function converge(
     });
     if (!existingReport) {
       await setStatus(emitter, "running", "Writing final business report");
+      // Make economics quantitative if the founder already built a financial
+      // model for this project (else the report stays qualitative).
+      const run = await prisma.run.findUnique({
+        where: { id: runId },
+        select: { projectId: true },
+      });
+      const financials = run?.projectId
+        ? await getFinancialModel(run.projectId)
+        : null;
       const report = await callFinalReport(
         runId,
         profile,
         blocks.map((b) => blockToWire(b, b.conclusions)),
-        aggregate
+        aggregate,
+        financials
       );
       await emitter.emit({ type: "final_report", report });
     }

@@ -6,6 +6,7 @@ import {
   OwnerDashboardSchema,
   type BrandKit,
   type ClientProfile,
+  type FinancialModel,
   type FinancialsSection,
   type InterviewTranscript,
   type OwnerDashboard,
@@ -237,6 +238,22 @@ export async function saveFinancials(
   owner.financials = section;
   await writeOwnerDashboard(id, owner);
   return owner.financials;
+}
+
+/**
+ * The computed financial model the founder built for this project, if any —
+ * used to make the final report's economics quantitative. Returns null when no
+ * project / no model yet (report then stays qualitative).
+ */
+export async function getFinancialModel(
+  projectId: string
+): Promise<FinancialModel | null> {
+  try {
+    const owner = await readOwnerDashboard(projectId);
+    return owner.financials.model;
+  } catch {
+    return null;
+  }
 }
 
 /**

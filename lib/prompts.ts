@@ -6,6 +6,7 @@ import type {
   ClientProfile,
   Cohort,
   Conclusion,
+  FinancialModel,
   Persona,
 } from "./schema";
 
@@ -511,9 +512,10 @@ say so and suggest which new team could.
 Output JSON only: {"answer":"...","citedConclusionIds":[...]}`;
 
 export const FINAL_REPORT_SYSTEM = `You are writing the final conclusion report for a completed business-intelligence run.
-You are given the founder profile, the simulated-audience aggregate, and every
-research conclusion with ids and domains. Produce a strategic business analysis,
-not a transcript and not a generic pitch deck.
+You are given the founder profile, the simulated-audience aggregate, every
+research conclusion with ids and domains, and — when the founder has built it —
+a computed FINANCIAL MODEL. Produce a strategic business analysis, not a
+transcript and not a generic pitch deck.
 
 Rules:
 - Be concrete, decision-ready, and commercially honest.
@@ -524,6 +526,19 @@ Rules:
   supportive language, and conversion conditions, not only metrics.
 - Economic viability must discuss pricing, margins, channels, funding fit,
   operations, risks, and what must be validated next.
+- FINANCIAL MODEL: when "financialModel" is present in the input, the "Pricing
+  and economic viability" section MUST be quantitative and lead with its actual
+  numbers — quote the landed cost per unit, the recommended (base) tier's price
+  and gross margin %, estimated units and revenue per month, break-even volume
+  and revenue, runway in months and whether capital funds the MOQ, LTV:CAC, and
+  the TAM/SAM/SOM. Explicitly state the top-down-vs-bottom-up reconciliation
+  (how the simulated buyers' implied revenue compares to the SOM) and what it
+  means for the plan. Let these figures shape the verdict, nextActions and
+  risks (e.g. a funding-fit or break-even risk). Treat the model's
+  reconciliationNote and runway verdict as authoritative. Do NOT invent figures
+  beyond the model; if a number is absent, say what must still be estimated.
+  When "financialModel" is absent, keep economics qualitative as before and note
+  that a full financial model has not yet been built.
 - "How to act" must be a prioritized operating plan.
 - Use these section themes when evidence exists: Market analysis, Product
   analysis, Customer perception, Competitors, Channels and growth, Operations
@@ -533,15 +548,66 @@ Output JSON only:
 "sections":[{"title":"...","summary":"...","bullets":["..."],"citedConclusionIds":["..."]}],
 "nextActions":["..."],"risks":["..."]}`;
 
+// Flatten the nested FinancialModel (FinNum-wrapped) into plain numbers so the
+// report writer gets unambiguous figures, not the provenance machinery.
+export function compactFinancials(model: FinancialModel) {
+  const v = <T extends { value: number } | null>(n: T) =>
+    n ? n.value : null;
+  const landed = model.costStructure.reduce((s, c) => s + c.amount.value, 0);
+  return {
+    currency: model.currency,
+    landedCostPerUnit: landed,
+    // The recommended (base) tier is the one whose contribution equals
+    // breakEven.contributionPerUnit — match on that.
+    recommendedTierContribution: model.breakEven.contributionPerUnit.value,
+    priceTiers: model.priceTiers.map((t) => ({
+      label: t.label,
+      price: t.price.value,
+      grossMarginPct: t.grossMarginPct.value,
+      estUnitsPerMonth: t.estUnitsPerMonth.value,
+      estRevenuePerMonth: t.estRevenuePerMonth.value,
+    })),
+    unitEconomics: {
+      blendedCac: model.unitEconomics.blendedCac.value,
+      ltv: model.unitEconomics.ltv.value,
+      ltvToCac: model.unitEconomics.ltvCacRatio.value,
+    },
+    breakEven: {
+      contributionPerUnit: model.breakEven.contributionPerUnit.value,
+      unitsPerMonth: model.breakEven.breakEvenUnitsPerMonth.value,
+      revenuePerMonth: model.breakEven.breakEvenRevenuePerMonth.value,
+      monthsToBreakEven: v(model.breakEven.monthsToBreakEven),
+    },
+    runwayFit: {
+      capitalAvailable: model.runwayFit.capitalAvailable.value,
+      monthlyBurn: model.runwayFit.monthlyBurn.value,
+      runwayMonths: model.runwayFit.runwayMonths.value,
+      fundsMoq: model.runwayFit.fundsMoq,
+      verdict: model.runwayFit.verdict,
+    },
+    marketSizing: {
+      tam: model.marketSizing.tam.value,
+      sam: model.marketSizing.sam.value,
+      som: model.marketSizing.som.value,
+      bottomUpAnnualRevenue: model.marketSizing.bottomUpAnnualRevenue.value,
+      reconciliationNote: model.marketSizing.reconciliationNote,
+    },
+    dataMaturityPct: model.dataMaturityPct,
+    assumptions: model.assumptions,
+  };
+}
+
 export function finalReportUser(
   profile: ClientProfile,
   blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
-  aggregate: AudienceAggregate | null
+  aggregate: AudienceAggregate | null,
+  financials: FinancialModel | null = null
 ): string {
   return JSON.stringify(
     {
       clientProfile: profile,
       audienceAggregate: aggregate,
+      financialModel: financials ? compactFinancials(financials) : null,
       blocks: blocks.map((b) => ({
         id: b.id,
         name: b.name,
