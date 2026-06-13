@@ -629,6 +629,54 @@ const ROLE_INTENT: Record<string, [number, number]> = {
   distributor: [0.1, 0.65],
   influencer: [0.15, 0.7],
 };
+// Intent must depend on income tier AND locality, not just role — otherwise
+// "intent by segment" and "by locality" come out identical (the same flat
+// average). For a premium product, intent rises with income tier and with how
+// fashion-forward / high-adoption the place is.
+const SEGMENT_INTENT_MULT: Record<string, number> = {
+  budget: 0.55,
+  middle: 0.85,
+  affluent: 1.25,
+  luxury: 1.5,
+};
+// Locality adoption skew: metros and global cities higher, tier-2/3 and towns
+// lower for a premium category. Unknown places fall back to a tier-2/3 level.
+const LOCALITY_INTENT_MULT: Record<string, number> = {
+  Mumbai: 1.2,
+  "Delhi NCR": 1.12,
+  Delhi: 1.12,
+  Bangalore: 1.06,
+  Bengaluru: 1.06,
+  Chennai: 0.98,
+  Kolkata: 0.92,
+  Hyderabad: 1.0,
+  Pune: 1.02,
+  Ahmedabad: 0.9,
+  Jaipur: 0.8,
+  Surat: 0.78,
+  Indore: 0.72,
+  Lucknow: 0.7,
+  Coimbatore: 0.74,
+  Dubai: 1.25,
+  London: 1.08,
+};
+const LOCALITY_WTP_MULT: Record<string, number> = {
+  Mumbai: 1.12,
+  "Delhi NCR": 1.08,
+  Delhi: 1.08,
+  Bangalore: 1.05,
+  Bengaluru: 1.05,
+  Chennai: 1.0,
+  Kolkata: 0.95,
+  Hyderabad: 1.0,
+  Pune: 1.0,
+  Ahmedabad: 0.92,
+  Jaipur: 0.85,
+  Surat: 0.85,
+  Indore: 0.8,
+  Lucknow: 0.8,
+  Coimbatore: 0.82,
+};
 const ROLE_CHANNELS: Record<string, string[]> = {
   consumer: ["d2c website", "department store", "marketplace", "instagram shop", "showroom"],
   retail_exec: ["trade fair", "direct vendor pitch", "showroom"],
@@ -890,10 +938,19 @@ export function mockCohortSim(
   const personas = Array.from({ length: n }, (_, i) => {
     const first = names.first[Math.floor(rng() * names.first.length)];
     const last = names.last[Math.floor(rng() * names.last.length)];
+    // Base draw from the role band, then skewed by income tier AND locality so
+    // intent genuinely differs across segments and cities (not a flat mean).
+    const baseIntent = intLo + Math.pow(rng(), 1.6) * (intHi - intLo);
+    const fit =
+      (SEGMENT_INTENT_MULT[cohort.segment] ?? 1) *
+      (LOCALITY_INTENT_MULT[cohort.locality] ?? 0.7);
     const intent =
-      Math.round((intLo + Math.pow(rng(), 1.6) * (intHi - intLo)) * 100) / 100;
+      Math.round(Math.min(0.97, Math.max(0, baseIntent * fit)) * 100) / 100;
+    const locWtpMult =
+      LOCALITY_WTP_MULT[cohort.locality] ??
+      (cohort.country === "India" ? 0.82 : 1);
     const wtp = Math.round(
-      ((wtpLo + rng() * (wtpHi - wtpLo)) * fx * buyFactor) / 500
+      ((wtpLo + rng() * (wtpHi - wtpLo)) * fx * buyFactor * locWtpMult) / 500
     ) * 500;
     const occupation = occs[Math.floor(rng() * occs.length)];
     const lifeStage = LIFE_STAGES[Math.floor(rng() * LIFE_STAGES.length)];
