@@ -80,9 +80,11 @@ export const RunStatusSchema = z.enum([
   "interviewing",
   "planning",
   "running",
+  "cancelling",
   "complete",
   "failed",
   "capped",
+  "cancelled",
 ]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 

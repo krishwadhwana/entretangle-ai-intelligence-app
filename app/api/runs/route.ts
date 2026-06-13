@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { executeRun } from "@/lib/orchestrator";
+import { enqueueRunJob } from "@/lib/jobs";
 import { ClientProfileSchema, RunModeSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -57,10 +57,7 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  // Fire-and-forget — the SSE stream carries progress to the client.
-  executeRun(run.id).catch((e) =>
-    console.error(`[api] executeRun(${run.id}) crashed:`, e)
-  );
+  const job = await enqueueRunJob(run.id, "execute");
 
-  return NextResponse.json({ runId: run.id }, { status: 201 });
+  return NextResponse.json({ runId: run.id, jobId: job.id }, { status: 201 });
 }

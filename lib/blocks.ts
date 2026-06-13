@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { config } from "./config";
 import { callExecutor } from "./llm";
 import { getCostUsd, getTokensUsed } from "./usage";
+import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import type { RunEmitter } from "./events";
 import type { ClientProfile, Conclusion, ExecutorOutput } from "./schema";
 
@@ -40,6 +41,7 @@ export async function executeBlock(
 ): Promise<boolean> {
   const block = await prisma.block.findUniqueOrThrow({ where: { id: blockId } });
   try {
+    await throwIfRunCancelled(emitter.runId);
     await prisma.block.update({
       where: { id: blockId },
       data: { state: "working" },
@@ -70,8 +72,10 @@ export async function executeBlock(
         groundTruth
       );
     const output = await timeout(producer, config.blockTimeoutMs);
+    await throwIfRunCancelled(emitter.runId);
 
     for (const line of output.logs.slice(streamedCount)) {
+      await throwIfRunCancelled(emitter.runId);
       await emitter.emit({ type: "block_log", blockId, line });
       await sleep(logDelay());
     }
@@ -115,6 +119,7 @@ export async function executeBlock(
     });
     return true;
   } catch (e) {
+    if (isRunCancelledError(e)) throw e;
     const error = e instanceof Error ? e.message : String(e);
     await prisma.block.update({
       where: { id: blockId },

@@ -5,6 +5,7 @@
   "scripts": {
     "predev": "prisma generate",
     "dev": "next dev",
+    "worker": "tsx scripts/run-worker.ts",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
@@ -33,6 +34,7 @@
     "postcss": "^8.4.49",
     "prisma": "^5.22.0",
     "tailwindcss": "^3.4.17",
+    "tsx": "^4.20.5",
     "typescript": "^5.7.0"
   }
 }

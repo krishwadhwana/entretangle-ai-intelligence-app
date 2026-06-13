@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { config } from "./config";
 import { callCohortSim } from "./llm";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
+import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import type { RunEmitter } from "./events";
 import type {
   AudienceAggregate,
@@ -70,6 +71,7 @@ export async function spawnCohorts(
   );
   const ids: string[] = [];
   for (const [i, c] of cohorts.entries()) {
+    await throwIfRunCancelled(emitter.runId);
     const loc = localities.get(c.locality) ?? plan.localities[0];
     const label = `${loc.name} · ${c.segment} · ${c.role.replace("_", " ")}`;
     const row = await prisma.cohort.create({
@@ -134,6 +136,7 @@ export async function copyAudienceFrom(
   let doneCohorts = 0;
   let currency: string | null = null;
   for (const c of cohorts) {
+    await throwIfRunCancelled(emitter.runId);
     const newCohort = await prisma.cohort.create({
       data: {
         runId: emitter.runId,
@@ -158,6 +161,7 @@ export async function copyAudienceFrom(
     if (c.state !== "done") continue;
     const personas = [];
     for (const p of c.personas) {
+      await throwIfRunCancelled(emitter.runId);
       currency = currency ?? p.wtpCurrency;
       personas.push(
         await prisma.persona.create({
@@ -265,6 +269,7 @@ async function simulateCohort(
     where: { id: cohortId },
   });
   try {
+    await throwIfRunCancelled(emitter.runId);
     await prisma.cohort.update({
       where: { id: cohortId },
       data: { state: "simulating" },
@@ -275,6 +280,7 @@ async function simulateCohort(
     let summary = "";
     let idx = 0;
     for (const [batchIndex, n] of batches.entries()) {
+      await throwIfRunCancelled(emitter.runId);
       // Cap-aware mid-cohort: keep whatever batches already landed.
       if (batchIndex > 0 && (await isOverTokenCap(emitter.runId))) break;
       let out;
@@ -298,6 +304,7 @@ async function simulateCohort(
       }
       if (!summary) summary = out.summary;
       for (const p of out.personas) {
+        await throwIfRunCancelled(emitter.runId);
         const row = await prisma.persona.create({
           data: {
             cohortId,
@@ -350,6 +357,7 @@ async function simulateCohort(
     });
     return true;
   } catch (e) {
+    if (isRunCancelledError(e)) throw e;
     const error = e instanceof Error ? e.message : String(e);
     await prisma.cohort.update({
       where: { id: cohortId },
@@ -384,6 +392,7 @@ export async function simulateAllCohorts(
   async function worker(): Promise<void> {
     while (true) {
       if (capped) return;
+      await throwIfRunCancelled(emitter.runId);
       if (await isOverTokenCap(emitter.runId)) {
         if (!capped) {
           capped = true;
@@ -419,6 +428,7 @@ export async function simulateAllCohorts(
 export async function aggregateAudience(
   emitter: RunEmitter
 ): Promise<AudienceAggregate | null> {
+  await throwIfRunCancelled(emitter.runId);
   const cohorts = await prisma.cohort.findMany({
     where: { runId: emitter.runId, state: "done" },
     include: { personas: true },

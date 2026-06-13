@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
-import { enqueueRunJob } from "@/lib/jobs";
+import { requestRunCancellation } from "@/lib/jobs";
 
 export const dynamic = "force-dynamic";
 
-// Continue a stalled / capped / failed run by enqueueing durable worker work.
 export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }
@@ -16,9 +15,7 @@ export async function POST(
   if (!run) {
     return NextResponse.json({ error: "run not found" }, { status: 404 });
   }
-  const job = await enqueueRunJob(params.id, "resume");
-  return NextResponse.json(
-    { ok: true, jobId: job.id, alreadyQueued: job.alreadyQueued },
-    { status: 202 }
-  );
+
+  const result = await requestRunCancellation(params.id);
+  return NextResponse.json({ ok: true, ...result }, { status: 202 });
 }

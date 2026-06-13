@@ -6,7 +6,7 @@ import type { RunEvent } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
-const TERMINAL = new Set(["complete", "failed", "capped"]);
+const TERMINAL = new Set(["complete", "failed", "capped", "cancelled"]);
 
 // SSE: replay all persisted RunEvents in seq order, then live-subscribe.
 // Heartbeat comment every 15s. Reconnect with Last-Event-ID resumes from seq.
@@ -45,6 +45,7 @@ export async function GET(
         if (closed) return;
         closed = true;
         clearInterval(heartbeat);
+        clearInterval(pollPersisted);
         unsubscribe();
         try {
           controller.close();
@@ -61,6 +62,30 @@ export async function GET(
           close();
         }
       }, 15000);
+      let polling = false;
+      const pollPersisted = setInterval(async () => {
+        if (closed || polling) return;
+        polling = true;
+        try {
+          const rows = await prisma.runEvent.findMany({
+            where: { runId, seq: { gt: maxSeq } },
+            orderBy: { seq: "asc" },
+          });
+          for (const row of rows) {
+            const event = JSON.parse(row.payload) as RunEvent;
+            send(event);
+            if (event.type === "run_status" && TERMINAL.has(event.status)) {
+              close();
+              return;
+            }
+          }
+        } catch {
+          // Keep the SSE stream alive; the next poll/reconnect can recover
+          // from the durable event log.
+        } finally {
+          polling = false;
+        }
+      }, 1000);
 
       // Subscribe BEFORE replaying so no live event falls in the gap;
       // `send` dedupes any overlap by seq.

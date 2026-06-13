@@ -16,6 +16,7 @@ import {
   ChevronDown,
   Loader2,
   Play,
+  Square,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
 import PanelStrip from "./PanelStrip";
@@ -248,6 +249,7 @@ export default function RunDashboard({
   // but hasn't emitted an event in a while (a hang). The Continue button
   // re-runs only the unfinished cohorts — no re-paying for the desks.
   const [resuming, setResuming] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [now, setNow] = useState(0);
   useEffect(() => {
     setNow(Date.now());
@@ -266,6 +268,11 @@ export default function RunDashboard({
     !resuming &&
     !replaying &&
     (state.status === "capped" || state.status === "failed" || stale);
+  const cancellable =
+    !cancelling &&
+    (state.status === "connecting" ||
+      state.status === "planning" ||
+      state.status === "running");
 
   const onResume = useCallback(async () => {
     setResuming(true);
@@ -279,6 +286,18 @@ export default function RunDashboard({
       }
     } catch {
       setResuming(false);
+    }
+  }, [runId]);
+
+  const onCancel = useCallback(async () => {
+    if (!window.confirm("Cancel this run? Work already completed will stay saved."))
+      return;
+    setCancelling(true);
+    try {
+      const res = await fetch(`/api/runs/${runId}/cancel`, { method: "POST" });
+      if (!res.ok) setCancelling(false);
+    } catch {
+      setCancelling(false);
     }
   }, [runId]);
 
@@ -329,6 +348,23 @@ export default function RunDashboard({
               <Play className="h-3 w-3" />
             )}
             {resuming ? "Continuing…" : "Continue run"}
+          </button>
+        )}
+        {(cancellable || cancelling || state.status === "cancelling") && (
+          <button
+            onClick={onCancel}
+            disabled={cancelling || state.status === "cancelling"}
+            className="flex items-center gap-1 rounded-lg border border-red-300 px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:border-red-400 disabled:opacity-60"
+            title="Cancel this run before the next expensive step starts"
+          >
+            {cancelling || state.status === "cancelling" ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Square className="h-3 w-3" />
+            )}
+            {cancelling || state.status === "cancelling"
+              ? "Cancelling..."
+              : "Cancel"}
           </button>
         )}
         <button

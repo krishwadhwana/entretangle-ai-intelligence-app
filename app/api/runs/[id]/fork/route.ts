@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { forkRun } from "@/lib/fork";
-import { executeRun } from "@/lib/orchestrator";
+import { enqueueRunJob } from "@/lib/jobs";
 import { BlockParamsSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -27,11 +27,11 @@ export async function POST(
       body.data.blockId,
       body.data.params
     );
-    // Fire-and-forget: re-executes the forked block + downstream.
-    executeRun(newRunId).catch((e) =>
-      console.error(`[api] executeRun(${newRunId}) crashed:`, e)
+    const job = await enqueueRunJob(newRunId, "execute");
+    return NextResponse.json(
+      { runId: newRunId, jobId: job.id },
+      { status: 201 }
     );
-    return NextResponse.json({ runId: newRunId }, { status: 201 });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "fork failed" },

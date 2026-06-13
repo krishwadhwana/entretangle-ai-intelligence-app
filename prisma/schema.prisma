@@ -83,8 +83,36 @@ model Run {
   edges   Edge[]
   events  RunEvent[]
   cohorts Cohort[]
+  jobs    RunJob[]
 
   @@index([projectId])
+}
+
+// Durable execution queue for expensive run work. API routes enqueue jobs;
+// a separate worker process claims them and executes the engine, so Next.js
+// navigation/dev-server restarts do not own long-running simulations.
+model RunJob {
+  id              String    @id @default(cuid())
+  runId           String    @map("run_id")
+  type            String // "execute" | "resume"
+  status          String    @default("queued") // queued|running|succeeded|failed|cancelled
+  priority        Int       @default(0)
+  attempts        Int       @default(0)
+  maxAttempts     Int       @default(1) @map("max_attempts")
+  lockedBy        String?   @map("locked_by")
+  lockedAt        DateTime? @map("locked_at")
+  startedAt       DateTime? @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+  cancelRequested Boolean   @default(false) @map("cancel_requested")
+  error           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([status, priority, createdAt])
+  @@index([runId, status])
+  @@map("run_jobs")
 }
 
 model Block {

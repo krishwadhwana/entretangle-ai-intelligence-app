@@ -22,6 +22,11 @@ import {
   copyAudienceFrom,
 } from "./audience";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
+import {
+  isRunCancelledError,
+  markRunCancelled,
+  throwIfRunCancelled,
+} from "./jobs";
 import { blockToWire, conclusionToWire } from "./wire";
 import {
   appendSimulationRun,
@@ -31,12 +36,16 @@ import {
 import {
   ClientProfileSchema,
   type AudienceAggregate,
-  type Block,
   type ClientProfile,
   type Conclusion,
-  type Edge,
-  type RunStatus,
 } from "./schema";
+import {
+  addEdge,
+  blockCount,
+  concludedBlocks,
+  setStatus,
+  spawnBlock,
+} from "./engine/graph";
 
 // ---------------------------------------------------------------------------
 // The orchestrator is a deterministic state machine; LLM calls fill in
@@ -45,79 +54,6 @@ import {
 // ---------------------------------------------------------------------------
 
 export { blockToWire, conclusionToWire } from "./wire";
-
-async function spawnBlock(
-  emitter: RunEmitter,
-  data: {
-    name: string;
-    mission: string;
-    layer: number;
-    kind: Block["kind"];
-    domain: Block["domain"];
-    inputBlockIds: string[];
-    params: Record<string, number | string>;
-  }
-): Promise<string> {
-  const row = await prisma.block.create({
-    data: {
-      runId: emitter.runId,
-      name: data.name,
-      mission: data.mission,
-      layer: data.layer,
-      kind: data.kind,
-      domain: data.domain,
-      state: "spawning",
-      inputBlockIds: JSON.stringify(data.inputBlockIds),
-      params: JSON.stringify(data.params),
-      logs: JSON.stringify([]),
-    },
-  });
-  await emitter.emit({ type: "block_spawned", block: blockToWire(row) });
-  return row.id;
-}
-
-async function addEdge(
-  emitter: RunEmitter,
-  data: Omit<Edge, "id" | "runId">
-): Promise<void> {
-  const row = await prisma.edge.create({
-    data: { runId: emitter.runId, ...data },
-  });
-  await emitter.emit({
-    type: "edge_added",
-    edge: { id: row.id, runId: emitter.runId, ...data },
-  });
-}
-
-async function setStatus(
-  emitter: RunEmitter,
-  status: RunStatus,
-  phaseLabel: string
-): Promise<void> {
-  await prisma.run.update({
-    where: { id: emitter.runId },
-    data: { status },
-  });
-  await emitter.emit({ type: "run_status", status, phaseLabel });
-}
-
-async function concludedBlocks(runId: string) {
-  const rows = await prisma.block.findMany({
-    where: { runId, state: "concluded" },
-    include: { conclusions: true },
-  });
-  return rows.map((r) => ({
-    id: r.id,
-    name: r.name,
-    domain: r.domain,
-    layer: r.layer,
-    conclusions: r.conclusions.map(conclusionToWire),
-  }));
-}
-
-async function blockCount(runId: string): Promise<number> {
-  return prisma.block.count({ where: { runId } });
-}
 
 /** Mechanical verification of a shared_entity edge (SPEC §4.4). */
 function sharesEntity(
@@ -165,6 +101,7 @@ async function entangleAndConverge(
   let round = 1;
 
   while (true) {
+    await throwIfRunCancelled(runId);
     if (await isOverTokenCap(runId)) {
       console.log(`[orchestrator] run ${runId}: token cap reached, converging`);
       await converge(emitter, true);
@@ -173,6 +110,7 @@ async function entangleAndConverge(
     const count = await blockCount(runId);
     if (layer >= config.maxLayers || count >= config.maxBlocksPerRun) break;
 
+    await throwIfRunCancelled(runId);
     await setStatus(emitter, "running", `Entangling — round ${round}`);
     const concluded = await concludedBlocks(runId);
     if (concluded.length === 0) throw new Error("No blocks concluded");
@@ -251,6 +189,7 @@ async function entangleAndConverge(
     await setStatus(emitter, "running", `Synthesizing — layer ${nextLayer}`);
     const spawned: { id: string; inputBlockIds: string[] }[] = [];
     for (const s of synth) {
+      await throwIfRunCancelled(runId);
       const id = await spawnBlock(emitter, {
         name: s.name,
         mission: s.mission,
@@ -324,6 +263,7 @@ export async function executeRun(runId: string): Promise<void> {
     const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
     const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
     profileForSnapshot = profile;
+    await throwIfRunCancelled(runId);
 
     if (run.parentRunId && run.forkPointBlockId) {
       await executeForkPhase(emitter, profile, run.forkPointBlockId);
@@ -364,6 +304,7 @@ export async function executeRun(runId: string): Promise<void> {
         : "";
 
     // Phase 1 — Plan: research desks + the audience cohort matrix (V2 §4.1)
+    await throwIfRunCancelled(runId);
     await setStatus(
       emitter,
       "planning",
@@ -376,6 +317,7 @@ export async function executeRun(runId: string): Promise<void> {
 
     const deskIds: string[] = [];
     for (const d of desks) {
+      await throwIfRunCancelled(runId);
       deskIds.push(
         await spawnBlock(emitter, {
           name: d.name,
@@ -422,6 +364,7 @@ export async function executeRun(runId: string): Promise<void> {
     // data for the desk's domain (option C), injected into the desk prompt.
     const deskGroundTruth = new Map<string, string>();
     for (const [i, d] of desks.entries()) {
+      await throwIfRunCancelled(runId);
       const parts: string[] = [];
       if (retriever?.hasDocs) {
         const gt = formatGroundTruth(await retriever.search(d.mission, 4));
@@ -438,6 +381,7 @@ export async function executeRun(runId: string): Promise<void> {
     let cohortIds: string[] = [];
     let copiedCohorts = 0;
     if (scoped) {
+      await throwIfRunCancelled(runId);
       await setStatus(
         emitter,
         "running",
@@ -449,6 +393,7 @@ export async function executeRun(runId: string): Promise<void> {
     } else {
       // Calibrate the cohort matrix with real demographics (option A) so
       // cohort SIZES mirror the real market before simulation.
+      await throwIfRunCancelled(runId);
       await setStatus(
         emitter,
         "running",
@@ -500,6 +445,7 @@ export async function executeRun(runId: string): Promise<void> {
       const wave = Math.max(1, config.deskConcurrency);
       let anyConcluded = false;
       for (let i = 0; i < deskIds.length; i += wave) {
+        await throwIfRunCancelled(runId);
         const results = await Promise.allSettled(
           deskIds
             .slice(i, i + wave)
@@ -539,10 +485,12 @@ export async function executeRun(runId: string): Promise<void> {
     // conclusions so it entangles like any desk (V2 §4.3)
     let aggregate: AudienceAggregate | null = null;
     if (cohortsDone > 0) {
+      await throwIfRunCancelled(runId);
       await setStatus(emitter, "running", "Aggregating simulated audience");
       aggregate = await aggregateAudience(emitter);
     }
     if (aggregate && !(await isOverTokenCap(runId))) {
+      await throwIfRunCancelled(runId);
       const agg = aggregate;
       const focusLine = run.focusQuestion
         ? ` Prioritise what this implies for: ${run.focusQuestion}.`
@@ -573,6 +521,10 @@ export async function executeRun(runId: string): Promise<void> {
     await entangleAndConverge(emitter, profile, 2);
     await persistRunToProject(runId, profile);
   } catch (e) {
+    if (isRunCancelledError(e)) {
+      await markRunCancelled(runId);
+      throw e;
+    }
     const message = e instanceof Error ? e.message : String(e);
     console.error(`[orchestrator] run ${runId} failed:`, e);
     try {
@@ -618,6 +570,7 @@ export async function resumeRun(runId: string): Promise<void> {
     const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
     const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
     profileForSnapshot = profile;
+    await throwIfRunCancelled(runId);
 
     // Cohorts that didn't finish (stuck "simulating", "failed", or never
     // started "pending") are reset — and their partial personas dropped so we
@@ -628,6 +581,7 @@ export async function resumeRun(runId: string): Promise<void> {
     });
     const unfinishedIds = unfinished.map((c) => c.id);
     if (unfinishedIds.length > 0) {
+      await throwIfRunCancelled(runId);
       await prisma.persona.deleteMany({
         where: { cohortId: { in: unfinishedIds } },
       });
@@ -654,6 +608,7 @@ export async function resumeRun(runId: string): Promise<void> {
     );
 
     if (unfinishedIds.length > 0) {
+      await throwIfRunCancelled(runId);
       await simulateAllCohorts(emitter, unfinishedIds, profile, currency);
     }
 
@@ -663,12 +618,14 @@ export async function resumeRun(runId: string): Promise<void> {
     });
     let aggregate: AudienceAggregate | null = null;
     if (doneCount > 0) {
+      await throwIfRunCancelled(runId);
       await setStatus(emitter, "running", "Aggregating simulated audience");
       aggregate = await aggregateAudience(emitter);
     }
     const hasAudienceBlock =
       (await prisma.block.count({ where: { runId, kind: "audience" } })) > 0;
     if (aggregate && !hasAudienceBlock && !(await isOverTokenCap(runId))) {
+      await throwIfRunCancelled(runId);
       const agg = aggregate;
       const audienceBlockId = await spawnBlock(emitter, {
         name: "Audience Synthesis",
@@ -687,6 +644,10 @@ export async function resumeRun(runId: string): Promise<void> {
     await entangleAndConverge(emitter, profile, 2);
     await persistRunToProject(runId, profile);
   } catch (e) {
+    if (isRunCancelledError(e)) {
+      await markRunCancelled(runId);
+      throw e;
+    }
     const message = e instanceof Error ? e.message : String(e);
     console.error(`[orchestrator] resume ${runId} failed:`, e);
     try {
