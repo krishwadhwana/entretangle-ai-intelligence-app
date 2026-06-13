@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Sparkles,
   Loader2,
@@ -203,11 +203,13 @@ export default function FinancialsSection({
   projectId,
   state,
   initial,
+  onSaved,
 }: {
   runId: string;
   projectId: string | null;
   state: CanvasState;
   initial: FinancialsState | null;
+  onSaved?: (section: FinancialsState) => void;
 }) {
   const ready = state.status === "complete" || state.status === "capped";
 
@@ -224,6 +226,13 @@ export default function FinancialsSection({
 
   const currency = model?.currency ?? "INR";
 
+  useEffect(() => {
+    setModel(initial?.model ?? null);
+    setInputs(initial?.inputs ?? null);
+    setEditedKeys(initial?.editedKeys ?? []);
+    setGeneratedAt(initial?.generatedAt ?? null);
+  }, [initial]);
+
   // POST to the route. With no body → LLM generates; with { inputs, editedKeys }
   // → pure server-side recompute against the same persona audience.
   async function post(
@@ -236,7 +245,7 @@ export default function FinancialsSection({
       const res = await fetch(`/api/runs/${runId}/financials`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body ?? {}),
+        body: JSON.stringify({ ...(body ?? {}), projectId }),
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
@@ -247,6 +256,7 @@ export default function FinancialsSection({
       setInputs(data.inputs);
       setEditedKeys(data.editedKeys ?? []);
       setGeneratedAt(data.generatedAt ?? null);
+      onSaved?.(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
@@ -432,7 +442,7 @@ export default function FinancialsSection({
                       ))}
                     </Bar>
                     <Bar dataKey="profit" name="Gross profit/mo" radius={[3, 3, 0, 0]} fill="#34d399" />
-                    {model.breakEven.breakEvenRevenuePerMonth.value &&
+                    {model.breakEven.breakEvenRevenuePerMonth &&
                       isFinite(model.breakEven.breakEvenRevenuePerMonth.value) && (
                         <ReferenceLine
                           y={model.breakEven.breakEvenRevenuePerMonth.value}

@@ -103,6 +103,7 @@ export default function OwnerDashboard({
             projectId={projectId}
             state={state}
             initial={financials}
+            onSaved={setFinancials}
           />
         ) : section === "brandSocial" ? (
           <BrandSocialSection

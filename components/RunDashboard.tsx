@@ -488,6 +488,7 @@ export default function RunDashboard({
           <ConclusionWorkspace
             state={state}
             onQuery={onQuery}
+            onCite={onCite}
             reportBusy={reportBusy}
             onGenerateReport={onGenerateReport}
           />
