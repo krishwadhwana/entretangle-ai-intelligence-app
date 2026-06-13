@@ -354,7 +354,7 @@ export default function RunDashboard({
         <a href="/" className="text-sm font-semibold tracking-tight">
           EntreTangle
         </a>
-        <ProjectSelector selectedProjectId={projectId} />
+        <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
         <p
           className="max-w-md flex-1 truncate text-xs text-neutral-500"
           title={brief}

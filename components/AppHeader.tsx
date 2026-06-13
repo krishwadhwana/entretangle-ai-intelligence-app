@@ -16,8 +16,10 @@ type ProjectSummary = {
 
 export function ProjectSelector({
   selectedProjectId,
+  menuAlign = "right",
 }: {
   selectedProjectId?: string | null;
+  menuAlign?: "left" | "right";
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -117,7 +119,11 @@ export function ProjectSelector({
       </button>
 
       {open && (
-        <div className="absolute right-0 z-[1100] mt-1.5 w-72 rounded-xl border border-neutral-200 bg-white py-1 shadow-lg">
+        <div
+          className={`absolute z-[1100] mt-1.5 w-72 rounded-xl border border-neutral-200 bg-white py-1 shadow-lg ${
+            menuAlign === "left" ? "left-0" : "right-0"
+          }`}
+        >
           <div className="max-h-72 overflow-y-auto">
             {projects.length === 0 && (
               <p className="px-3 py-2 text-xs text-neutral-400">
