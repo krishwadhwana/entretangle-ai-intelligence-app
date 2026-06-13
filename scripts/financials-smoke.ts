@@ -3,7 +3,11 @@
 // with a furniture-venture-shaped scenario and asserts the arithmetic holds.
 
 import { computeFinancials, type PersonaPoint } from "../lib/financials";
-import { FinancialInputsSchema, FinancialModelSchema } from "../lib/schema";
+import {
+  FinancialInputsSchema,
+  FinancialModelSchema,
+  FinancialsSectionSchema,
+} from "../lib/schema";
 
 function assert(cond: boolean, msg: string) {
   if (!cond) {
@@ -72,10 +76,10 @@ assert(Math.abs(core.estUnitsPerMonth.value - 2000 * 0.14) < 1, "Core units = re
 assert(core.estRevenuePerMonth.value === core.estUnitsPerMonth.value * 120000, "Core revenue = units × price");
 
 // Break-even: fixed 300k ÷ contribution 78k ≈ 3.85 units/mo.
-assert(Math.abs(model.breakEven.breakEvenUnitsPerMonth.value - 300000 / 78000) < 0.05, "Break-even units = fixed ÷ contribution");
+assert(Math.abs(model.breakEven.breakEvenUnitsPerMonth!.value - 300000 / 78000) < 0.05, "Break-even units = fixed ÷ contribution");
 
 // Runway: capital 4M ÷ burn 300k ≈ 13.3 months; funds MOQ exactly.
-assert(Math.abs(model.runwayFit.runwayMonths.value - 4000000 / 300000) < 0.05, "Runway = capital ÷ burn");
+assert(Math.abs(model.runwayFit.runwayMonths!.value - 4000000 / 300000) < 0.05, "Runway = capital ÷ burn");
 assert(model.runwayFit.fundsMoq === true, "Capital (4M) funds the 4M MOQ cycle");
 
 // Blended CAC simple mean (no channel shares supplied) = 5000.
@@ -119,5 +123,34 @@ assert(
   `Data maturity rises after overrides (${model.dataMaturityPct}% → ${edited.dataMaturityPct}%)`
 );
 console.log("Data maturity after overrides:", edited.dataMaturityPct + "%");
+
+// --- persistence regression: non-computable metrics must survive the JSONB
+// round-trip (Infinity/NaN → JSON null → must re-parse, not wipe the section).
+console.log("\n— persistence: no-CAC / zero-fixed-cost model round-trips —\n");
+const degenerate = FinancialInputsSchema.parse({
+  ...inputs,
+  cacByChannel: [], // → ltvCacRatio not computable
+  fixedCostsPerMonth: 0, // → runway unbounded, break-even undefined
+});
+const degModel = computeFinancials(
+  degenerate,
+  { personas },
+  { capitalAvailable: 4000000, source: "founder_entered" }
+);
+assert(degModel.unitEconomics.ltvCacRatio === null, "LTV:CAC is null when no CAC (not Infinity)");
+assert(degModel.runwayFit.runwayMonths === null, "Runway is null when no burn (not Infinity)");
+
+const section = {
+  model: degModel,
+  inputs: degenerate,
+  editedKeys: [],
+  generatedAt: "2026-06-13T00:00:00Z",
+  sourceRunId: "run_demo",
+};
+// Simulate exactly what Postgres JSONB does: stringify then re-read + validate.
+const roundTripped = FinancialsSectionSchema.safeParse(
+  JSON.parse(JSON.stringify(section))
+);
+assert(roundTripped.success, "FinancialsSection survives JSONB round-trip (no parse wipe)");
 
 console.log("\nDone.");

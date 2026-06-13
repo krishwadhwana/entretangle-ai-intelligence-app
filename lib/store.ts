@@ -2,8 +2,9 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { config } from "./config";
 import {
+  BrandSocialSectionSchema,
+  FinancialsSectionSchema,
   InterviewTranscriptSchema,
-  OwnerDashboardSchema,
   type BrandKit,
   type ClientProfile,
   type FinancialModel,
@@ -57,6 +58,28 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
   },
 };
 
+// Parse the owner_dashboard JSONB SECTION BY SECTION. A whole-object parse
+// would let one malformed/legacy section (e.g. a stale financial model) fail
+// validation and discard EVERY section — silently wiping the founder's brand
+// kit and progress. Parsing each independently means a bad section degrades to
+// its empty default while the others survive.
+function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
+  const obj = (raw && typeof raw === "object" ? raw : {}) as Record<
+    string,
+    unknown
+  >;
+  const brand = BrandSocialSectionSchema.safeParse(obj.brandSocial);
+  const fin = FinancialsSectionSchema.safeParse(obj.financials);
+  return {
+    brandSocial: brand.success
+      ? brand.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.brandSocial),
+    financials: fin.success
+      ? fin.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.financials),
+  };
+}
+
 function toSummary(row: {
   id: string;
   name: string;
@@ -85,9 +108,6 @@ function toFull(row: {
   const transcript = InterviewTranscriptSchema.safeParse(
     row.interviewTranscript
   );
-  const owner = row.ownerDashboard
-    ? OwnerDashboardSchema.safeParse(row.ownerDashboard)
-    : null;
   return {
     ...toSummary(row),
     interviewTranscript: transcript.success
@@ -98,7 +118,9 @@ function toFull(row: {
     simulationRuns: Array.isArray(row.simulationRuns)
       ? (row.simulationRuns as unknown as SimulationRunRecord[])
       : [],
-    ownerDashboard: owner && owner.success ? owner.data : null,
+    ownerDashboard: row.ownerDashboard
+      ? parseOwnerDashboard(row.ownerDashboard)
+      : null,
   };
 }
 
@@ -181,11 +203,8 @@ async function readOwnerDashboard(id: string): Promise<OwnerDashboard> {
     select: { ownerDashboard: true },
   });
   if (!row) throw new Error("project not found");
-  const parsed = row.ownerDashboard
-    ? OwnerDashboardSchema.safeParse(row.ownerDashboard)
-    : null;
-  return parsed && parsed.success
-    ? parsed.data
+  return row.ownerDashboard
+    ? parseOwnerDashboard(row.ownerDashboard)
     : structuredClone(EMPTY_OWNER_DASHBOARD);
 }
 

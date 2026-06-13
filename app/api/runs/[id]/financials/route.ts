@@ -34,6 +34,7 @@ const FIN_DOMAINS = [
 const BodySchema = z.object({
   inputs: FinancialInputsSchema.optional(),
   editedKeys: z.array(z.string()).default([]),
+  projectId: z.string().nullable().optional(),
 });
 
 export async function POST(
@@ -55,6 +56,7 @@ export async function POST(
   }
   const override = body.data.inputs ?? null;
   const editedKeys = body.data.editedKeys;
+  const targetProjectId = run.projectId ?? body.data.projectId ?? null;
 
   const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
 
@@ -132,8 +134,8 @@ export async function POST(
 
     // Persist onto the project (survives reload + sibling runs). Runs without a
     // project still get a usable model back.
-    if (run.projectId) {
-      const saved = await saveFinancials(run.projectId, section);
+    if (targetProjectId) {
+      const saved = await saveFinancials(targetProjectId, section);
       return NextResponse.json(saved);
     }
     return NextResponse.json(section);

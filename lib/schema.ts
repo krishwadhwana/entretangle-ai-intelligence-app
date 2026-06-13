@@ -627,7 +627,13 @@ export type FinSource = z.infer<typeof FinSourceSchema>;
 // "units/mo", "months", "%", "x"). `basis` is a one-line note on derivation;
 // `sourceConclusionIds` link back to the desk conclusions it came from.
 export const FinNumSchema = z.object({
-  value: z.number(),
+  // JSONB can't store Infinity/NaN — JSON.stringify turns them into null. Coerce
+  // any non-finite/missing value back to a finite 0 on read so a single stray
+  // value can never fail the parse and silently wipe the saved dashboard.
+  value: z.preprocess(
+    (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0),
+    z.number()
+  ),
   unit: z.string().default(""),
   source: FinSourceSchema.default("ai_estimated"),
   confidence: z.number().min(0).max(1).default(0.5),
@@ -666,8 +672,9 @@ export const FinUnitEconomicsSchema = z.object({
     .default([]),
   blendedCac: FinNumSchema, // computed (channel-share weighted) or estimated
   ltv: FinNumSchema, // lifetime gross-profit value of a customer
-  ltvCacRatio: FinNumSchema, // computed = ltv / blendedCac
-  paybackMonths: FinNumSchema, // computed = cac / monthly contribution per customer
+  // null when not computable (no CAC / no contribution).
+  ltvCacRatio: FinNumSchema.nullable().default(null), // computed = ltv / blendedCac
+  paybackMonths: FinNumSchema.nullable().default(null), // computed = cac / contribution
 });
 export type FinUnitEconomics = z.infer<typeof FinUnitEconomicsSchema>;
 
@@ -689,8 +696,9 @@ export type FinMarketSizing = z.infer<typeof FinMarketSizingSchema>;
 export const FinBreakEvenSchema = z.object({
   fixedCostsPerMonth: FinNumSchema, // rent, salaries, software, marketing base
   contributionPerUnit: FinNumSchema, // at the base/recommended tier
-  breakEvenUnitsPerMonth: FinNumSchema, // computed = fixed / contribution
-  breakEvenRevenuePerMonth: FinNumSchema, // computed
+  // null when contribution ≤ 0 (the venture never breaks even at this price).
+  breakEvenUnitsPerMonth: FinNumSchema.nullable().default(null), // = fixed / contribution
+  breakEvenRevenuePerMonth: FinNumSchema.nullable().default(null), // computed
   // months until cumulative gross profit covers fixed + initial outlay, given
   // the base-tier demand; null if it never breaks even at modelled demand.
   monthsToBreakEven: FinNumSchema.nullable().default(null),
@@ -701,7 +709,8 @@ export const FinRunwayFitSchema = z.object({
   capitalAvailable: FinNumSchema, // from ClientProfile.funding / capitalInr
   monthlyBurn: FinNumSchema, // fixed costs (+ pre-revenue losses)
   moqCashRequired: FinNumSchema, // cash tied up to fund one MOQ inventory cycle
-  runwayMonths: FinNumSchema, // computed = capital / monthlyBurn
+  // null when burn ≤ 0 (runway unbounded).
+  runwayMonths: FinNumSchema.nullable().default(null), // computed = capital / monthlyBurn
   fundsMoq: z.boolean().default(false), // computed verdict: capital ≥ moq cash?
   verdict: z.string().default(""), // one-line funding-fit conclusion
 });

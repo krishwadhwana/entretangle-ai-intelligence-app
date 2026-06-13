@@ -491,8 +491,11 @@ transcript and not a generic pitch deck.
 
 Rules:
 - Be concrete, decision-ready, and commercially honest.
-- Use the research conclusions as evidence. Every section should cite relevant
-  conclusion ids when possible.
+- Use the research conclusions as evidence. Every section should reference the
+  relevant conclusion ids via the "citedConclusionIds" array ONLY. Never write a
+  conclusion id inside prose (title, executiveSummary, verdict, summary, bullets,
+  nextActions, risks) — no "[id]" tokens, no parenthetical ids. The prose must
+  read cleanly to a founder; the structured array carries the provenance.
 - Explain uncertainty and contradictions when the world model contains them.
 - Customer perception must emphasize qualitative opinion patterns, objections,
   supportive language, and conversion conditions, not only metrics.
@@ -542,18 +545,18 @@ export function compactFinancials(model: FinancialModel) {
     unitEconomics: {
       blendedCac: model.unitEconomics.blendedCac.value,
       ltv: model.unitEconomics.ltv.value,
-      ltvToCac: model.unitEconomics.ltvCacRatio.value,
+      ltvToCac: v(model.unitEconomics.ltvCacRatio),
     },
     breakEven: {
       contributionPerUnit: model.breakEven.contributionPerUnit.value,
-      unitsPerMonth: model.breakEven.breakEvenUnitsPerMonth.value,
-      revenuePerMonth: model.breakEven.breakEvenRevenuePerMonth.value,
+      unitsPerMonth: v(model.breakEven.breakEvenUnitsPerMonth),
+      revenuePerMonth: v(model.breakEven.breakEvenRevenuePerMonth),
       monthsToBreakEven: v(model.breakEven.monthsToBreakEven),
     },
     runwayFit: {
       capitalAvailable: model.runwayFit.capitalAvailable.value,
       monthlyBurn: model.runwayFit.monthlyBurn.value,
-      runwayMonths: model.runwayFit.runwayMonths.value,
+      runwayMonths: v(model.runwayFit.runwayMonths),
       fundsMoq: model.runwayFit.fundsMoq,
       verdict: model.runwayFit.verdict,
     },

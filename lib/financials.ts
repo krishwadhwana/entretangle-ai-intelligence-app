@@ -173,31 +173,33 @@ export function computeFinancials(
   const baseTier =
     tiers.find((t) => t.label === inputs.baseTierLabel) ?? tiers[0];
 
-  // Break-even at the base/recommended tier.
+  // Break-even at the base/recommended tier. null (not 0/Infinity) when the
+  // metric is genuinely undefined — JSONB can't hold Infinity and 0 would read
+  // as a dangerously wrong "breaks even at zero units".
   const baseContribution = baseTier.contributionPerUnit.value;
   const beUnits =
-    baseContribution > 0 ? inputs.fixedCostsPerMonth / baseContribution : Infinity;
-  const beRevenue = isFinite(beUnits) ? beUnits * baseTier.price.value : Infinity;
+    baseContribution > 0 ? inputs.fixedCostsPerMonth / baseContribution : null;
+  const beRevenue = beUnits != null ? beUnits * baseTier.price.value : null;
   // Months for cumulative gross profit (net of fixed) to repay the MOQ outlay.
   const monthlyNet = baseTier.estGrossProfitPerMonth.value - inputs.fixedCostsPerMonth;
   const monthsToBE =
     monthlyNet > 0 ? Math.ceil(inputs.moqCashRequired / monthlyNet) : null;
 
-  // Runway & funding fit.
+  // Runway & funding fit. null when there is no monthly burn (unbounded).
   const burn = inputs.fixedCostsPerMonth;
-  const runwayMonths = burn > 0 ? capital.capitalAvailable / burn : Infinity;
+  const runwayMonths = burn > 0 ? capital.capitalAvailable / burn : null;
   const fundsMoq = capital.capitalAvailable >= inputs.moqCashRequired;
   const runwayVerdict = fundsMoq
-    ? `Capital covers the ${cur}${round(inputs.moqCashRequired)} MOQ cycle with ~${round(runwayMonths)} months of runway at current burn.`
+    ? `Capital covers the ${cur}${round(inputs.moqCashRequired)} MOQ cycle${runwayMonths != null ? ` with ~${round(runwayMonths)} months of runway at current burn` : ""}.`
     : `Capital (${cur}${round(capital.capitalAvailable)}) is short of the ${cur}${round(inputs.moqCashRequired)} needed to fund one MOQ cycle — working capital is the binding constraint.`;
 
-  // Unit economics.
+  // Unit economics. null ratios when the denominator is unavailable.
   const channelShare = demand.aggregate?.channelShare ?? [];
   const blendedCac = blendCac(inputs.cacByChannel, channelShare);
   const ltvVal =
     inputs.ltv ?? baseContribution; // single-purchase proxy when no repeat data
-  const ltvCac = blendedCac > 0 ? ltvVal / blendedCac : Infinity;
-  const paybackPurchases = baseContribution > 0 ? blendedCac / baseContribution : Infinity;
+  const ltvCac = blendedCac > 0 ? ltvVal / blendedCac : null;
+  const paybackPurchases = baseContribution > 0 ? blendedCac / baseContribution : null;
 
   // Market sizing & the bottom-up vs top-down reconciliation.
   const bottomUpAnnual = baseTier.estRevenuePerMonth.value * 12;
@@ -222,12 +224,16 @@ export function computeFinancials(
         basis: inputs.ltv != null ? "" : "single-purchase contribution proxy",
         confidence: inputs.ltv != null ? 0.5 : 0.35,
       }),
-      ltvCacRatio: computed(ltvCac, "x", "LTV ÷ blended CAC"),
-      paybackMonths: computed(
-        paybackPurchases,
-        "purchases",
-        "CAC ÷ contribution per purchase"
-      ),
+      ltvCacRatio:
+        ltvCac != null ? computed(ltvCac, "x", "LTV ÷ blended CAC") : null,
+      paybackMonths:
+        paybackPurchases != null
+          ? computed(
+              paybackPurchases,
+              "purchases",
+              "CAC ÷ contribution per purchase"
+            )
+          : null,
     },
     marketSizing: {
       tam: num(inputs.tam, `${cur}/yr`, { source: "ai_estimated" }),
@@ -255,16 +261,14 @@ export function computeFinancials(
         perUnit,
         `at base tier "${baseTier.label}"`
       ),
-      breakEvenUnitsPerMonth: computed(
-        beUnits,
-        "units/mo",
-        "fixed costs ÷ contribution"
-      ),
-      breakEvenRevenuePerMonth: computed(
-        beRevenue,
-        `${cur}/mo`,
-        "break-even units × price"
-      ),
+      breakEvenUnitsPerMonth:
+        beUnits != null
+          ? computed(beUnits, "units/mo", "fixed costs ÷ contribution")
+          : null,
+      breakEvenRevenuePerMonth:
+        beRevenue != null
+          ? computed(beRevenue, `${cur}/mo`, "break-even units × price")
+          : null,
       monthsToBreakEven:
         monthsToBE == null
           ? null
@@ -281,7 +285,10 @@ export function computeFinancials(
       }),
       monthlyBurn: computed(burn, `${cur}/mo`, "fixed costs (pre-revenue)"),
       moqCashRequired: num(inputs.moqCashRequired, cur, { source: "ai_estimated" }),
-      runwayMonths: computed(runwayMonths, "months", "capital ÷ monthly burn"),
+      runwayMonths:
+        runwayMonths != null
+          ? computed(runwayMonths, "months", "capital ÷ monthly burn")
+          : null,
       fundsMoq,
       verdict: runwayVerdict,
     },

@@ -13,6 +13,7 @@ import {
   BarChart3,
   BookOpen,
   LayoutDashboard,
+  ChevronDown,
 } from "lucide-react";
 import type { Block, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
@@ -31,42 +32,60 @@ function StateDot({ state }: { state: Block["state"] }) {
 function DeskSubpanel({
   block,
   onCite,
+  defaultOpen = false,
 }: {
   block: Block;
   onCite: (blockId: string) => void;
+  defaultOpen?: boolean;
 }) {
   const [tab, setTab] = useState<"conclusions" | "discussion">("conclusions");
+  const [open, setOpen] = useState(defaultOpen);
   const webGrounded =
     block.params.webSearch === 1 || block.params.webSearch === "true";
   return (
     <div className="flex flex-col rounded-xl border border-neutral-200 bg-white">
       <div className="flex items-center gap-2 border-b border-neutral-100 px-4 py-3">
-        <StateDot state={block.state} />
-        <span
-          className="flex-1 truncate text-sm font-semibold"
-          title={block.mission}
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          className="flex min-w-0 flex-1 items-center gap-2 text-left"
+          title={open ? "Collapse desk" : "Expand desk"}
         >
-          {block.name}
-        </span>
+          <ChevronDown
+            className={`h-3.5 w-3.5 shrink-0 text-neutral-400 transition-transform ${
+              open ? "" : "-rotate-90"
+            }`}
+          />
+          <StateDot state={block.state} />
+          <span className="min-w-0 flex-1 truncate text-sm font-semibold">
+            {block.name}
+          </span>
+        </button>
         {webGrounded && (
           <Globe className="h-3 w-3 text-indigo-400" aria-label="web-grounded" />
         )}
-        <div className="flex gap-1 text-xs">
-          <button
-            onClick={() => setTab("conclusions")}
-            className={`rounded px-2 py-1 ${tab === "conclusions" ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}
-          >
-            Findings
-          </button>
-          <button
-            onClick={() => setTab("discussion")}
-            className={`rounded px-2 py-1 ${tab === "discussion" ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}
-          >
-            Discussion
-          </button>
-        </div>
+        <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">
+          {block.conclusions.length} findings
+        </span>
+        {open && (
+          <div className="flex gap-1 text-xs">
+            <button
+              onClick={() => setTab("conclusions")}
+              className={`rounded px-2 py-1 ${tab === "conclusions" ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}
+            >
+              Findings
+            </button>
+            <button
+              onClick={() => setTab("discussion")}
+              className={`rounded px-2 py-1 ${tab === "discussion" ? "bg-neutral-900 text-white" : "text-neutral-500 hover:bg-neutral-100"}`}
+            >
+              Discussion
+            </button>
+          </div>
+        )}
       </div>
-      <div className="px-4 py-3">
+      {open ? (
+        <div className="px-4 py-3">
         {tab === "discussion" ? (
           block.logs.length ? (
             <ul className="space-y-1.5">
@@ -135,12 +154,80 @@ function DeskSubpanel({
             {block.state === "failed" ? "Desk failed." : "Working…"}
           </p>
         )}
-      </div>
+        </div>
+      ) : (
+        <div className="px-4 py-2">
+          <p className="line-clamp-2 text-xs leading-relaxed text-neutral-500">
+            {block.mission}
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
-function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
+// The report writer occasionally embeds raw conclusion ids inline as
+// "[clx9abc...]" or "[clx9abc..., cly2def...]" — meaningless to a reader. Strip
+// those bracketed id tokens from prose; real words never form 16+ char
+// alphanumeric runs, so this only ever removes machine ids.
+const ID_TOKEN_RE =
+  /\s*\[\s*[a-z0-9]{16,}(?:\s*,\s*[a-z0-9]{16,})*\s*\]/g;
+function stripIds(text: string): string {
+  return text.replace(ID_TOKEN_RE, "").replace(/\s{2,}/g, " ").trim();
+}
+
+// Render cited conclusions as subtle, human-readable links (the claim text),
+// never the raw ids. Clicking jumps to the network graph and highlights the
+// desk the evidence came from. Ids that no longer resolve are dropped, so a
+// stale report quietly shows nothing rather than leaking machine ids.
+function CitedEvidence({
+  ids,
+  conclusionsById,
+  onCite,
+}: {
+  ids: string[];
+  conclusionsById?: Map<string, { claim: string; blockId: string }>;
+  onCite?: (blockId: string) => void;
+}) {
+  if (ids.length === 0 || !conclusionsById) return null;
+  const cited = ids
+    .map((id) => conclusionsById.get(id))
+    .filter((c): c is { claim: string; blockId: string } => Boolean(c))
+    .slice(0, 4);
+  if (cited.length === 0) return null;
+  return (
+    <p className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[9px] text-neutral-400">
+      <span className="uppercase tracking-wide">Evidence</span>
+      {cited.map((c, i) =>
+        onCite ? (
+          <button
+            key={i}
+            type="button"
+            onClick={() => onCite(c.blockId)}
+            title={c.claim}
+            className="max-w-[12rem] truncate text-indigo-400 underline-offset-2 hover:text-indigo-600 hover:underline"
+          >
+            {c.claim}
+          </button>
+        ) : (
+          <span key={i} title={c.claim} className="max-w-[12rem] truncate">
+            {c.claim}
+          </span>
+        )
+      )}
+    </p>
+  );
+}
+
+function FinalReportView({
+  report,
+  conclusionsById,
+  onCite,
+}: {
+  report: CanvasState["finalReport"];
+  conclusionsById?: Map<string, { claim: string; blockId: string }>;
+  onCite?: (blockId: string) => void;
+}) {
   if (!report) {
     return (
       <div className="rounded-xl border border-neutral-200 bg-white p-4">
@@ -162,13 +249,13 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
           Final business report
         </p>
         <h3 className="mt-1 text-sm font-semibold text-neutral-900">
-          {report.title}
+          {stripIds(report.title)}
         </h3>
         <p className="mt-2 text-xs leading-relaxed text-neutral-700">
-          {report.executiveSummary}
+          {stripIds(report.executiveSummary)}
         </p>
         <p className="mt-2 rounded-lg bg-indigo-50 px-3 py-2 text-[11px] font-medium leading-relaxed text-indigo-900">
-          {report.verdict}
+          {stripIds(report.verdict)}
         </p>
       </div>
 
@@ -179,10 +266,10 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
             className="rounded-lg border border-neutral-100 bg-neutral-50/60 p-3"
           >
             <h4 className="text-xs font-semibold text-neutral-800">
-              {section.title}
+              {stripIds(section.title)}
             </h4>
             <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">
-              {section.summary}
+              {stripIds(section.summary)}
             </p>
             <ul className="mt-2 space-y-1.5">
               {section.bullets.map((bullet, i) => (
@@ -191,16 +278,15 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
                   className="flex gap-2 text-[11px] leading-relaxed text-neutral-700"
                 >
                   <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-neutral-400" />
-                  <span>{bullet}</span>
+                  <span>{stripIds(bullet)}</span>
                 </li>
               ))}
             </ul>
-            {section.citedConclusionIds.length > 0 && (
-              <p className="mt-2 text-[9px] text-neutral-400">
-                cites {section.citedConclusionIds.slice(0, 5).join(", ")}
-                {section.citedConclusionIds.length > 5 && "…"}
-              </p>
-            )}
+            <CitedEvidence
+              ids={section.citedConclusionIds}
+              conclusionsById={conclusionsById}
+              onCite={onCite}
+            />
           </section>
         ))}
       </div>
@@ -217,7 +303,7 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
                 className="flex gap-2 text-[11px] leading-relaxed text-emerald-950"
               >
                 <span className="font-semibold tabular-nums">{i + 1}.</span>
-                <span>{action}</span>
+                <span>{stripIds(action)}</span>
               </li>
             ))}
           </ol>
@@ -233,7 +319,7 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
                 className="flex gap-2 text-[11px] leading-relaxed text-amber-950"
               >
                 <span className="mt-1 h-1 w-1 shrink-0 rounded-full bg-amber-500" />
-                <span>{risk}</span>
+                <span>{stripIds(risk)}</span>
               </li>
             ))}
           </ul>
@@ -246,14 +332,30 @@ function FinalReportView({ report }: { report: CanvasState["finalReport"] }) {
 export function ConclusionWorkspace({
   state,
   onQuery,
+  onCite,
   reportBusy,
   onGenerateReport,
 }: {
   state: CanvasState;
-  onQuery: (q: string) => Promise<string>;
+  onQuery: (
+    q: string,
+    opts?: { domains?: string[]; highlight?: boolean }
+  ) => Promise<string>;
+  onCite?: (blockId: string) => void;
   reportBusy: boolean;
   onGenerateReport: (force?: boolean) => void;
 }) {
+  // Map every conclusion id → its claim + desk, so the report can cite
+  // evidence by readable claim text instead of leaking raw ids.
+  const conclusionsById = useMemo(() => {
+    const m = new Map<string, { claim: string; blockId: string }>();
+    for (const block of Object.values(state.blocks)) {
+      for (const c of block.conclusions) {
+        m.set(c.id, { claim: c.claim, blockId: block.id });
+      }
+    }
+    return m;
+  }, [state.blocks]);
   const [question, setQuestion] = useState("");
   // Turns asked this session — persisted turns arrive via state.conversation on
   // reload, so these only cover the current page load (no double-render: the
@@ -274,7 +376,8 @@ export function ConclusionWorkspace({
     if (!q || busy) return;
     setBusy(true);
     try {
-      const answer = await onQuery(q);
+      // Ask in-place — don't jump to the network graph and leave this page.
+      const answer = await onQuery(q, { highlight: false });
       setPending((p) => [...p, { question: q, answer }]);
       setQuestion("");
     } catch {
@@ -293,7 +396,11 @@ export function ConclusionWorkspace({
       <div className="mx-auto max-w-7xl">
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div className="space-y-2">
-            <FinalReportView report={report} />
+            <FinalReportView
+              report={report}
+              conclusionsById={conclusionsById}
+              onCite={onCite}
+            />
             {ready && (
               <button
                 onClick={() => onGenerateReport(!!report)}
@@ -373,7 +480,8 @@ export function ConclusionWorkspace({
               </form>
               {(history.length > 0 || pending.length > 0) && (
                 <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
-                  {[...history, ...pending].map((t, i) => (
+                  {/* Newest first — latest question shows on top. */}
+                  {[...history, ...pending].reverse().map((t, i) => (
                     <div
                       key={"seq" in t ? `h${t.seq}` : `p${i}`}
                       className="rounded-lg border border-neutral-200 bg-neutral-50 p-2"
@@ -438,22 +546,54 @@ export function DomainWorkspace({
   const blocks = byDomain.get(domain) ?? [];
   const done = blocks.filter((b) => b.state === "concluded").length;
   const Icon = meta.icon;
+  const [selectedBlockId, setSelectedBlockId] = useState<string>("all");
+  const visibleBlocks =
+    selectedBlockId === "all"
+      ? blocks
+      : blocks.filter((b) => b.id === selectedBlockId);
+
+  useEffect(() => {
+    setSelectedBlockId((current) =>
+      current === "all" || blocks.some((b) => b.id === current)
+        ? current
+        : "all"
+    );
+  }, [blocks]);
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/60 p-6">
       <div className="mx-auto max-w-7xl">
-        <div className="mb-4 flex items-center gap-2">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-900 text-white">
-            <Icon className="h-4 w-4" />
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-neutral-900 text-white">
+              <Icon className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="truncate text-sm font-semibold text-neutral-900">
+                {meta.label}
+              </h2>
+              <p className="text-xs text-neutral-500">
+                {done}/{blocks.length} desks concluded
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="text-sm font-semibold text-neutral-900">
-              {meta.label}
-            </h2>
-            <p className="text-xs text-neutral-500">
-              {done}/{blocks.length} desks concluded
-            </p>
-          </div>
+          {blocks.length > 0 && (
+            <label className="flex items-center gap-2 text-xs text-neutral-500">
+              Desk
+              <select
+                value={selectedBlockId}
+                onChange={(e) => setSelectedBlockId(e.target.value)}
+                className="max-w-xs rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-700 outline-none focus:border-indigo-500"
+              >
+                <option value="all">All desks</option>
+                {blocks.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
         </div>
         {blocks.length === 0 ? (
           <p className="rounded-xl border border-neutral-200 bg-white p-6 text-sm text-neutral-400">
@@ -461,8 +601,13 @@ export function DomainWorkspace({
           </p>
         ) : (
           <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
-            {blocks.map((b) => (
-              <DeskSubpanel key={b.id} block={b} onCite={onCite} />
+            {visibleBlocks.map((b) => (
+              <DeskSubpanel
+                key={`${b.id}-${selectedBlockId === b.id ? "focused" : "all"}`}
+                block={b}
+                onCite={onCite}
+                defaultOpen={selectedBlockId === b.id}
+              />
             ))}
           </div>
         )}
