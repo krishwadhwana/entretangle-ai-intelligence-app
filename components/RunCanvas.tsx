@@ -117,6 +117,7 @@ export default function RunCanvas({
           highlighted: highlightedBlocks.has(block.id),
           forkable: block.state === "concluded",
           onForkParam,
+          expanded: true,
         } satisfies AgentBlockNodeData,
       };
     });

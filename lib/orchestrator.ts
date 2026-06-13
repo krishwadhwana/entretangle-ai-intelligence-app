@@ -8,14 +8,22 @@ import {
   callAudienceSynth,
   callDemographics,
   callFinalReport,
+  callClassifyVenture,
 } from "./llm";
 import { ProjectRetriever, formatGroundTruth } from "./rag";
 import { calibrateCohortPlan } from "./datasources/demographics";
+import { expandPanIndiaCohortPlan } from "./audienceCoverage";
 import {
   fetchStructuredForDesk,
   formatStructured,
   type StructuredData,
 } from "./datasources/structured";
+import { getIndustryLibrary, formatLibrary } from "./datasources/library";
+import {
+  getOrBuildIndustryKnowledge,
+  formatIndustryKnowledge,
+  formatPlanningTemplate,
+} from "./datasources/knowledge";
 import {
   spawnCohorts,
   simulateAllCohorts,
@@ -346,10 +354,69 @@ export async function executeRun(runId: string): Promise<void> {
     ]
       .filter(Boolean)
       .join(" ");
-    const planGroundTruth =
+    const ragPlanGroundTruth =
       retriever?.hasDocs
         ? formatGroundTruth(await retriever.search(planQuery, 6))
         : "";
+
+    // Classify the venture FIRST (before planning) so industry knowledge + the
+    // planning template can shape which desks/cohorts/roles the planner picks.
+    const industry = await callClassifyVenture(runId, profile).catch((e) => {
+      console.error(`[orchestrator] industry classification failed:`, e);
+      return null;
+    });
+    if (industry) {
+      console.log(
+        `[orchestrator] industry=${industry.industry} hs=[${industry.hsCodes.join(
+          ","
+        )}] shops=[${industry.osmShopTags.join(
+          ","
+        )}] openData=[${industry.openDataQueries.join(",")}] library=${industry.libraryKey}`
+      );
+    }
+
+    // Auto-built industry knowledge (option A): cached-or-built, web-grounded,
+    // with provenance + freshness. Falls back to the curated library if the
+    // build fails AND nothing is cached.
+    const knowledge = industry
+      ? await getOrBuildIndustryKnowledge(
+          runId,
+          industry.industry,
+          industry.libraryKey,
+          profile.geography ?? []
+        ).catch((e) => {
+          console.error(`[orchestrator] knowledge build failed:`, e);
+          return null;
+        })
+      : null;
+    if (knowledge) {
+      console.log(
+        `[orchestrator] industry knowledge ${
+          knowledge.fresh ? "cache-hit" : "built"
+        } (as of ${knowledge.builtAt.toISOString().slice(0, 10)}, ${
+          knowledge.sources.length
+        } sources)`
+      );
+    }
+    const curatedLib = industry ? getIndustryLibrary(industry.libraryKey) : null;
+    // Prefer the auto-built pack; fall back to the curated library.
+    const industryGroundTruth = knowledge
+      ? formatIndustryKnowledge(knowledge)
+      : curatedLib
+        ? formatLibrary(curatedLib)
+        : "";
+    const planningTemplateGroundTruth = knowledge
+      ? formatPlanningTemplate(knowledge)
+      : "";
+
+    // The planner sees the planning template + industry knowledge + founder RAG.
+    const planGroundTruth = [
+      planningTemplateGroundTruth,
+      industryGroundTruth,
+      ragPlanGroundTruth,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
 
     // Phase 1 — Plan: research desks + the audience cohort matrix (V2 §4.1)
     await throwIfRunCancelled(runId);
@@ -360,7 +427,21 @@ export async function executeRun(runId: string): Promise<void> {
         ? `Planning desks for: ${run.focusQuestion.slice(0, 60)}`
         : "Planning desks & audience matrix"
     );
-    const plan = await callPlannerV2(runId, profile, focus, planGroundTruth);
+    const rawPlan = await callPlannerV2(runId, profile, focus, planGroundTruth);
+    const expandedCohortPlan = expandPanIndiaCohortPlan(
+      rawPlan.cohortPlan,
+      profile,
+      config.maxCohorts
+    );
+    const plan = { ...rawPlan, cohortPlan: expandedCohortPlan };
+    if (
+      expandedCohortPlan.localities.length !== rawPlan.cohortPlan.localities.length ||
+      expandedCohortPlan.cohorts.length !== rawPlan.cohortPlan.cohorts.length
+    ) {
+      console.log(
+        `[orchestrator] PAN-India audience expanded ${rawPlan.cohortPlan.localities.length}->${expandedCohortPlan.localities.length} localities, ${rawPlan.cohortPlan.cohorts.length}->${expandedCohortPlan.cohorts.length} cohorts`
+      );
+    }
     const desks = plan.desks.slice(0, config.maxDesksPerRun);
 
     const deskIds: string[] = [];
@@ -387,6 +468,11 @@ export async function executeRun(runId: string): Promise<void> {
       ),
       currency: plan.cohortPlan.currency,
       product: profile.product,
+      // Industry routing for trade/tariff + local-competition + open-data.
+      hsCodes: industry?.hsCodes ?? [],
+      osmShopTags: industry?.osmShopTags ?? [],
+      openDataQueries: industry?.openDataQueries ?? [],
+      localities: plan.cohortPlan.localities,
     };
     const domains = Array.from(new Set(desks.map((d) => d.domain)));
     const structuredByDomain = new Map<string, StructuredData | null>(
@@ -414,6 +500,8 @@ export async function executeRun(runId: string): Promise<void> {
     for (const [i, d] of desks.entries()) {
       await throwIfRunCancelled(runId);
       const parts: string[] = [];
+      // Auto-built (or curated-fallback) industry knowledge — every desk.
+      if (industryGroundTruth) parts.push(industryGroundTruth);
       if (retriever?.hasDocs) {
         const gt = formatGroundTruth(await retriever.search(d.mission, 4));
         if (gt) parts.push(gt);

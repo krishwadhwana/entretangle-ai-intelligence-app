@@ -20,3 +20,4 @@ dev.db-journal
 dist
 node_modules
 out
+.vercel

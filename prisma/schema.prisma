@@ -231,3 +231,20 @@ model RunEvent {
   @@unique([runId, seq])
   @@index([runId, seq])
 }
+
+// Auto-built, globally-shared industry knowledge (option A). One agent
+// researches an industry once and caches a knowledge pack + planning template
+// here, with provenance + freshness; all runs in that industry reuse it until
+// it goes stale. Not per-project — knowledge is shared across the platform.
+model IndustryKnowledge {
+  id          String   @id @default(cuid())
+  industryKey String   @unique @map("industry_key") // normalized libraryKey/slug
+  industry    String
+  pack        Json // IndustryKnowledgePack (summary, facts[], planningTemplate)
+  sources     Json     @default("[]") // string[]
+  builtModel  String   @default("") @map("built_model")
+  builtAt     DateTime @default(now()) @map("built_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("industry_knowledge")
+}

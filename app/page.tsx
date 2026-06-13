@@ -4,13 +4,16 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
+  ArrowRight,
   Check,
+  CheckCircle2,
   CornerDownLeft,
   FileText,
   Loader2,
   Play,
   Trash2,
   Upload,
+  XCircle,
 } from "lucide-react";
 import type {
   ChatMessage,
@@ -288,15 +291,24 @@ function IntakePageInner() {
     }
   }
 
-  // The most recent run is what a scoped follow-up reuses the audience from.
-  const latestRunId = simRuns.length > 0 ? simRuns[simRuns.length - 1].runId : null;
+  // Scoped follow-ups can only reuse a completed/capped run that actually has
+  // a simulated audience. Live runs are shown in history but are not reusable.
+  const latestAudienceRunId =
+    [...simRuns]
+      .reverse()
+      .find(
+        (r) =>
+          (r.status === "complete" || r.status === "capped") &&
+          (r.results.audienceAggregate?.totalPersonas ?? 0) > 0
+      )?.runId ?? null;
 
   async function launchNewRun() {
     if (!projectId || !profile || launching) return;
     const fq = focusQuestion.trim();
     const ctx = additionalContext.trim();
     // A scoped run needs a prior run to reuse; fall back to full otherwise.
-    const effectiveMode = mode === "scoped" && latestRunId ? "scoped" : "full";
+    const effectiveMode =
+      mode === "scoped" && latestAudienceRunId ? "scoped" : "full";
     // Fold the focus question into the brief so it's visible on the dashboard.
     const composedBrief = fq
       ? `${brief ?? profile.product} — focus: ${fq}`
@@ -314,7 +326,8 @@ function IntakePageInner() {
           focusQuestion: fq || undefined,
           additionalContext: ctx || undefined,
           mode: effectiveMode,
-          sourceRunId: effectiveMode === "scoped" ? latestRunId : undefined,
+          sourceRunId:
+            effectiveMode === "scoped" ? latestAudienceRunId : undefined,
           // Audience size only applies to full runs (scoped reuses an audience).
           targetAudienceSize:
             effectiveMode === "scoped"
@@ -680,45 +693,65 @@ function IntakePageInner() {
                 <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400">
                   Simulation runs
                 </p>
-                <ul className="space-y-1">
-                  {[...simRuns].reverse().map((r) => (
-                    <li key={r.runId}>
-                      <a
-                        href={`/runs/${r.runId}`}
-                        className="block rounded-lg border border-neutral-200 px-3 py-2 text-xs hover:border-indigo-400 hover:bg-indigo-50"
-                      >
-                        {r.params?.focusQuestion && (
-                          <p className="mb-0.5 font-medium text-neutral-800">
-                            “{r.params.focusQuestion}”
-                          </p>
-                        )}
-                        <div className="flex items-center justify-between">
-                          <span className="text-neutral-500">
-                            {new Date(r.timestamp).toLocaleString()} ·{" "}
-                            {r.results.blocks.length} desks ·{" "}
-                            {r.results.audienceAggregate?.totalPersonas ?? 0}{" "}
-                            personas
-                            {r.params?.mode === "scoped" && (
-                              <span className="ml-1.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
-                                scoped
-                              </span>
+                <ul className="space-y-1.5">
+                  {[...simRuns].reverse().map((r) => {
+                    const isComplete = r.status === "complete";
+                    const isFailed = r.status === "failed";
+                    return (
+                      <li key={r.runId}>
+                        <a
+                          href={`/runs/${r.runId}`}
+                          className="group flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2.5 transition hover:border-indigo-400 hover:bg-indigo-50/40 hover:shadow-sm"
+                        >
+                          {/* Status icon */}
+                          <span
+                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                              isComplete
+                                ? "bg-emerald-50 text-emerald-600"
+                                : isFailed
+                                  ? "bg-red-50 text-red-500"
+                                  : "bg-amber-50 text-amber-600"
+                            }`}
+                            title={r.status}
+                          >
+                            {isComplete ? (
+                              <CheckCircle2 className="h-4 w-4" />
+                            ) : isFailed ? (
+                              <XCircle className="h-4 w-4" />
+                            ) : (
+                              <Loader2 className="h-4 w-4 animate-spin" />
                             )}
                           </span>
-                          <span
-                            className={`font-medium ${
-                              r.status === "complete"
-                                ? "text-emerald-600"
-                                : r.status === "failed"
-                                  ? "text-red-500"
-                                  : "text-amber-600"
-                            }`}
-                          >
-                            {r.status} · ${r.results.costUsd.toFixed(2)}
+
+                          {/* Title + metadata */}
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium text-neutral-800">
+                              {r.params?.focusQuestion
+                                ? `“${r.params.focusQuestion}”`
+                                : "Full simulation"}
+                              {r.params?.mode === "scoped" && (
+                                <span className="ml-1.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-normal text-neutral-500">
+                                  scoped
+                                </span>
+                              )}
+                            </p>
+                            <p className="mt-0.5 truncate text-[10px] text-neutral-400">
+                              {new Date(r.timestamp).toLocaleString()} ·{" "}
+                              {r.results.blocks.length} desks ·{" "}
+                              {r.results.audienceAggregate?.totalPersonas ?? 0}{" "}
+                              personas · ${r.results.costUsd.toFixed(2)}
+                            </p>
+                          </div>
+
+                          {/* View CTA */}
+                          <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-neutral-400 transition group-hover:text-indigo-600">
+                            <span className="hidden sm:inline">View</span>
+                            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
                           </span>
-                        </div>
-                      </a>
-                    </li>
-                  ))}
+                        </a>
+                      </li>
+                    );
+                  })}
                 </ul>
               </div>
             )}
@@ -872,12 +905,12 @@ function IntakePageInner() {
                   <button
                     type="button"
                     onClick={() => setMode("scoped")}
-                    disabled={!latestRunId}
+                    disabled={!latestAudienceRunId}
                     className={`px-2.5 py-1.5 disabled:opacity-40 ${mode === "scoped" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
                     title={
-                      latestRunId
-                        ? "Lighter: re-run research desks toward your question and reuse the previous run's simulated audience. Much cheaper."
-                        : "Available after your first simulation (it reuses that audience)."
+                      latestAudienceRunId
+                        ? "Lighter: re-run research desks toward your question and reuse the latest completed audience. Much cheaper."
+                        : "Available after a completed simulation with an audience."
                     }
                   >
                     Lighter
@@ -898,7 +931,7 @@ function IntakePageInner() {
               </div>
               <p className="text-[10px] text-neutral-400">
                 {mode === "scoped"
-                  ? "Lighter: re-runs research desks on your question and reuses the last run's audience — cheaper, faster."
+                  ? "Lighter: re-runs research desks on your question and reuses the latest completed audience — cheaper, faster."
                   : "Full: fresh research desks and a newly simulated audience of thousands (can reach the cost cap)."}
               </p>
             </div>

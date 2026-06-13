@@ -6,6 +6,7 @@ import type { Block, Conclusion, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { DOMAIN_META, PLAYBOOK_ORDER } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
+import GlossaryText from "./GlossaryText";
 
 // What each business module answers — shown as the section subtitle so a
 // founder can "walk through each module of the business".
@@ -47,9 +48,11 @@ function ConclusionCard({ c }: { c: Conclusion }) {
   return (
     <li className="rounded-lg border border-neutral-200 bg-white p-3">
       <p className="text-[12px] font-semibold leading-snug text-neutral-900">
-        {c.claim}
+        <GlossaryText>{c.claim}</GlossaryText>
       </p>
-      <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">{c.value}</p>
+      <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">
+        <GlossaryText>{c.value}</GlossaryText>
+      </p>
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
         <ConfidenceBar value={c.confidence} />
         {c.entities.slice(0, 4).map((e) => (
@@ -194,7 +197,7 @@ function ModuleSection({
       </form>
       {answer && (
         <p className="mt-2 rounded-lg border border-neutral-200 bg-white p-2.5 text-[11px] leading-relaxed text-neutral-700">
-          {answer}
+          <GlossaryText>{answer}</GlossaryText>
         </p>
       )}
     </section>
@@ -322,7 +325,7 @@ export default function PlaybookView({
         </form>
         {gAnswer && (
           <p className="mt-2 rounded-lg border border-neutral-200 bg-white p-3 text-[12px] leading-relaxed text-neutral-700">
-            {gAnswer}
+            <GlossaryText>{gAnswer}</GlossaryText>
           </p>
         )}
 

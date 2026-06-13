@@ -56,6 +56,12 @@ export async function POST(req: NextRequest) {
       targetAudienceSize: body.data.targetAudienceSize ?? null,
     },
   });
+  if (body.data.projectId) {
+    await prisma.project.update({
+      where: { id: body.data.projectId },
+      data: { updatedAt: new Date() },
+    });
+  }
 
   const job = await enqueueRunJob(run.id, "execute");
 

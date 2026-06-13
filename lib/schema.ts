@@ -419,7 +419,7 @@ export const PlannerV2OutputSchema = z.object({
         })
       )
       .min(1)
-      .max(14),
+      .max(60),
     cohorts: z
       .array(
         z.object({
@@ -430,12 +430,13 @@ export const PlannerV2OutputSchema = z.object({
         })
       )
       .min(4)
-      .max(80),
+      .max(160),
   }),
 });
 export type PlannerV2Output = z.infer<typeof PlannerV2OutputSchema>;
 
-// One cohort-simulation call returns 25–50 individual personas.
+// One cohort-simulation call returns the requested number of individual personas
+// (usually 25–50, but custom audience sizes can require tiny final batches).
 // Length caps TRUNCATE instead of reject — a model that writes a slightly
 // long summary/field must never fail (and waste tokens on) the whole cohort.
 const cappedStr = (max: number) =>
@@ -471,7 +472,7 @@ export const CohortSimOutputSchema = z.object({
         personalityTraits: cappedArr(12).default([]),
       })
     )
-    .min(5)
+    .min(1)
     .max(60),
 });
 export type CohortSimOutput = z.infer<typeof CohortSimOutputSchema>;
@@ -819,6 +820,62 @@ const EMPTY_FINANCIALS = {
   sourceRunId: null,
 };
 
+// Owner Dashboard › Inspiration ("swipe file"). Real, verified reference
+// material the founder can open and copy. Every link is checked before it is
+// shown (YouTube via oEmbed; story sources via fetch) — see verifyInspiration.
+export const VideoExampleSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  channel: z.string().default(""),
+  youtubeId: z.string(), // 11-char id; the embed is built from this
+  url: z.string(), // canonical watch url
+  whyRelevant: z.string(),
+  takeaway: z.string(), // the specific move to copy
+});
+export type VideoExample = z.infer<typeof VideoExampleSchema>;
+
+export const PlacementExampleSchema = z.object({
+  id: z.string(),
+  pattern: z.string(), // "Hero shot", "In-context lifestyle", "Flat-lay", …
+  account: z.string(), // a real account that does it well
+  accountUrl: z.string().nullable().default(null),
+  platform: z.string().default(""),
+  recipe: z.string(), // how to shoot/produce it
+  whyItWorks: z.string(),
+});
+export type PlacementExample = z.infer<typeof PlacementExampleSchema>;
+
+export const SuccessStorySchema = z.object({
+  id: z.string(),
+  brand: z.string(),
+  platform: z.string().nullable().default(null),
+  summary: z.string(),
+  theMove: z.string(), // the specific play that worked
+  result: z.string(), // the outcome (growth, sales, …)
+  sourceUrl: z.string(), // cited, working article url
+});
+export type SuccessStory = z.infer<typeof SuccessStorySchema>;
+
+export const InspirationKitSchema = z.object({
+  videoExamples: z.array(VideoExampleSchema).default([]),
+  placementExamples: z.array(PlacementExampleSchema).default([]),
+  successStories: z.array(SuccessStorySchema).default([]),
+});
+export type InspirationKit = z.infer<typeof InspirationKitSchema>;
+
+export const InspirationSectionSchema = z.object({
+  kit: InspirationKitSchema.nullable().default(null),
+  generatedAt: z.string().nullable().default(null),
+  sourceRunId: z.string().nullable().default(null),
+});
+export type InspirationSection = z.infer<typeof InspirationSectionSchema>;
+
+const EMPTY_INSPIRATION = {
+  kit: null,
+  generatedAt: null,
+  sourceRunId: null,
+};
+
 export const OwnerDashboardSchema = z.object({
   brandSocial: BrandSocialSectionSchema.default({
     kit: null,
@@ -827,6 +884,7 @@ export const OwnerDashboardSchema = z.object({
     sourceRunId: null,
   }),
   financials: FinancialsSectionSchema.default(EMPTY_FINANCIALS),
+  inspiration: InspirationSectionSchema.default(EMPTY_INSPIRATION),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 
@@ -918,6 +976,74 @@ export type SimulationRunRecord = {
     audienceAggregate: AudienceAggregate | null;
   };
 };
+
+// ---------------------------------------------------------------------------
+// Per-run industry classification — the routing key for REAL structured data.
+// One LLM call maps the venture to an industry, HS code(s) for physical goods,
+// and OSM shop tags, so trade/tariff/local-competition providers can be matched
+// to THIS venture (option C, industry-aware).
+// ---------------------------------------------------------------------------
+export const IndustryProfileSchema = z.object({
+  industry: z.string(), // broad, e.g. "apparel & fashion"
+  category: z.string().default(""), // narrower, e.g. "men's western shirts"
+  isPhysicalGood: z.boolean().default(true),
+  // 2–6 digit Harmonized System codes (trade + tariff lookups); [] if not a good.
+  hsCodes: z.array(z.string()).max(8).default([]),
+  // OpenStreetMap shop= values for the outlets that sell this (local competition).
+  osmShopTags: z.array(z.string()).max(8).default([]),
+  // Curated-dataset registry key (lib/datasources/library.ts).
+  libraryKey: z.string().default("general"),
+  keywords: z.array(z.string()).max(12).default([]),
+  // Government open-dataset TOPICS relevant to this industry (e.g. "building
+  // permits", "construction", "food business licenses", "retail trade"). Used
+  // to discover real datasets on city/national open-data portals.
+  openDataQueries: z.array(z.string()).max(6).default([]),
+});
+export type IndustryProfile = z.infer<typeof IndustryProfileSchema>;
+
+// ---------------------------------------------------------------------------
+// Auto-built industry knowledge pack (option A). One agent researches an
+// industry and emits this; it's cached globally and injected as ground truth +
+// planning guidance, so industry knowledge is never hand-authored.
+// ---------------------------------------------------------------------------
+export const PlanningTemplateSchema = z.object({
+  // Industry-appropriate buyer/customer types (architecture → developer,
+  // homeowner, institution, government; not retail shoppers).
+  customerRoles: z.array(z.string()).max(10).default([]),
+  // Industry-appropriate tiers/segments.
+  segments: z.array(z.string()).max(8).default([]),
+  // Suggested research desks for this industry.
+  keyDesks: z
+    .array(
+      z.object({
+        name: z.string(),
+        domain: DomainSchema,
+        why: z.string().default(""),
+      })
+    )
+    .max(16)
+    .default([]),
+  // The metrics that matter (architecture → project fee, win rate, not WTP).
+  kpis: z.array(z.string()).max(10).default([]),
+  notes: z.string().default(""),
+});
+export type PlanningTemplate = z.infer<typeof PlanningTemplateSchema>;
+
+export const IndustryKnowledgePackSchema = z.object({
+  industry: z.string(),
+  summary: z.string(),
+  facts: z
+    .array(
+      z.object({
+        text: z.string(),
+        source: z.string().default(""),
+      })
+    )
+    .max(20)
+    .default([]),
+  planningTemplate: PlanningTemplateSchema,
+});
+export type IndustryKnowledgePack = z.infer<typeof IndustryKnowledgePackSchema>;
 
 // World model — the converged terminal object (SPEC §4.5, v2: + audience)
 export type WorldModel = {

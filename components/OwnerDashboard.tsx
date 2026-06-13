@@ -1,22 +1,25 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Share2, TrendingUp, Loader2 } from "lucide-react";
+import { LayoutDashboard, Share2, TrendingUp, Sparkles, Loader2 } from "lucide-react";
 import type {
   BrandSocialSection as BrandSocialState,
   FinancialsSection as FinancialsState,
+  InspirationSection as InspirationState,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import BrandSocialSection from "./BrandSocialSection";
 import FinancialsSection from "./FinancialsSection";
+import InspirationSection from "./InspirationSection";
 
 // The Owner Dashboard is an extensible home for owner-facing tools. The left
 // rail is data-driven so new sections (suppliers, launch checklist) slot in.
-type SectionId = "brandSocial" | "financials";
+type SectionId = "brandSocial" | "financials" | "inspiration";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
   { id: "financials", label: "Financials", icon: TrendingUp },
   { id: "brandSocial", label: "Brand & Social", icon: Share2 },
+  { id: "inspiration", label: "Inspiration", icon: Sparkles },
 ];
 
 export default function OwnerDashboard({
@@ -31,6 +34,7 @@ export default function OwnerDashboard({
   const [section, setSection] = useState<SectionId>("financials");
   const [brandSocial, setBrandSocial] = useState<BrandSocialState | null>(null);
   const [financials, setFinancials] = useState<FinancialsState | null>(null);
+  const [inspiration, setInspiration] = useState<InspirationState | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Hydrate saved Owner Dashboard state (generated kit + checkbox progress)
@@ -49,6 +53,7 @@ export default function OwnerDashboard({
           if (!cancelled) {
             setBrandSocial(project?.ownerDashboard?.brandSocial ?? null);
             setFinancials(project?.ownerDashboard?.financials ?? null);
+            setInspiration(project?.ownerDashboard?.inspiration ?? null);
           }
         }
       } catch {
@@ -111,6 +116,13 @@ export default function OwnerDashboard({
             projectId={projectId}
             state={state}
             initial={brandSocial}
+          />
+        ) : section === "inspiration" ? (
+          <InspirationSection
+            runId={runId}
+            state={state}
+            initial={inspiration}
+            onSaved={setInspiration}
           />
         ) : null}
       </div>

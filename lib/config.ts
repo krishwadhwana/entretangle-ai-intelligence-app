@@ -39,7 +39,7 @@ export const config = {
   },
   // --- v2: audience simulation ---
   get maxCohorts() {
-    return intEnv("MAX_COHORTS", 60);
+    return intEnv("MAX_COHORTS", 120);
   },
   /**
    * The whole simulated audience targets ~this many personas, distributed
