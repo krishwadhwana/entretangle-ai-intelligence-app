@@ -1,17 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Share2, Loader2 } from "lucide-react";
-import type { BrandSocialSection as BrandSocialState } from "@/lib/schema";
+import { LayoutDashboard, Share2, TrendingUp, Loader2 } from "lucide-react";
+import type {
+  BrandSocialSection as BrandSocialState,
+  FinancialsSection as FinancialsState,
+} from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import BrandSocialSection from "./BrandSocialSection";
+import FinancialsSection from "./FinancialsSection";
 
-// The Owner Dashboard is an extensible home for owner-facing tools. Today it
-// holds one section — Brand & Social — but the left rail is data-driven so new
-// sections (e.g. finances, suppliers, launch checklist) slot in later.
-type SectionId = "brandSocial";
+// The Owner Dashboard is an extensible home for owner-facing tools. The left
+// rail is data-driven so new sections (suppliers, launch checklist) slot in.
+type SectionId = "brandSocial" | "financials";
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
+  { id: "financials", label: "Financials", icon: TrendingUp },
   { id: "brandSocial", label: "Brand & Social", icon: Share2 },
 ];
 
@@ -24,8 +28,9 @@ export default function OwnerDashboard({
   projectId: string | null;
   state: CanvasState;
 }) {
-  const [section, setSection] = useState<SectionId>("brandSocial");
+  const [section, setSection] = useState<SectionId>("financials");
   const [brandSocial, setBrandSocial] = useState<BrandSocialState | null>(null);
+  const [financials, setFinancials] = useState<FinancialsState | null>(null);
   const [loading, setLoading] = useState(true);
 
   // Hydrate saved Owner Dashboard state (generated kit + checkbox progress)
@@ -43,6 +48,7 @@ export default function OwnerDashboard({
           const { project } = await res.json();
           if (!cancelled) {
             setBrandSocial(project?.ownerDashboard?.brandSocial ?? null);
+            setFinancials(project?.ownerDashboard?.financials ?? null);
           }
         }
       } catch {
@@ -91,6 +97,13 @@ export default function OwnerDashboard({
           <div className="flex h-full items-center justify-center text-xs text-neutral-400">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
           </div>
+        ) : section === "financials" ? (
+          <FinancialsSection
+            runId={runId}
+            projectId={projectId}
+            state={state}
+            initial={financials}
+          />
         ) : section === "brandSocial" ? (
           <BrandSocialSection
             runId={runId}
