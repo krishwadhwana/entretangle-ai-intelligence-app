@@ -171,7 +171,16 @@ entrepreneur's profile (any product, any geography), output:
    Pick from these archetypes, localized to the client (skip only ones truly
    irrelevant to this product):
    - market: Market Demand (TAM/SAM, trends per geography); Brand &
-     Positioning (whitespace, premium cues); one Locality desk per key city
+     Positioning (whitespace, premium cues); a Locality desk per key place
+     (REQUIRED — one for each metro/cluster you list) that researches the
+     CURRENT, present-day state of THIS specific category in THAT specific
+     place: what's actually selling there now, local taste and trends, the
+     real local competitors and where people shop (named high streets, malls,
+     markets), local price expectations, and local buying occasions/festivals.
+     Cities are NOT interchangeable — Mumbai, Delhi, Bangalore, Chennai and
+     Kolkata each have a different fashion/market character, and a tier-2 city
+     or town differs again; each Locality desk must surface what makes its
+     place distinct, never a generic national answer
    - competitor: Competitor Stats (real numbers: pricing, revenue, funding,
      share); Competitor Stories (how rivals launched/pivoted/failed)
    - product: Product & Materials desk — for clothing: fabrics/blends, fits &
@@ -207,20 +216,32 @@ entrepreneur's profile (any product, any geography), output:
 2. "cohortPlan": the audience simulation matrix. This drives a simulated
    audience of THOUSANDS of personas, so maximise coverage and diversity.
    - "currency": ISO currency code personas quote willingness-to-pay in.
-   - "localities": 4–12 real cities/neighbourhoods relevant to the client
-     (mix metros, tier-2 cities and any export markets), each with real
-     lat/lng (decimal degrees).
+   - "localities": 6–12 real places spanning the FULL settlement hierarchy of
+     the client's stated geography — NOT just metros. If the geography is
+     national or broad ("PAN-India", "all of India", "nationwide", a whole
+     country/region), you MUST include a spread across the hierarchy: a few
+     top metros, several tier-2 cities, at least one or two tier-3 cities, and
+     at least one representative small town / semi-urban or rural cluster —
+     because most of the population, and a very different kind of demand, lives
+     outside the metros (e.g. for India: not only Mumbai/Delhi/Bangalore but
+     also the likes of Jaipur, Indore, Surat, Lucknow, Coimbatore, plus a
+     smaller town/rural belt). Include export markets too where relevant. Each
+     locality needs real lat/lng (decimal degrees). Treat every place as
+     genuinely DISTINCT.
    - "cohorts": 24–60 cells of locality x segment x role with weightPct
      (share of addressable audience, must sum to ~100). Span as many distinct
      locality×segment×role combinations as plausibly buy/sell this product —
-     breadth of cells is what makes the audience diverse.
+     breadth of cells is what makes the audience diverse, and the non-metro
+     places must be represented, not just metros.
      segments: budget|middle|affluent|luxury (income tiers).
      roles: consumer|retail_exec (store/category buying executives)|
      institutional (hospital/hotel/office procurement)|distributor
      (importers, wholesalers)|influencer (designers, tastemakers).
-     Only include role x segment combos that make sense for the product;
-     weight consumer cohorts highest unless the business is B2B, but still
-     include a long tail of smaller cohorts for edge segments.
+     Only include role x segment combos that make sense for the product.
+     Weight by REAL market reality: metros skew more affluent/luxury while
+     tier-2/3 and rural skew budget/middle — so demand and purchase intent for
+     a premium product should be genuinely higher in fashion-forward metros and
+     lower in small towns. Do NOT make every place/segment identical.
 
 If a FOCUS QUESTION and/or ADDITIONAL CONTEXT are provided, treat them as the
 priority for THIS run: bias the desk selection and every mission toward
@@ -351,7 +372,14 @@ Rules:
   gender, occupation matching the segment, monthly income band as a short
   string in ${currency}.
 - "intent": 0–1 probability they buy/stock/specify within 12 months. Be
-  honest — most cohorts have many low-intent people. Vary widely.
+  honest — most cohorts have many low-intent people. Vary widely. Critically,
+  the cohort's MEAN intent MUST reflect the real product-market fit of THIS
+  exact place and segment — ${cohort.locality} (${cohort.segment}) is not
+  interchangeable with any other city or tier. A fashion-forward metro vs a
+  tier-2 city vs a small town, and a budget vs an affluent vs a luxury buyer,
+  have genuinely different adoption and purchase probability for this product;
+  do not return the same average for every cohort. Skew intent up where the
+  product fits the place/segment and down where it does not.
 - "wtp": willingness to pay in ${currency} for the most relevant unit of this
   product (for retail_exec/distributor: per-unit buying price they'd accept;
   for institutional: per-unit budget). Vary realistically by segment.
