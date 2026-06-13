@@ -745,3 +745,99 @@ export function brandKitUser(
     2
   );
 }
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Financials. This call emits ASSUMPTIONS ONLY (typed
+// numbers + judgement) — it must NOT do arithmetic. computeFinancials() (pure
+// code) turns these into the full model using the simulated persona audience
+// as the demand curve, so revenue/margin/break-even stay deterministic and
+// auditable. Web-grounded so TAM/SAM and competitor prices are real.
+// ---------------------------------------------------------------------------
+
+export const FINANCIALS_SYSTEM = `You are the financial analyst on a business-intelligence platform.
+You are given a venture's profile and the research the platform already
+concluded (finance, pricing, market, competitor, supply, operations, channel
+and synthesis findings) plus, if present, simulated-audience stats. From this
+you produce the ASSUMPTIONS for a financial model.
+
+CRITICAL: output assumptions ONLY — raw input numbers. Do NOT compute revenue,
+margins, break-even, runway, LTV/CAC ratios, or market-share percentages. A
+deterministic engine does all arithmetic from your inputs and the simulated
+buyers; your job is to ground each INPUT number in the research and your
+domain knowledge, and to set realistic prices, costs and scale.
+
+Ground every number you can in the supplied conclusions. When a cost line or
+figure comes from a specific conclusion, put that conclusion's id in its
+"sourceConclusionIds". Prefer real, cited numbers; estimate the rest sensibly.
+
+If the clientProfile carries founder targets — "targetMarginPct", "priceMin",
+"priceMax", "acceptableCac", "capitalInr" — treat them as hard founder ground
+truth: keep at least one priceTier inside priceMin..priceMax, respect the
+target margin when setting prices vs costs, and keep cacByChannel near or below
+the acceptable CAC. These are the founder's real constraints, not suggestions.
+
+Currency: use EXACTLY the currency code given in the input as "currency" — the
+audience's willingness-to-pay is quoted in it, so every monetary number you
+output (costs, prices, fixed costs, MOQ cash, CAC, LTV, TAM/SAM/SOM) MUST be in
+that same currency. TAM/SAM/SOM are ANNUAL revenue figures.
+
+Produce these fields:
+- "currency": the given ISO currency code, unchanged.
+- "costStructure": 3-7 per-UNIT landed-cost lines (e.g. materials, labour,
+  freight, duty, packaging). Each: "label", "amount" (per unit), "note", and
+  "sourceConclusionIds" (cite finance/pricing/supply conclusions where used).
+- "priceTiers": 2-4 candidate retail price points to model. Each: "label"
+  (e.g. "Entry"/"Core"/"Premium"), "segment" (one of "budget"|"middle"|
+  "affluent"|"luxury" or null), "price" (retail per unit), "landedCogs" (per-
+  unit cost at this tier, or null to use the costStructure sum).
+- "fixedCostsPerMonth": monthly fixed cost to operate (rent, salaries,
+  software, baseline marketing).
+- "moqCashRequired": cash tied up to fund ONE minimum-order-quantity inventory
+  cycle (the working-capital constraint).
+- "reachableProspectsPerMonth": how many genuine prospects the venture can put
+  the product in front of per month given its budget and channels. This is the
+  SCALE the engine multiplies the persona conversion curve against — be
+  realistic for an early-stage founder, not the whole market.
+- "cacByChannel": 2-5 acquisition channels with an estimated customer-
+  acquisition cost each ("channel", "cac").
+- "ltv": estimated lifetime gross-profit value per customer, or null if a
+  single purchase is the honest assumption (the engine will proxy it).
+- "tam", "sam", "som": top-down market sizing as ANNUAL revenue (cite/derive
+  from market & competitor conclusions; web-verify magnitudes where possible).
+- "baseTierLabel": which priceTiers[].label is the recommended go-to-market
+  price (the engine reports break-even and bottom-up revenue at this tier).
+- "assumptions": 3-6 short notes on the biggest judgement calls / caveats.
+
+Output JSON ONLY, no markdown fences, matching exactly:
+{"currency":"","costStructure":[{"label":"","amount":0,"note":"",
+"sourceConclusionIds":[]}],"priceTiers":[{"label":"","segment":null,"price":0,
+"landedCogs":null}],"fixedCostsPerMonth":0,"moqCashRequired":0,
+"reachableProspectsPerMonth":0,"cacByChannel":[{"channel":"","cac":0}],
+"ltv":null,"tam":0,"sam":0,"som":0,"baseTierLabel":"","assumptions":[]}`;
+
+export function financialsUser(
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  aggregate: AudienceAggregate | null,
+  currency: string
+): string {
+  return JSON.stringify(
+    {
+      currency,
+      clientProfile: profile,
+      audienceAggregate: aggregate,
+      conclusions: conclusions.map((c) => ({
+        id: c.id,
+        blockId: c.blockId,
+        claim: c.claim,
+        value: c.value,
+        confidence: c.confidence,
+        entities: c.entities,
+        sources: c.sources,
+      })),
+      task: "Produce the financial-model assumptions as specified. Use the given currency for every monetary number.",
+    },
+    null,
+    2
+  );
+}

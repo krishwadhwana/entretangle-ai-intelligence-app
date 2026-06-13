@@ -11,6 +11,7 @@ import {
   IntakeOutputSchema,
   CohortSimOutputSchema,
   BrandKitSchema,
+  FinancialInputsSchema,
   FinalReportSchema,
   type PlannerV2Output,
   type ExecutorOutput,
@@ -22,6 +23,7 @@ import {
   type IntakeOutput,
   type CohortSimOutput,
   type BrandKit,
+  type FinancialInputs,
   type FinalReport,
   type ChatMessage,
   type ClientProfile,
@@ -49,6 +51,8 @@ import {
   audienceChatUser,
   BRAND_KIT_SYSTEM,
   brandKitUser,
+  FINANCIALS_SYSTEM,
+  financialsUser,
 } from "./prompts";
 import {
   mockPlannerV2Output,
@@ -798,6 +802,109 @@ export async function callBrandKit(
       system: BRAND_KIT_SYSTEM,
       user: brandKitUser(profile, conclusions, aggregate),
       schema: BrandKitSchema,
+      maxCompletionTokens: 16000,
+    });
+  }
+}
+
+// Mock assumptions for MOCK_MODE — shaped like a furniture venture so the
+// deterministic engine has something realistic to compute against.
+const mockFinancialInputs: FinancialInputs = FinancialInputsSchema.parse({
+  currency: "INR",
+  costStructure: [
+    { label: "Materials", amount: 24000, note: "solid teak timber" },
+    { label: "Labour", amount: 11000, note: "workshop build" },
+    { label: "Hardware & finish", amount: 7000, note: "" },
+  ],
+  priceTiers: [
+    { label: "Entry", segment: "budget", price: 80000, landedCogs: null },
+    { label: "Core", segment: "middle", price: 120000, landedCogs: null },
+    { label: "Premium", segment: "affluent", price: 180000, landedCogs: null },
+  ],
+  fixedCostsPerMonth: 300000,
+  moqCashRequired: 4000000,
+  reachableProspectsPerMonth: 1800,
+  cacByChannel: [
+    { channel: "instagram", cac: 4000 },
+    { channel: "google", cac: 6000 },
+  ],
+  ltv: null,
+  tam: 5_000_000_000,
+  sam: 800_000_000,
+  som: 60_000_000,
+  baseTierLabel: "Core",
+  assumptions: [
+    "Single-purchase LTV proxy until repeat-rate data exists",
+    "Reach is early-stage budget-constrained, not whole-market",
+  ],
+});
+
+/**
+ * Owner Dashboard › Financials. Emits the ASSUMPTIONS for the financial model
+ * (typed numbers only — computeFinancials() does the arithmetic). Web-grounded
+ * so TAM/SAM and competitor price points are real; falls back to a plain JSON
+ * call on any web/parse failure, exactly like callBrandKit.
+ */
+export async function callFinancialInputs(
+  runId: string,
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  aggregate: AudienceAggregate | null,
+  currency: string
+): Promise<FinancialInputs> {
+  if (config.mockMode)
+    return FinancialInputsSchema.parse({ ...mockFinancialInputs, currency });
+
+  const system = `${FINANCIALS_SYSTEM}\n\n--- INPUT ---\n${financialsUser(
+    profile,
+    conclusions,
+    aggregate,
+    currency
+  )}`;
+
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content:
+            "Search the web to sanity-check market size and prices, then output JSON only.",
+        },
+      ],
+      max_output_tokens: 16000,
+      reasoning: { effort: "low" },
+    });
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = FinancialInputsSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (parsed.success) return parsed.data;
+    throw new Error(
+      `financials (web) failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  } catch (e) {
+    console.error(`[financials] web-grounded path failed, falling back:`, e);
+    return callJson({
+      runId,
+      system: FINANCIALS_SYSTEM,
+      user: financialsUser(profile, conclusions, aggregate, currency),
+      schema: FinancialInputsSchema,
       maxCompletionTokens: 16000,
     });
   }

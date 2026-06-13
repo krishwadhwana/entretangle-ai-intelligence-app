@@ -111,6 +111,14 @@ export const ClientProfileSchema = z.object({
   geography: z.array(z.string()).optional(),
   targetAudience: z.string().optional(),
   funding: FundingSchema.nullable().optional(),
+  // Numeric financial targets captured at intake — feed the Financials module
+  // as founder-entered ground truth. All optional/nullable so profiles saved
+  // before these existed still parse. Currency follows the venture (capitalInr
+  // is the legacy INR field; these are in the venture's working currency).
+  targetMarginPct: z.number().min(0).max(100).nullable().optional(),
+  priceMin: z.number().min(0).nullable().optional(),
+  priceMax: z.number().min(0).nullable().optional(),
+  acceptableCac: z.number().min(0).nullable().optional(),
 });
 export type ClientProfile = z.infer<typeof ClientProfileSchema>;
 
@@ -607,6 +615,161 @@ export const ChecklistItemSchema = z.object({
 });
 export type ChecklistItem = z.infer<typeof ChecklistItemSchema>;
 
+export const FinSourceSchema = z.enum([
+  "ai_estimated", // first-pass estimate from desks / web research
+  "founder_entered", // the founder typed a real number
+  "derived_from_data", // pulled from an uploaded Document (quote, Shopify CSV)
+  "computed", // computeFinancials() derived it from other figures
+]);
+export type FinSource = z.infer<typeof FinSourceSchema>;
+
+// A single provenanced number. `unit` is free text ("INR", "INR/unit",
+// "units/mo", "months", "%", "x"). `basis` is a one-line note on derivation;
+// `sourceConclusionIds` link back to the desk conclusions it came from.
+export const FinNumSchema = z.object({
+  value: z.number(),
+  unit: z.string().default(""),
+  source: FinSourceSchema.default("ai_estimated"),
+  confidence: z.number().min(0).max(1).default(0.5),
+  basis: z.string().default(""),
+  sourceConclusionIds: z.array(z.string()).default([]),
+});
+export type FinNum = z.infer<typeof FinNumSchema>;
+
+// One line of the per-unit landed-cost build-up (BOM, labour, freight, duty…).
+export const FinCostLineSchema = z.object({
+  label: z.string(),
+  amount: FinNumSchema, // per-unit cost in the model currency
+  note: z.string().default(""),
+});
+export type FinCostLine = z.infer<typeof FinCostLineSchema>;
+
+// A price point the founder might sell at. The *input* fields are price +
+// (optionally) an overriding landed cost; everything else is computed.
+export const FinPriceTierSchema = z.object({
+  label: z.string(), // "Entry" | "Core" | "Premium" | a segment name
+  segment: SegmentSchema.nullable().default(null), // ties tier ↔ audience segment
+  price: FinNumSchema, // retail price per unit
+  landedCogs: FinNumSchema, // per-unit cost at this tier (defaults to costStructure sum)
+  contributionPerUnit: FinNumSchema, // computed = price − landedCogs
+  grossMarginPct: FinNumSchema, // computed = contribution / price × 100
+  // Demand from the simulated audience at this price:
+  estUnitsPerMonth: FinNumSchema, // computed = reachable prospects × conversion at price
+  estRevenuePerMonth: FinNumSchema, // computed = units × price
+  estGrossProfitPerMonth: FinNumSchema, // computed = units × contribution
+});
+export type FinPriceTier = z.infer<typeof FinPriceTierSchema>;
+
+export const FinUnitEconomicsSchema = z.object({
+  cacByChannel: z
+    .array(z.object({ channel: z.string(), cac: FinNumSchema }))
+    .default([]),
+  blendedCac: FinNumSchema, // computed (channel-share weighted) or estimated
+  ltv: FinNumSchema, // lifetime gross-profit value of a customer
+  ltvCacRatio: FinNumSchema, // computed = ltv / blendedCac
+  paybackMonths: FinNumSchema, // computed = cac / monthly contribution per customer
+});
+export type FinUnitEconomics = z.infer<typeof FinUnitEconomicsSchema>;
+
+export const FinMarketSizingSchema = z.object({
+  // Top-down (from market/research desks):
+  tam: FinNumSchema, // total addressable market (annual revenue)
+  sam: FinNumSchema, // serviceable available market
+  som: FinNumSchema, // realistic obtainable share (annual revenue)
+  // How many prospects the venture can actually put the product in front of
+  // per month — the scale knob the persona conversion curve multiplies against.
+  reachableProspectsPerMonth: FinNumSchema,
+  // Bottom-up (computed from persona wtp×intent × reach):
+  bottomUpAnnualRevenue: FinNumSchema, // computed
+  // The reconciliation: bottom-up vs SOM, and what the gap means.
+  reconciliationNote: z.string().default(""),
+});
+export type FinMarketSizing = z.infer<typeof FinMarketSizingSchema>;
+
+export const FinBreakEvenSchema = z.object({
+  fixedCostsPerMonth: FinNumSchema, // rent, salaries, software, marketing base
+  contributionPerUnit: FinNumSchema, // at the base/recommended tier
+  breakEvenUnitsPerMonth: FinNumSchema, // computed = fixed / contribution
+  breakEvenRevenuePerMonth: FinNumSchema, // computed
+  // months until cumulative gross profit covers fixed + initial outlay, given
+  // the base-tier demand; null if it never breaks even at modelled demand.
+  monthsToBreakEven: FinNumSchema.nullable().default(null),
+});
+export type FinBreakEven = z.infer<typeof FinBreakEvenSchema>;
+
+export const FinRunwayFitSchema = z.object({
+  capitalAvailable: FinNumSchema, // from ClientProfile.funding / capitalInr
+  monthlyBurn: FinNumSchema, // fixed costs (+ pre-revenue losses)
+  moqCashRequired: FinNumSchema, // cash tied up to fund one MOQ inventory cycle
+  runwayMonths: FinNumSchema, // computed = capital / monthlyBurn
+  fundsMoq: z.boolean().default(false), // computed verdict: capital ≥ moq cash?
+  verdict: z.string().default(""), // one-line funding-fit conclusion
+});
+export type FinRunwayFit = z.infer<typeof FinRunwayFitSchema>;
+
+// The full model — persisted (later) under ownerDashboard.financials, exported
+// into the pitch deck / final report. `inputs` are the raw assumptions fed in;
+// the rest is the computed output.
+export const FinancialModelSchema = z.object({
+  currency: z.string().default("INR"),
+  costStructure: z.array(FinCostLineSchema).default([]),
+  priceTiers: z.array(FinPriceTierSchema).default([]),
+  unitEconomics: FinUnitEconomicsSchema,
+  marketSizing: FinMarketSizingSchema,
+  breakEven: FinBreakEvenSchema,
+  runwayFit: FinRunwayFitSchema,
+  assumptions: z.array(z.string()).default([]),
+  // Overall data-maturity: fraction of input numbers that are real
+  // (founder_entered/derived_from_data) vs ai_estimated. Drives the "firming
+  // up" progress meter. Computed.
+  dataMaturityPct: z.number().min(0).max(100).default(0),
+  generatedAt: z.string().nullable().default(null),
+  sourceRunId: z.string().nullable().default(null),
+});
+export type FinancialModel = z.infer<typeof FinancialModelSchema>;
+
+// What the finance-synthesis LLM call emits: the *assumptions* only (typed
+// numbers + judgement), never the arithmetic. computeFinancials() turns this
+// into a full FinancialModel using the persona audience as the demand curve.
+export const FinancialInputsSchema = z.object({
+  currency: z.string(),
+  costStructure: z
+    .array(
+      z.object({
+        label: z.string(),
+        amount: z.number(),
+        note: z.string().default(""),
+        sourceConclusionIds: z.array(z.string()).default([]),
+      })
+    )
+    .min(1),
+  // Candidate price points to model (retail price per unit).
+  priceTiers: z
+    .array(
+      z.object({
+        label: z.string(),
+        segment: SegmentSchema.nullable().default(null),
+        price: z.number(),
+        landedCogs: z.number().nullable().default(null), // null → sum costStructure
+      })
+    )
+    .min(1)
+    .max(6),
+  fixedCostsPerMonth: z.number(),
+  moqCashRequired: z.number(),
+  reachableProspectsPerMonth: z.number(),
+  cacByChannel: z
+    .array(z.object({ channel: z.string(), cac: z.number() }))
+    .default([]),
+  ltv: z.number().nullable().default(null),
+  tam: z.number(),
+  sam: z.number(),
+  som: z.number(),
+  baseTierLabel: z.string(), // which priceTiers[].label is the recommended one
+  assumptions: z.array(z.string()).default([]),
+});
+export type FinancialInputs = z.infer<typeof FinancialInputsSchema>;
+
 export const BrandKitSchema = z.object({
   comparableAccounts: z.array(ComparableAccountSchema).default([]),
   brandIdentity: BrandIdentitySchema,
@@ -625,6 +788,28 @@ export const BrandSocialSectionSchema = z.object({
 });
 export type BrandSocialSection = z.infer<typeof BrandSocialSectionSchema>;
 
+// Owner Dashboard › Financials. Stores the computed FinancialModel plus the raw
+// `inputs` (assumptions) it was computed from, so a founder override re-runs
+// computeFinancials() against the same persona audience. `editedKeys` records
+// which inputs the founder changed (drives the founder_entered provenance +
+// the "firming up" data-maturity meter).
+export const FinancialsSectionSchema = z.object({
+  model: FinancialModelSchema.nullable().default(null),
+  inputs: FinancialInputsSchema.nullable().default(null),
+  editedKeys: z.array(z.string()).default([]),
+  generatedAt: z.string().nullable().default(null),
+  sourceRunId: z.string().nullable().default(null),
+});
+export type FinancialsSection = z.infer<typeof FinancialsSectionSchema>;
+
+const EMPTY_FINANCIALS = {
+  model: null,
+  inputs: null,
+  editedKeys: [],
+  generatedAt: null,
+  sourceRunId: null,
+};
+
 export const OwnerDashboardSchema = z.object({
   brandSocial: BrandSocialSectionSchema.default({
     kit: null,
@@ -632,8 +817,10 @@ export const OwnerDashboardSchema = z.object({
     generatedAt: null,
     sourceRunId: null,
   }),
+  financials: FinancialsSectionSchema.default(EMPTY_FINANCIALS),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
+
 
 // Intake interview (Shot 8, v2.1: structured MCQ): either the next question
 // — with clickable options, Cursor-style — or the final profile. The UI

@@ -6,6 +6,7 @@ import {
   OwnerDashboardSchema,
   type BrandKit,
   type ClientProfile,
+  type FinancialsSection,
   type InterviewTranscript,
   type OwnerDashboard,
   type SimulationRunRecord,
@@ -46,6 +47,13 @@ export type ProjectFull = ProjectSummary & {
 // Default state for a freshly-initialised owner dashboard.
 const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
   brandSocial: { kit: null, checks: {}, generatedAt: null, sourceRunId: null },
+  financials: {
+    model: null,
+    inputs: null,
+    editedKeys: [],
+    generatedAt: null,
+    sourceRunId: null,
+  },
 };
 
 function toSummary(row: {
@@ -214,6 +222,21 @@ export async function saveOwnerChecks(
   const owner = await readOwnerDashboard(id);
   owner.brandSocial.checks = { ...owner.brandSocial.checks, ...patch };
   await writeOwnerDashboard(id, owner);
+}
+
+/**
+ * Persist the Financials section (computed model + the assumptions it was
+ * computed from + which inputs the founder overrode). Read-modify-write the
+ * owner_dashboard column so the sibling brandSocial section is untouched.
+ */
+export async function saveFinancials(
+  id: string,
+  section: FinancialsSection
+): Promise<FinancialsSection> {
+  const owner = await readOwnerDashboard(id);
+  owner.financials = section;
+  await writeOwnerDashboard(id, owner);
+  return owner.financials;
 }
 
 /**
