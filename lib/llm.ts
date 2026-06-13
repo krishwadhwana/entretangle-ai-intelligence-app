@@ -11,6 +11,7 @@ import {
   IntakeOutputSchema,
   CohortSimOutputSchema,
   BrandKitSchema,
+  FinalReportSchema,
   type PlannerV2Output,
   type ExecutorOutput,
   type EntanglerOutput,
@@ -21,6 +22,7 @@ import {
   type IntakeOutput,
   type CohortSimOutput,
   type BrandKit,
+  type FinalReport,
   type ChatMessage,
   type ClientProfile,
   type Conclusion,
@@ -41,6 +43,8 @@ import {
   INTAKE_SYSTEM,
   QUERY_SYSTEM,
   queryV2User,
+  FINAL_REPORT_SYSTEM,
+  finalReportUser,
   audienceChatSystem,
   audienceChatUser,
   BRAND_KIT_SYSTEM,
@@ -628,6 +632,77 @@ export async function callQuery(
     system: QUERY_SYSTEM,
     user: queryV2User(profile, conclusions, aggregate, question),
     schema: QueryOutputSchema,
+  });
+}
+
+export async function callFinalReport(
+  runId: string,
+  profile: ClientProfile,
+  blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
+  aggregate: AudienceAggregate | null
+): Promise<FinalReport> {
+  if (config.mockMode) {
+    return FinalReportSchema.parse({
+      title: `Final report: ${profile.product}`,
+      executiveSummary:
+        "Mock final report synthesising market, product, customer, competitor, economics and action-plan findings.",
+      verdict:
+        "Proceed only after validating the highest-risk assumptions in pricing, channel economics and customer adoption.",
+      sections: [
+        {
+          title: "Market analysis",
+          summary: "The market has identifiable demand pockets but requires focused entry.",
+          bullets: ["Prioritise the strongest geography/segment pair.", "Use desk findings to size the first wedge."],
+          citedConclusionIds: blocks.flatMap((b) => b.conclusions).slice(0, 2).map((c) => c.id),
+        },
+        {
+          title: "Product analysis",
+          summary: "The offer needs crisp positioning and proof of differentiated value.",
+          bullets: ["Tighten the product promise.", "Validate the feature or SKU that drives conversion."],
+          citedConclusionIds: [],
+        },
+        {
+          title: "Customer perception",
+          summary: "Audience reactions split between clear utility and adoption objections.",
+          bullets: ["Use supportive language in messaging.", "Defuse the dominant objections early."],
+          citedConclusionIds: [],
+        },
+        {
+          title: "Competitors",
+          summary: "Competitive pressure requires a narrow, defensible beachhead.",
+          bullets: ["Map direct substitutes.", "Avoid broad undifferentiated launch claims."],
+          citedConclusionIds: [],
+        },
+        {
+          title: "Economic viability",
+          summary: "Economics depend on pricing discipline and channel costs.",
+          bullets: ["Protect gross margin.", "Run a unit-economics pilot before scaling."],
+          citedConclusionIds: [],
+        },
+        {
+          title: "How to act",
+          summary: "Move through a staged validation plan before committing full capital.",
+          bullets: ["Pilot with the highest-intent cohort.", "Measure conversion, CAC, margin and repeat purchase."],
+          citedConclusionIds: [],
+        },
+      ],
+      nextActions: [
+        "Choose one launch segment and one primary channel.",
+        "Run a small paid or partner pilot with explicit success thresholds.",
+        "Revise pricing and messaging using the strongest objections.",
+      ],
+      risks: [
+        "The simulated audience is directional and must be validated with real buyers.",
+        "Unit economics can break if acquisition, discounts or operations costs are underestimated.",
+      ],
+    });
+  }
+  return callJson({
+    runId,
+    system: FINAL_REPORT_SYSTEM,
+    user: finalReportUser(profile, blocks, aggregate),
+    schema: FinalReportSchema,
+    maxCompletionTokens: 16000,
   });
 }
 

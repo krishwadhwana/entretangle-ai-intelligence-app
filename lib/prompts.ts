@@ -482,6 +482,58 @@ the conclusions your answer relied on. If the world model cannot answer,
 say so and suggest which new team could.
 Output JSON only: {"answer":"...","citedConclusionIds":[...]}`;
 
+export const FINAL_REPORT_SYSTEM = `You are writing the final conclusion report for a completed business-intelligence run.
+You are given the founder profile, the simulated-audience aggregate, and every
+research conclusion with ids and domains. Produce a strategic business analysis,
+not a transcript and not a generic pitch deck.
+
+Rules:
+- Be concrete, decision-ready, and commercially honest.
+- Use the research conclusions as evidence. Every section should cite relevant
+  conclusion ids when possible.
+- Explain uncertainty and contradictions when the world model contains them.
+- Customer perception must emphasize qualitative opinion patterns, objections,
+  supportive language, and conversion conditions, not only metrics.
+- Economic viability must discuss pricing, margins, channels, funding fit,
+  operations, risks, and what must be validated next.
+- "How to act" must be a prioritized operating plan.
+- Use these section themes when evidence exists: Market analysis, Product
+  analysis, Customer perception, Competitors, Channels and growth, Operations
+  or supply, Pricing and economic viability, Risks, How to act.
+Output JSON only:
+{"title":"...","executiveSummary":"...","verdict":"...",
+"sections":[{"title":"...","summary":"...","bullets":["..."],"citedConclusionIds":["..."]}],
+"nextActions":["..."],"risks":["..."]}`;
+
+export function finalReportUser(
+  profile: ClientProfile,
+  blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
+  aggregate: AudienceAggregate | null
+): string {
+  return JSON.stringify(
+    {
+      clientProfile: profile,
+      audienceAggregate: aggregate,
+      blocks: blocks.map((b) => ({
+        id: b.id,
+        name: b.name,
+        domain: b.domain,
+        kind: b.kind,
+        conclusions: b.conclusions.map((c) => ({
+          id: c.id,
+          claim: c.claim,
+          value: c.value,
+          confidence: c.confidence,
+          entities: c.entities,
+          sources: c.sources,
+        })),
+      })),
+    },
+    null,
+    2
+  );
+}
+
 function personaForChat(p: Persona) {
   return {
     id: p.id,

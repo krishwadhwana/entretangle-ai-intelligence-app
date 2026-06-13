@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CornerDownLeft, Loader2, Sparkles } from "lucide-react";
 import type { Block, Conclusion, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
@@ -98,11 +98,13 @@ function ModuleSection({
   blocks,
   onQuery,
   ready,
+  wide = false,
 }: {
   domain: Domain;
   blocks: Block[];
   onQuery: QueryFn;
   ready: boolean;
+  wide?: boolean;
 }) {
   const meta = DOMAIN_META[domain];
   const Icon = meta.icon;
@@ -129,7 +131,7 @@ function ModuleSection({
   }
 
   return (
-    <section className="rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4">
+    <section className="h-fit rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4">
       <div className="flex items-start gap-2.5">
         <span
           className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white"
@@ -148,7 +150,13 @@ function ModuleSection({
         </div>
       </div>
 
-      <ul className="mt-3 space-y-2">
+      <ul
+        className={
+          wide
+            ? "mt-3 grid grid-cols-1 gap-2 xl:grid-cols-2"
+            : "mt-3 space-y-2"
+        }
+      >
         {conclusions.length > 0 ? (
           conclusions.map((c) => <ConclusionCard key={c.id} c={c} />)
         ) : (
@@ -219,11 +227,25 @@ export default function PlaybookView({
     return m;
   }, [state.blocks, state.blockOrder]);
 
-  const orderedDomains = PLAYBOOK_ORDER.filter((d) => byDomain.has(d));
+  const orderedDomains = useMemo(
+    () => PLAYBOOK_ORDER.filter((d) => byDomain.has(d)),
+    [byDomain]
+  );
+  const [selectedDomain, setSelectedDomain] = useState<Domain | null>(null);
 
   const [gq, setGq] = useState("");
   const [gAnswer, setGAnswer] = useState<string | null>(null);
   const [gBusy, setGBusy] = useState(false);
+
+  useEffect(() => {
+    if (orderedDomains.length === 0) {
+      setSelectedDomain(null);
+      return;
+    }
+    setSelectedDomain((current) =>
+      current && orderedDomains.includes(current) ? current : orderedDomains[0]
+    );
+  }, [orderedDomains]);
 
   async function askGlobal(e: React.FormEvent) {
     e.preventDefault();
@@ -243,10 +265,21 @@ export default function PlaybookView({
     (s, d) => s + (byDomain.get(d) ?? []).flatMap((b) => b.conclusions).length,
     0
   );
+  const selectedIndex = selectedDomain
+    ? orderedDomains.indexOf(selectedDomain)
+    : -1;
+  const selectedBlocks = selectedDomain ? byDomain.get(selectedDomain) ?? [] : [];
+
+  function moveSelected(delta: number) {
+    if (selectedIndex < 0 || orderedDomains.length === 0) return;
+    const next =
+      (selectedIndex + delta + orderedDomains.length) % orderedDomains.length;
+    setSelectedDomain(orderedDomains[next]);
+  }
 
   return (
-    <div className="absolute inset-0 overflow-y-auto bg-white px-5 pb-10 pt-16">
-      <div className="mx-auto max-w-3xl">
+    <div className="absolute inset-0 overflow-y-auto bg-white px-5 pb-10 pt-10">
+      <div className="mx-auto max-w-7xl">
         <div className="flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-indigo-500" />
           <h2 className="text-lg font-semibold tracking-tight text-neutral-900">
@@ -293,21 +326,72 @@ export default function PlaybookView({
           </p>
         )}
 
-        <div className="mt-5 space-y-4">
-          {orderedDomains.length === 0 ? (
-            <p className="rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400">
+        {orderedDomains.length > 0 && (
+          <div className="sticky top-0 z-10 mt-5 border-y border-neutral-200 bg-white/95 py-2 backdrop-blur">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => moveSelected(-1)}
+                className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
+              >
+                Prev
+              </button>
+              <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
+                {orderedDomains.map((d) => {
+                  const meta = DOMAIN_META[d];
+                  const blocks = byDomain.get(d) ?? [];
+                  const count = blocks.flatMap((b) => b.conclusions).length;
+                  const active = selectedDomain === d;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setSelectedDomain(d)}
+                      className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${
+                        active
+                          ? "border-neutral-900 bg-neutral-900 text-white"
+                          : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
+                      }`}
+                    >
+                      {meta.label}
+                      <span
+                        className={`rounded-full px-1.5 text-[9px] ${
+                          active
+                            ? "bg-white/20 text-white"
+                            : "bg-neutral-100 text-neutral-500"
+                        }`}
+                      >
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              <button
+                type="button"
+                onClick={() => moveSelected(1)}
+                className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="mt-4">
+          {orderedDomains.length === 0 || !selectedDomain ? (
+            <p className="rounded-xl border border-dashed border-neutral-200 p-6 text-center text-xs text-neutral-400 xl:col-span-2">
               Desks are spinning up — modules will appear here as they report.
             </p>
           ) : (
-            orderedDomains.map((d) => (
-              <ModuleSection
-                key={d}
-                domain={d}
-                blocks={byDomain.get(d) ?? []}
-                onQuery={onQuery}
-                ready={ready}
-              />
-            ))
+            <ModuleSection
+              key={selectedDomain}
+              domain={selectedDomain}
+              blocks={selectedBlocks}
+              onQuery={onQuery}
+              ready={ready}
+              wide
+            />
           )}
         </div>
       </div>

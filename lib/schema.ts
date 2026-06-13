@@ -233,6 +233,24 @@ export const AudienceAggregateSchema = z.object({
 });
 export type AudienceAggregate = z.infer<typeof AudienceAggregateSchema>;
 
+export const FinalReportSectionSchema = z.object({
+  title: z.string().min(1).max(80),
+  summary: z.string().min(1),
+  bullets: z.array(z.string().min(1)).min(2).max(8),
+  citedConclusionIds: z.array(z.string()).default([]),
+});
+export type FinalReportSection = z.infer<typeof FinalReportSectionSchema>;
+
+export const FinalReportSchema = z.object({
+  title: z.string().min(1).max(120),
+  executiveSummary: z.string().min(1),
+  verdict: z.string().min(1),
+  sections: z.array(FinalReportSectionSchema).min(6).max(12),
+  nextActions: z.array(z.string().min(1)).min(3).max(10),
+  risks: z.array(z.string().min(1)).min(2).max(8),
+});
+export type FinalReport = z.infer<typeof FinalReportSchema>;
+
 // ---------------------------------------------------------------------------
 // SSE event protocol (SPEC §2). Discriminated union on `type`.
 // `seq` is a monotonic integer per run — the client uses it for replay/dedupe.
@@ -289,6 +307,11 @@ export const RunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("world_model_ready"),
     conclusionCount: z.number(),
     blockCount: z.number(),
+  }),
+  z.object({
+    ...eventBase,
+    type: z.literal("final_report"),
+    report: FinalReportSchema,
   }),
   z.object({
     ...eventBase,

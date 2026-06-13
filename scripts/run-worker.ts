@@ -9,6 +9,7 @@ import {
   throwIfRunCancelled,
   type ClaimedRunJob,
 } from "../lib/jobs";
+import { prisma } from "../lib/db";
 import { executeRun, resumeRun } from "../lib/orchestrator";
 
 const workerId = process.env.WORKER_ID ?? `run-worker-${randomUUID()}`;
@@ -22,6 +23,33 @@ function sleep(ms: number): Promise<void> {
 async function runJob(job: ClaimedRunJob): Promise<void> {
   console.log(`[worker ${workerId}] ${job.type} ${job.runId} (${job.id})`);
   try {
+    const run = await prisma.run.findUnique({
+      where: { id: job.runId },
+      select: {
+        status: true,
+        _count: { select: { blocks: true, cohorts: true, events: true } },
+      },
+    });
+    if (!run) {
+      throw new Error(`run not found: ${job.runId}`);
+    }
+    if (["complete", "failed", "capped", "cancelled"].includes(run.status)) {
+      console.log(
+        `[worker ${workerId}] skipping ${job.type} ${job.runId}; run is ${run.status}`
+      );
+      await markJobSucceeded(job.id);
+      return;
+    }
+    if (
+      job.type === "execute" &&
+      (run._count.blocks > 0 || run._count.cohorts > 0 || run._count.events > 0)
+    ) {
+      console.log(
+        `[worker ${workerId}] skipping stale execute ${job.runId}; run already has persisted work`
+      );
+      await markJobSucceeded(job.id);
+      return;
+    }
     await throwIfRunCancelled(job.runId);
     if (job.type === "execute") {
       await executeRun(job.runId);

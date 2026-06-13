@@ -7,6 +7,7 @@ import {
   callEntangler,
   callAudienceSynth,
   callDemographics,
+  callFinalReport,
 } from "./llm";
 import { ProjectRetriever, formatGroundTruth } from "./rag";
 import { calibrateCohortPlan } from "./datasources/demographics";
@@ -64,20 +65,56 @@ function sharesEntity(
   return b.conclusions.some((c) => c.entities.some((e) => tagsA.has(e)));
 }
 
-async function converge(emitter: RunEmitter, capped: boolean): Promise<void> {
+async function converge(
+  emitter: RunEmitter,
+  capped: boolean,
+  profile: ClientProfile
+): Promise<void> {
   const runId = emitter.runId;
-  const [conclusionCount, blocks, tokensUsed, costUsd] = await Promise.all([
-    prisma.conclusion.count({ where: { block: { runId } } }),
-    blockCount(runId),
+  const [blocks, aggEvent] = await Promise.all([
+    prisma.block.findMany({ where: { runId }, include: { conclusions: true } }),
+    prisma.runEvent.findFirst({
+      where: { runId, type: "audience_aggregated" },
+      orderBy: { seq: "desc" },
+    }),
+  ]);
+  const conclusionCount = blocks.reduce(
+    (sum, block) => sum + block.conclusions.length,
+    0
+  );
+  const aggregate = aggEvent
+    ? JSON.parse(aggEvent.payload).aggregate as AudienceAggregate
+    : null;
+
+  try {
+    const existingReport = await prisma.runEvent.findFirst({
+      where: { runId, type: "final_report" },
+      select: { id: true },
+    });
+    if (!existingReport) {
+      await setStatus(emitter, "running", "Writing final business report");
+      const report = await callFinalReport(
+        runId,
+        profile,
+        blocks.map((b) => blockToWire(b, b.conclusions)),
+        aggregate
+      );
+      await emitter.emit({ type: "final_report", report });
+    }
+  } catch (e) {
+    console.error(`[orchestrator] final report generation failed:`, e);
+  }
+
+  const [finalTokensUsed, finalCostUsd] = await Promise.all([
     getTokensUsed(runId),
     getCostUsd(runId),
   ]);
-  await emitter.emit({ type: "tokens_used", tokensUsed });
-  await emitter.emit({ type: "cost_used", costUsd });
+  await emitter.emit({ type: "tokens_used", tokensUsed: finalTokensUsed });
+  await emitter.emit({ type: "cost_used", costUsd: finalCostUsd });
   await emitter.emit({
     type: "world_model_ready",
     conclusionCount,
-    blockCount: blocks,
+    blockCount: blocks.length,
   });
   // Terminal status last — the SSE route closes streams on terminal status.
   await setStatus(
@@ -104,7 +141,7 @@ async function entangleAndConverge(
     await throwIfRunCancelled(runId);
     if (await isOverTokenCap(runId)) {
       console.log(`[orchestrator] run ${runId}: token cap reached, converging`);
-      await converge(emitter, true);
+      await converge(emitter, true, profile);
       return;
     }
     const count = await blockCount(runId);
@@ -181,7 +218,7 @@ async function entangleAndConverge(
     if (synth.length === 0) break;
 
     if (await isOverTokenCap(runId)) {
-      await converge(emitter, true);
+      await converge(emitter, true, profile);
       return;
     }
 
@@ -223,7 +260,7 @@ async function entangleAndConverge(
     round += 1;
   }
 
-  await converge(emitter, false);
+  await converge(emitter, false, profile);
 }
 
 /**

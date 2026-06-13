@@ -14,7 +14,7 @@ import {
   Scatter,
   ZAxis,
 } from "recharts";
-import { SEGMENT_COLORS, DOMAIN_COLORS } from "./segments";
+import { SEGMENT_COLORS } from "./segments";
 import type { CanvasState } from "./useRunEvents";
 
 // ---------------------------------------------------------------------------
@@ -111,6 +111,241 @@ function ShareBars({
   );
 }
 
+function OpinionBars({
+  data,
+  color = "#ef4444",
+  total,
+}: {
+  data: { name: string; count: number; examples?: string[] }[];
+  color?: string;
+  total: number;
+}) {
+  if (data.length === 0) return <Empty label="Waiting for audience…" />;
+  const max = Math.max(...data.map((d) => d.count), 1);
+  return (
+    <ul className="space-y-3">
+      {data.map((d) => {
+        const share = total > 0 ? Math.round((d.count / total) * 100) : 0;
+        return (
+          <li key={d.name} className="text-[11px]">
+            <div className="mb-1 flex items-start justify-between gap-3">
+              <p className="min-w-0 flex-1 leading-snug text-neutral-700">
+                {d.name}
+              </p>
+              <span className="shrink-0 tabular-nums text-neutral-500">
+                {d.count} · {share}%
+              </span>
+            </div>
+            {d.examples && d.examples.length > 0 && (
+              <p className="mb-1.5 line-clamp-2 text-[10px] leading-snug text-neutral-400">
+                {d.examples.join(" / ")}
+              </p>
+            )}
+            <div className="h-2 rounded-full bg-neutral-100">
+              <div
+                className="h-2 rounded-full"
+                style={{ width: `${(d.count / max) * 100}%`, background: color }}
+              />
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function TextList({
+  items,
+  empty,
+}: {
+  items: { text: string; meta?: string }[];
+  empty: string;
+}) {
+  if (items.length === 0) return <Empty label={empty} />;
+  return (
+    <ul className="space-y-2">
+      {items.map((item, i) => (
+        <li
+          key={`${item.text}-${i}`}
+          className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2"
+        >
+          <p className="text-[11px] leading-relaxed text-neutral-800">
+            {item.text}
+          </p>
+          {item.meta && (
+            <p className="mt-1 text-[10px] text-neutral-400">{item.meta}</p>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function normalizeOpinion(text: string): string {
+  return text.trim().replace(/\s+/g, " ").replace(/[.?!]+$/, "").toLowerCase();
+}
+
+function classifySentiment(intent: number): "approve" | "mixed" | "reject" {
+  if (intent >= 0.65) return "approve";
+  if (intent <= 0.35) return "reject";
+  return "mixed";
+}
+
+const SENTIMENT_META = {
+  approve: { label: "Approve", color: "#10b981" },
+  mixed: { label: "Mixed", color: "#f59e0b" },
+  reject: { label: "Reject", color: "#ef4444" },
+};
+
+function SentimentSummary({
+  counts,
+}: {
+  counts: { approve: number; mixed: number; reject: number; total: number };
+}) {
+  if (counts.total === 0) return <Empty label="Waiting for audience…" />;
+  const pct = (n: number) => Math.round((n / counts.total) * 100);
+  return (
+    <div className="space-y-3">
+      <div className="grid grid-cols-3 gap-2">
+        {(["approve", "mixed", "reject"] as const).map((key) => (
+          <div key={key} className="rounded-lg border border-neutral-200 p-2">
+            <p
+              className="text-lg font-semibold tabular-nums"
+              style={{ color: SENTIMENT_META[key].color }}
+            >
+              {pct(counts[key])}%
+            </p>
+            <p className="text-[10px] font-medium text-neutral-500">
+              {SENTIMENT_META[key].label}
+            </p>
+            <p className="mt-0.5 text-[10px] text-neutral-400">
+              {counts[key].toLocaleString()} personas
+            </p>
+          </div>
+        ))}
+      </div>
+      <div className="flex h-3 overflow-hidden rounded-full bg-neutral-100">
+        {(["approve", "mixed", "reject"] as const).map((key) => (
+          <div
+            key={key}
+            style={{
+              width: `${pct(counts[key])}%`,
+              background: SENTIMENT_META[key].color,
+            }}
+          />
+        ))}
+      </div>
+      <p className="text-[10px] leading-relaxed text-neutral-400">
+        Sentiment is inferred from each simulated persona's intent score:
+        approve &gt;=65%, mixed 36-64%, reject &lt;=35%.
+      </p>
+    </div>
+  );
+}
+
+function SentimentBreakdown({
+  rows,
+}: {
+  rows: {
+    name: string;
+    approve: number;
+    mixed: number;
+    reject: number;
+    total: number;
+  }[];
+}) {
+  if (rows.length === 0) return <Empty label="Waiting for audience…" />;
+  return (
+    <ul className="space-y-2">
+      {rows.map((row) => {
+        const pct = (n: number) => (row.total > 0 ? (n / row.total) * 100 : 0);
+        return (
+          <li key={row.name} className="text-[11px]">
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <span className="truncate text-neutral-700">{row.name}</span>
+              <span className="shrink-0 text-neutral-400">
+                {Math.round(pct(row.approve))}% approve · n={row.total}
+              </span>
+            </div>
+            <div className="flex h-2.5 overflow-hidden rounded-full bg-neutral-100">
+              {(["approve", "mixed", "reject"] as const).map((key) => (
+                <div
+                  key={key}
+                  style={{
+                    width: `${pct(row[key])}%`,
+                    background: SENTIMENT_META[key].color,
+                  }}
+                />
+              ))}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const OBJECTION_THEMES = [
+  {
+    name: "Margin, discount and pricing risk",
+    words: ["margin", "discount", "pricing", "commission", "referral cut"],
+  },
+  {
+    name: "Fraud, fake referrals and abuse",
+    words: ["fraud", "fake", "abuse", "misuse", "scam", "gaming"],
+  },
+  {
+    name: "Trust, relationship and offline buying habits",
+    words: [
+      "trust",
+      "handshake",
+      "face-to-face",
+      "neighbourhood",
+      "regular",
+      "touch",
+      "fabric",
+    ],
+  },
+  {
+    name: "Operational complexity and integration",
+    words: [
+      "integration",
+      "ops",
+      "returns",
+      "settlement",
+      "logistics",
+      "fulfilment",
+      "fulfillment",
+      "workflow",
+    ],
+  },
+  {
+    name: "Digital adoption friction",
+    words: ["whatsapp", "app", "digital", "technology", "code", "qr"],
+  },
+  {
+    name: "Demand uncertainty and shelf movement",
+    words: ["demand", "move", "shelf", "customers come", "not for my"],
+  },
+  {
+    name: "Supplier reliability and support",
+    words: ["supplier", "supply", "warranty", "support", "frequency"],
+  },
+  {
+    name: "Regulatory, compliance or claims risk",
+    words: ["regulation", "regulatory", "compliance", "clearance", "claims"],
+  },
+] as const;
+
+function objectionTheme(text: string): string {
+  const normalized = normalizeOpinion(text);
+  return (
+    OBJECTION_THEMES.find((theme) =>
+      theme.words.some((word) => normalized.includes(word))
+    )?.name ?? "Other specific concerns"
+  );
+}
+
 type Props = {
   state: CanvasState;
   maxCostUsd: number;
@@ -130,6 +365,191 @@ export default function InsightsView({
     Object.entries(rec)
       .map(([name, v]) => ({ name, meanIntent: v.meanIntent, n: v.n }))
       .sort((a, b) => b.meanIntent - a.meanIntent);
+
+  const personaRows = useMemo(
+    () =>
+      state.cohortOrder.flatMap((id) => {
+        const c = state.cohorts[id];
+        if (!c) return [];
+        return c.personas.map((p) => ({ ...p, cohort: c }));
+      }),
+    [state.cohorts, state.cohortOrder]
+  );
+
+  const objectionThemes = useMemo(() => {
+    const m = new Map<string, { count: number; examples: Set<string> }>();
+    for (const p of personaRows) {
+      if (!p.objection.trim()) continue;
+      const key = objectionTheme(p.objection);
+      const existing = m.get(key);
+      if (existing) {
+        existing.count += 1;
+        if (existing.examples.size < 2) existing.examples.add(p.objection.trim());
+      } else {
+        m.set(key, { count: 1, examples: new Set([p.objection.trim()]) });
+      }
+    }
+    return Array.from(m.entries())
+      .map(([name, v]) => ({
+        name,
+        count: v.count,
+        examples: Array.from(v.examples),
+      }))
+      .sort((a, b) => b.count - a.count);
+  }, [personaRows]);
+
+  const valueDrivers = useMemo(() => {
+    const m = new Map<string, { label: string; count: number }>();
+    for (const p of personaRows) {
+      for (const value of p.values) {
+        if (!value.trim()) continue;
+        const key = normalizeOpinion(value);
+        const existing = m.get(key);
+        if (existing) existing.count += 1;
+        else m.set(key, { label: value.trim(), count: 1 });
+      }
+    }
+    return Array.from(m.values())
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 10)
+      .map((o) => ({ name: o.label, count: o.count }));
+  }, [personaRows]);
+
+  const sentiment = useMemo(() => {
+    const counts = { approve: 0, mixed: 0, reject: 0, total: personaRows.length };
+    for (const p of personaRows) counts[classifySentiment(p.intent)] += 1;
+    return counts;
+  }, [personaRows]);
+
+  const sentimentByRole = useMemo(() => {
+    const m = new Map<
+      string,
+      { approve: number; mixed: number; reject: number; total: number }
+    >();
+    for (const p of personaRows) {
+      const key = p.cohort.role.replace("_", " ");
+      const row = m.get(key) ?? { approve: 0, mixed: 0, reject: 0, total: 0 };
+      row[classifySentiment(p.intent)] += 1;
+      row.total += 1;
+      m.set(key, row);
+    }
+    return Array.from(m.entries())
+      .map(([name, row]) => ({ name, ...row }))
+      .sort((a, b) => b.total - a.total);
+  }, [personaRows]);
+
+  const sentimentBySegment = useMemo(() => {
+    const m = new Map<
+      string,
+      { approve: number; mixed: number; reject: number; total: number }
+    >();
+    for (const p of personaRows) {
+      const key = p.cohort.segment;
+      const row = m.get(key) ?? { approve: 0, mixed: 0, reject: 0, total: 0 };
+      row[classifySentiment(p.intent)] += 1;
+      row.total += 1;
+      m.set(key, row);
+    }
+    return Array.from(m.entries())
+      .map(([name, row]) => ({ name, ...row }))
+      .sort((a, b) => b.approve / b.total - a.approve / a.total);
+  }, [personaRows]);
+
+  const sentimentByLocality = useMemo(() => {
+    const m = new Map<
+      string,
+      { approve: number; mixed: number; reject: number; total: number }
+    >();
+    for (const p of personaRows) {
+      const key = p.cohort.locality;
+      const row = m.get(key) ?? { approve: 0, mixed: 0, reject: 0, total: 0 };
+      row[classifySentiment(p.intent)] += 1;
+      row.total += 1;
+      m.set(key, row);
+    }
+    return Array.from(m.entries())
+      .map(([name, row]) => ({ name, ...row }))
+      .sort((a, b) => b.total - a.total)
+      .slice(0, 8);
+  }, [personaRows]);
+
+  const roleResistance = useMemo(() => {
+    const byRole = new Map<string, Map<string, number>>();
+    for (const p of personaRows) {
+      if (!p.objection.trim()) continue;
+      const role = p.cohort.role;
+      const roleMap = byRole.get(role) ?? new Map<string, number>();
+      const key = objectionTheme(p.objection);
+      roleMap.set(key, (roleMap.get(key) ?? 0) + 1);
+      byRole.set(role, roleMap);
+    }
+    return Array.from(byRole.entries())
+      .map(([role, objections]) => {
+        const top = Array.from(objections.entries()).sort((a, b) => b[1] - a[1])[0];
+        return top ? { role, text: top[0], count: top[1] } : null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => b!.count - a!.count)
+      .map((r) => ({
+        text: r!.text,
+        meta: `${r!.role.replace("_", " ")} · ${r!.count} similar responses`,
+      }));
+  }, [personaRows]);
+
+  const supportiveQuotes = useMemo(
+    () =>
+      personaRows
+        .filter((p) => p.quote.trim())
+        .filter((p) => p.intent >= 0.65)
+        .sort((a, b) => b.intent - a.intent)
+        .slice(0, 5)
+        .map((p) => ({
+          text: `“${p.quote.trim()}”`,
+          meta: `${p.name} · ${p.cohort.label} · intent ${Math.round(p.intent * 100)}%`,
+        })),
+    [personaRows]
+  );
+
+  const skepticalQuotes = useMemo(
+    () =>
+      personaRows
+        .filter((p) => p.quote.trim())
+        .filter((p) => p.intent <= 0.35)
+        .sort((a, b) => a.intent - b.intent)
+        .slice(0, 5)
+        .map((p) => ({
+          text: `“${p.quote.trim()}”`,
+          meta: `${p.name} · ${p.cohort.label} · intent ${Math.round(p.intent * 100)}%`,
+        })),
+    [personaRows]
+  );
+
+  const conditionalQuotes = useMemo(
+    () =>
+      personaRows
+        .filter((p) => p.quote.trim())
+        .filter((p) => p.intent > 0.35 && p.intent < 0.65)
+        .sort((a, b) => Math.abs(0.5 - a.intent) - Math.abs(0.5 - b.intent))
+        .slice(0, 4)
+        .map((p) => ({
+          text: `“${p.quote.trim()}”`,
+          meta: `${p.name} · ${p.cohort.label} · intent ${Math.round(p.intent * 100)}%`,
+        })),
+    [personaRows]
+  );
+
+  const reasoningSnippets = useMemo(
+    () =>
+      personaRows
+        .filter((p) => p.reasoning.trim())
+        .sort((a, b) => b.priceSensitivity - a.priceSensitivity)
+        .slice(0, 6)
+        .map((p) => ({
+          text: p.reasoning.trim(),
+          meta: `${p.cohort.segment} ${p.cohort.role.replace("_", " ")} · ${p.channelPref} · price sensitivity ${Math.round(p.priceSensitivity * 100)}%`,
+        })),
+    [personaRows]
+  );
 
   // WTP P25–P75 ranges per segment, from cohort stats (consumer view).
   const wtpRanges = useMemo(() => {
@@ -169,31 +589,6 @@ export default function InsightsView({
         })),
     [state.cohorts, state.cohortOrder]
   );
-
-  // Desk timeline from event timestamps.
-  const timeline = useMemo(() => {
-    const rows = state.blockOrder
-      .map((id) => {
-        const b = state.blocks[id];
-        const t = state.blockTimings[id];
-        if (!b || !t) return null;
-        return {
-          id,
-          name: b.name,
-          domain: b.domain,
-          state: b.state,
-          start: t.start,
-          end: t.end ?? Date.now(),
-        };
-      })
-      .filter(Boolean) as {
-      id: string; name: string; domain: string; state: string; start: number; end: number;
-    }[];
-    if (rows.length === 0) return { rows: [], t0: 0, t1: 1 };
-    const t0 = Math.min(...rows.map((r) => r.start));
-    const t1 = Math.max(...rows.map((r) => r.end));
-    return { rows: rows.sort((a, b) => a.start - b.start), t0, t1: Math.max(t1, t0 + 1) };
-  }, [state.blocks, state.blockOrder, state.blockTimings]);
 
   // Confidence histogram + top entities across all conclusions.
   const conclusions = useMemo(
@@ -296,37 +691,8 @@ export default function InsightsView({
           )}
         </Card>
 
-        <Card title="Desk timeline (who ran when)" wide>
-          {timeline.rows.length === 0 ? (
-            <Empty label="No desks yet" />
-          ) : (
-            <ul className="space-y-1">
-              {timeline.rows.map((r) => {
-                const span = timeline.t1 - timeline.t0;
-                const left = ((r.start - timeline.t0) / span) * 100;
-                const width = Math.max(1.5, ((r.end - r.start) / span) * 100);
-                return (
-                  <li key={r.id} className="flex items-center gap-2 text-[10px]">
-                    <span className="w-40 truncate text-neutral-600">{r.name}</span>
-                    <div className="relative h-3.5 flex-1 rounded bg-neutral-100">
-                      <div
-                        className={`absolute h-3.5 rounded ${r.state === "failed" ? "opacity-40" : ""}`}
-                        style={{
-                          left: `${left}%`,
-                          width: `${width}%`,
-                          background: DOMAIN_COLORS[r.domain] ?? "#6366f1",
-                        }}
-                        title={`${r.name}: ${((r.end - r.start) / 1000).toFixed(1)}s`}
-                      />
-                    </div>
-                    <span className="w-12 text-right text-neutral-400">
-                      {((r.end - r.start) / 1000).toFixed(1)}s
-                    </span>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+        <Card title="Opinion sentiment" wide>
+          <SentimentSummary counts={sentiment} />
         </Card>
 
         {/* ---- Audience analytics ---- */}
@@ -381,18 +747,67 @@ export default function InsightsView({
         <Card title="Channel preference (all roles)">
           <ShareBars data={agg?.channelShare ?? []} color="#10b981" />
         </Card>
-        <Card title="Top objections to defuse">
-          {agg?.topObjections.length ? (
-            <ShareBars
-              data={agg.topObjections.map((o) => ({
-                name: o.text,
-                share: Math.round((o.count / (agg.totalPersonas || 1)) * 100),
-              }))}
-              color="#ef4444"
-            />
-          ) : (
-            <Empty label="Waiting for audience…" />
-          )}
+        <Card title="Approval by buyer role">
+          <SentimentBreakdown rows={sentimentByRole} />
+        </Card>
+
+        <Card title="Approval by income segment">
+          <SentimentBreakdown rows={sentimentBySegment} />
+        </Card>
+
+        <Card title="Approval by locality" wide>
+          <SentimentBreakdown rows={sentimentByLocality} />
+        </Card>
+
+        <Card title="Top objections to defuse" wide>
+          <OpinionBars
+            data={objectionThemes}
+            color="#ef4444"
+            total={personaRows.length || agg?.totalPersonas || 0}
+          />
+        </Card>
+
+        <Card title="Repeated value drivers">
+          <OpinionBars
+            data={valueDrivers}
+            color="#10b981"
+            total={personaRows.length}
+          />
+        </Card>
+
+        <Card title="Resistance by buyer role">
+          <TextList
+            items={roleResistance}
+            empty="Waiting for audience opinions…"
+          />
+        </Card>
+
+        <Card title="Supportive customer language" wide>
+          <TextList
+            items={supportiveQuotes}
+            empty="No high-intent quotes yet…"
+          />
+        </Card>
+
+        <Card title="Skeptical customer language" wide>
+          <TextList
+            items={skepticalQuotes}
+            empty="No low-intent quotes yet…"
+          />
+        </Card>
+
+        <Card title="Conditional customer language" wide>
+          <TextList
+            items={conditionalQuotes}
+            empty="No mixed-intent quotes yet…"
+          />
+        </Card>
+
+        <Card title="Why they hesitate or convert" wide>
+          <TextList
+            items={reasoningSnippets}
+            empty="Waiting for persona reasoning…"
+          />
         </Card>
 
         {/* ---- Social heatmap ---- */}

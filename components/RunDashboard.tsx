@@ -3,15 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
+import type { Domain } from "@/lib/schema";
 import {
   RotateCcw,
   Coins,
   Users,
-  Globe2,
-  Network,
-  BarChart3,
-  BookOpen,
-  LayoutDashboard,
   Layers,
   ChevronDown,
   Loader2,
@@ -19,12 +15,13 @@ import {
   Square,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
-import PanelStrip from "./PanelStrip";
+import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
 import NetworkView from "./NetworkView";
 import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
 import CohortDrawer from "./CohortDrawer";
+import { ProjectSelector } from "./AppHeader";
 
 // Leaflet touches `window` — render the geography layer client-side only.
 const MapView = dynamic(() => import("./MapView"), {
@@ -136,10 +133,14 @@ export default function RunDashboard({
   siblingRuns,
 }: Props) {
   const router = useRouter();
-  const { state, replay, replaying } = useRunEvents(runId);
+  const { state, patchState, replay, replaying } = useRunEvents(runId);
   const [view, setView] = useState<
-    "geo" | "network" | "insights" | "playbook" | "owner"
+    "geo" | "network" | "insights" | "playbook" | "owner" | "domain" | "conclusion"
   >("geo");
+  const [activePanel, setActivePanel] = useState<
+    "conclusion" | Domain | null
+  >(null);
+  const [reportBusy, setReportBusy] = useState(false);
   const [selectedCohortId, setSelectedCohortId] = useState<string | null>(null);
   const [highlightedBlocks, setHighlightedBlocks] = useState<Set<string>>(
     new Set()
@@ -210,7 +211,10 @@ export default function RunDashboard({
           }
         }
         setHighlightedBlocks(blockIds);
-        if (blockIds.size > 0) setView("network"); // show the cited path
+        if (blockIds.size > 0) {
+          setActivePanel(null);
+          setView("network"); // show the cited path
+        }
       }
       return answer;
     },
@@ -241,8 +245,47 @@ export default function RunDashboard({
 
   const onCite = useCallback((blockId: string) => {
     setHighlightedBlocks(new Set([blockId]));
+    setActivePanel(null);
     setView("network");
   }, []);
+
+  const onSelectPanel = useCallback(
+    (panel: NonNullable<typeof activePanel>) => {
+      setActivePanel(panel);
+      setView(panel === "conclusion" ? "conclusion" : "domain");
+    },
+    []
+  );
+
+  const selectMainView = useCallback(
+    (nextView: "geo" | "network" | "insights" | "playbook" | "owner") => {
+      setActivePanel(null);
+      setView(nextView);
+    },
+    []
+  );
+
+  const onGenerateReport = useCallback(async () => {
+    if (reportBusy) return;
+    setReportBusy(true);
+    patchState({ phaseLabel: "Writing final business report" });
+    try {
+      const res = await fetch(`/api/runs/${runId}/report`, { method: "POST" });
+      if (!res.ok) throw new Error(`report failed (${res.status})`);
+      const data = await res.json();
+      patchState({
+        finalReport: data.report,
+        phaseLabel: "World model ready",
+        ...(typeof data.tokensUsed === "number"
+          ? { tokensUsed: data.tokensUsed }
+          : {}),
+        ...(typeof data.costUsd === "number" ? { costUsd: data.costUsd } : {}),
+      });
+    } finally {
+      patchState({ phaseLabel: "World model ready" });
+      setReportBusy(false);
+    }
+  }, [patchState, reportBusy, runId]);
 
   // --- "Continue run" (resume) ----------------------------------------------
   // A run is resumable if it ended capped/failed, OR it claims to be "running"
@@ -311,6 +354,7 @@ export default function RunDashboard({
         <a href="/" className="text-sm font-semibold tracking-tight">
           EntreTangle
         </a>
+        <ProjectSelector selectedProjectId={projectId} />
         <p
           className="max-w-md flex-1 truncate text-xs text-neutral-500"
           title={brief}
@@ -413,43 +457,37 @@ export default function RunDashboard({
         </div>
       )}
 
-      <PanelStrip state={state} onQuery={onQuery} onCite={onCite} />
+      <PanelStrip
+        state={state}
+        activePanel={activePanel}
+        onSelectPanel={onSelectPanel}
+        activeView={
+          view === "geo" ||
+          view === "network" ||
+          view === "insights" ||
+          view === "playbook" ||
+          view === "owner"
+            ? view
+            : null
+        }
+        onSelectMainView={selectMainView}
+      />
 
       <div className="relative flex-1">
-        <div className="absolute left-3 top-3 z-[1000] flex overflow-hidden rounded-lg border border-neutral-300 bg-white text-[11px] font-medium shadow-sm">
-          <button
-            onClick={() => setView("geo")}
-            className={`flex items-center gap-1 px-2.5 py-1.5 ${view === "geo" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
-          >
-            <Globe2 className="h-3.5 w-3.5" /> Geography
-          </button>
-          <button
-            onClick={() => setView("network")}
-            className={`flex items-center gap-1 px-2.5 py-1.5 ${view === "network" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
-          >
-            <Network className="h-3.5 w-3.5" /> Network
-          </button>
-          <button
-            onClick={() => setView("insights")}
-            className={`flex items-center gap-1 px-2.5 py-1.5 ${view === "insights" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
-          >
-            <BarChart3 className="h-3.5 w-3.5" /> Insights
-          </button>
-          <button
-            onClick={() => setView("playbook")}
-            className={`flex items-center gap-1 px-2.5 py-1.5 ${view === "playbook" ? "bg-indigo-600 text-white" : "text-indigo-600 hover:bg-indigo-50"}`}
-          >
-            <BookOpen className="h-3.5 w-3.5" /> Playbook
-          </button>
-          <button
-            onClick={() => setView("owner")}
-            className={`flex items-center gap-1 px-2.5 py-1.5 ${view === "owner" ? "bg-indigo-600 text-white" : "text-indigo-600 hover:bg-indigo-50"}`}
-          >
-            <LayoutDashboard className="h-3.5 w-3.5" /> Owner
-          </button>
-        </div>
-
-        {view === "geo" ? (
+        {view === "domain" && activePanel && activePanel !== "conclusion" ? (
+          <DomainWorkspace
+            domain={activePanel}
+            state={state}
+            onCite={onCite}
+          />
+        ) : view === "conclusion" ? (
+          <ConclusionWorkspace
+            state={state}
+            onQuery={onQuery}
+            reportBusy={reportBusy}
+            onGenerateReport={onGenerateReport}
+          />
+        ) : view === "geo" ? (
           <MapView
             cohorts={cohorts}
             selectedCohortId={selectedCohortId}

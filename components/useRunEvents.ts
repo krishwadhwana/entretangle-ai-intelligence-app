@@ -6,6 +6,7 @@ import type {
   Block,
   Cohort,
   Edge,
+  FinalReport,
   Persona,
   RunEvent,
   RunStatus,
@@ -37,6 +38,7 @@ export type CanvasState = {
   tokensUsed: number;
   costUsd: number;
   worldModel: { conclusionCount: number; blockCount: number } | null;
+  finalReport: FinalReport | null;
   // Persisted world-model Q&A, in ask order.
   conversation: ConversationTurn[];
   error: string | null;
@@ -59,6 +61,7 @@ export const initialCanvasState: CanvasState = {
   tokensUsed: 0,
   costUsd: 0,
   worldModel: null,
+  finalReport: null,
   conversation: [],
   error: null,
   lastSeq: 0,
@@ -150,6 +153,8 @@ export function canvasReducer(
           blockCount: event.blockCount,
         },
       };
+    case "final_report":
+      return { ...next, finalReport: event.report };
     case "tokens_used":
       return { ...next, tokensUsed: event.tokensUsed };
     case "cost_used":
@@ -213,13 +218,17 @@ export function canvasReducer(
   }
 }
 
-type ReducerAction = { kind: "event"; event: RunEvent } | { kind: "reset" };
+type ReducerAction =
+  | { kind: "event"; event: RunEvent }
+  | { kind: "patch"; patch: Partial<CanvasState> }
+  | { kind: "reset" };
 
 function dispatchReducer(
   state: CanvasState,
   action: ReducerAction
 ): CanvasState {
   if (action.kind === "reset") return initialCanvasState;
+  if (action.kind === "patch") return { ...state, ...action.patch };
   return canvasReducer(state, action.event);
 }
 
@@ -232,6 +241,7 @@ const EVENT_TYPES = [
   "block_failed",
   "edge_added",
   "world_model_ready",
+  "final_report",
   "tokens_used",
   "cost_used",
   "cohort_spawned",
@@ -244,6 +254,7 @@ const EVENT_TYPES = [
 
 export function useRunEvents(runId: string): {
   state: CanvasState;
+  patchState: (patch: Partial<CanvasState>) => void;
   replay: () => void;
   replaying: boolean;
 } {
@@ -305,5 +316,9 @@ export function useRunEvents(runId: string): {
     return () => timers.forEach(clearTimeout);
   }, []);
 
-  return { state, replay, replaying };
+  const patchState = useCallback((patch: Partial<CanvasState>) => {
+    dispatch({ kind: "patch", patch });
+  }, []);
+
+  return { state, patchState, replay, replaying };
 }
