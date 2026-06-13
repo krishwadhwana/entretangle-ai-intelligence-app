@@ -1,0 +1,729 @@
+import OpenAI from "openai";
+import { z } from "zod";
+import { config } from "./config";
+import { recordUsage, type ModelTier } from "./usage";
+import {
+  PlannerV2OutputSchema,
+  ExecutorOutputSchema,
+  EntanglerOutputSchema,
+  QueryOutputSchema,
+  AudienceChatOutputSchema,
+  IntakeOutputSchema,
+  CohortSimOutputSchema,
+  BrandKitSchema,
+  type PlannerV2Output,
+  type ExecutorOutput,
+  type EntanglerOutput,
+  type QueryOutput,
+  type AudienceChatHistoryItem,
+  type AudienceChatMode,
+  type AudienceChatOutput,
+  type IntakeOutput,
+  type CohortSimOutput,
+  type BrandKit,
+  type ChatMessage,
+  type ClientProfile,
+  type Conclusion,
+  type Cohort,
+  type Persona,
+  type Block,
+  type AudienceAggregate,
+} from "./schema";
+import {
+  PLANNER_V2_SYSTEM,
+  plannerV2User,
+  type RunFocus,
+  deskSystem,
+  cohortSimSystem,
+  audienceSynthSystem,
+  ENTANGLER_V2_SYSTEM,
+  entanglerUser,
+  INTAKE_SYSTEM,
+  QUERY_SYSTEM,
+  queryV2User,
+  audienceChatSystem,
+  audienceChatUser,
+  BRAND_KIT_SYSTEM,
+  brandKitUser,
+} from "./prompts";
+import {
+  mockPlannerV2Output,
+  mockDeskOutput,
+  mockCohortSim,
+  mockEntanglerV2,
+  mockAudienceSynth,
+  mockQueryOutput,
+  mockAudienceChatOutput,
+  mockBrandKit,
+} from "./fixtures/venture-sim";
+import {
+  DEMOGRAPHICS_SYSTEM,
+  DemographicsOutputSchema,
+  demographicsUser,
+  mockDemographics,
+  type DemographicsOutput,
+} from "./datasources/demographics";
+
+const globalForLlm = globalThis as unknown as { openai?: OpenAI };
+
+function client(): OpenAI {
+  if (!globalForLlm.openai) {
+    globalForLlm.openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
+  }
+  return globalForLlm.openai;
+}
+
+type Msg = OpenAI.Chat.ChatCompletionMessageParam;
+
+// GPT-5.x are reasoning models: temperature is unsupported, and reasoning
+// tokens count against max_completion_tokens — keep the budget generous and
+// reasoning effort low so blocks stay inside BLOCK_TIMEOUT_MS.
+const COMPLETION_BUDGET = 8000;
+const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per batch
+
+function baseParams(
+  model: string = config.model
+): Omit<OpenAI.Chat.ChatCompletionCreateParamsNonStreaming, "messages"> {
+  return {
+    model,
+    max_completion_tokens: COMPLETION_BUDGET,
+    response_format: { type: "json_object" },
+    reasoning_effort: "low",
+  };
+}
+
+function stripFences(text: string): string {
+  return text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+}
+
+/**
+ * One LLM call parsed through a Zod schema. On parse failure: exactly one
+ * retry with the Zod error appended (SPEC §1, §10); then throws, and the
+ * caller fails the unit (block/cohort), not the run. Token usage from every
+ * response — including failed parses — is recorded against the run.
+ */
+async function callJson<T>(opts: {
+  runId: string | null;
+  system: string;
+  user: string;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  maxAttempts?: number;
+  model?: string;
+  tier?: ModelTier;
+  maxCompletionTokens?: number;
+  // Per-request timeout in ms. The OpenAI SDK ABORTS the request at this
+  // limit (real cancellation, not a Promise.race that lets the call finish
+  // and bill anyway).
+  requestTimeoutMs?: number;
+  // SDK retry budget. Low for cohort calls so a timed-out (stuck) call fails
+  // fast instead of being retried 2× (which made one stuck call block a slot
+  // for ~12 minutes).
+  requestMaxRetries?: number;
+}): Promise<T> {
+  let lastError = "";
+  for (let attempt = 0; attempt < (opts.maxAttempts ?? 2); attempt++) {
+    const messages: Msg[] = [
+      { role: "system", content: opts.system },
+      { role: "user", content: opts.user },
+    ];
+    if (attempt > 0) {
+      messages.push({
+        role: "user",
+        content: `Your previous JSON output failed validation:\n${lastError}\nOutput corrected JSON only, no markdown fences.`,
+      });
+    }
+    const response = await client().chat.completions.create(
+      {
+        ...baseParams(opts.model),
+        ...(opts.maxCompletionTokens
+          ? { max_completion_tokens: opts.maxCompletionTokens }
+          : {}),
+        messages,
+      },
+      opts.requestTimeoutMs || opts.requestMaxRetries !== undefined
+        ? {
+            ...(opts.requestTimeoutMs
+              ? { timeout: opts.requestTimeoutMs }
+              : {}),
+            ...(opts.requestMaxRetries !== undefined
+              ? { maxRetries: opts.requestMaxRetries }
+              : {}),
+          }
+        : undefined
+    );
+    if (opts.runId && response.usage) {
+      await recordUsage(
+        opts.runId,
+        response.usage.prompt_tokens,
+        response.usage.completion_tokens,
+        opts.tier ?? "frontier"
+      );
+    }
+
+    const text = response.choices[0]?.message?.content ?? "";
+    try {
+      const parsed = opts.schema.safeParse(JSON.parse(stripFences(text)));
+      if (parsed.success) return parsed.data;
+      lastError = JSON.stringify(parsed.error.issues);
+    } catch (e) {
+      lastError = `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  throw new Error(`LLM output failed validation after retry: ${lastError}`);
+}
+
+// ---------------------------------------------------------------------------
+// The call sites. MOCK_MODE=true swaps in fixtures (SPEC §8) — all delays,
+// events, persistence and UI paths stay identical to real mode.
+// ---------------------------------------------------------------------------
+
+/** v2 planner: research desks + the audience cohort matrix. */
+export async function callPlannerV2(
+  runId: string,
+  profile: ClientProfile,
+  focus?: RunFocus,
+  groundTruth?: string
+): Promise<PlannerV2Output> {
+  if (config.mockMode) return PlannerV2OutputSchema.parse(mockPlannerV2Output);
+  return callJson({
+    runId,
+    system: PLANNER_V2_SYSTEM,
+    user: plannerV2User(profile, focus, groundTruth),
+    schema: PlannerV2OutputSchema,
+    maxCompletionTokens: 12000,
+  });
+}
+
+/**
+ * Incrementally extract completed string elements of the "logs" array from a
+ * partial JSON snapshot — fuels true log streaming (SPEC Shot 7).
+ */
+export function extractCompletedLogLines(text: string): string[] {
+  const m = text.match(/"logs"\s*:\s*\[/);
+  if (!m) return [];
+  const lines: string[] = [];
+  let raw = "";
+  let inString = false;
+  let escaped = false;
+  for (let i = (m.index ?? 0) + m[0].length; i < text.length; i++) {
+    const ch = text[i];
+    if (inString) {
+      raw += ch;
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') {
+        inString = false;
+        try {
+          lines.push(JSON.parse(`"${raw.slice(0, -1)}"`));
+        } catch {
+          lines.push(raw.slice(0, -1));
+        }
+        raw = "";
+      }
+    } else if (ch === '"') {
+      inString = true;
+      raw = "";
+    } else if (ch === "]") {
+      break;
+    }
+  }
+  return lines;
+}
+
+/**
+ * Web-grounded desk call (SPEC-V2 §4) via the Responses API `web_search`
+ * tool. Non-streaming (search round-trips dominate latency anyway); logs are
+ * replayed with pacing by blocks.ts. Any failure here throws and the caller
+ * falls back to the ungrounded streaming path — a desk never dies because
+ * search did.
+ */
+async function callDeskWebSearch(
+  runId: string,
+  system: string
+): Promise<ExecutorOutput> {
+  const response = await client().responses.create({
+    model: config.model,
+    tools: [{ type: "web_search" } as never],
+    input: [
+      { role: "system", content: system },
+      { role: "user", content: "Begin. Search the web, then output JSON only." },
+    ],
+    max_output_tokens: COMPLETION_BUDGET,
+    reasoning: { effort: "low" },
+  });
+
+  const searchCalls = Array.isArray(response.output)
+    ? response.output.filter((o: { type?: string }) =>
+        String(o.type ?? "").startsWith("web_search")
+      ).length
+    : 0;
+  if (response.usage) {
+    await recordUsage(
+      runId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      searchCalls
+    );
+  }
+
+  const text = response.output_text ?? "";
+  const parsed = ExecutorOutputSchema.safeParse(JSON.parse(stripFences(text)));
+  if (!parsed.success) {
+    throw new Error(
+      `web desk output failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Desk executor. Web-grounded desks go through the Responses API with
+ * web_search (with automatic ungrounded fallback); ungrounded desks stream
+ * log lines live as they generate (SPEC Shot 7).
+ */
+export async function callExecutor(
+  runId: string,
+  block: Pick<Block, "name" | "mission" | "domain">,
+  profile: ClientProfile,
+  inputConclusions: Conclusion[],
+  onLog?: (line: string) => Promise<void>,
+  webGrounded = false,
+  groundTruth?: string
+): Promise<ExecutorOutput> {
+  if (config.mockMode) {
+    return ExecutorOutputSchema.parse(mockDeskOutput(block.name));
+  }
+
+  if (webGrounded) {
+    try {
+      return await callDeskWebSearch(
+        runId,
+        deskSystem(block, profile, inputConclusions, true, groundTruth)
+      );
+    } catch (e) {
+      console.log(
+        `[llm] web search failed for "${block.name}", falling back ungrounded: ${e}`
+      );
+      if (onLog) await onLog("web search unavailable — using model knowledge");
+    }
+  }
+
+  const system = deskSystem(block, profile, inputConclusions, false, groundTruth);
+  const user = "Begin. Output JSON only.";
+
+  const stream = await client().chat.completions.create({
+    ...baseParams(),
+    stream: true,
+    stream_options: { include_usage: true },
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+  });
+
+  // Emit log lines in order as they complete inside the streamed JSON.
+  let snapshot = "";
+  let emitted = 0;
+  let emitChain = Promise.resolve();
+  let usage: OpenAI.CompletionUsage | null = null;
+  for await (const chunk of stream) {
+    if (chunk.usage) usage = chunk.usage;
+    const delta = chunk.choices[0]?.delta?.content;
+    if (!delta) continue;
+    snapshot += delta;
+    if (onLog) {
+      const lines = extractCompletedLogLines(snapshot);
+      for (const line of lines.slice(emitted)) {
+        emitted += 1;
+        emitChain = emitChain.then(() => onLog(line)).catch(() => undefined);
+      }
+    }
+  }
+  await emitChain;
+  if (usage) {
+    await recordUsage(runId, usage.prompt_tokens, usage.completion_tokens);
+  }
+
+  let parseError: string;
+  try {
+    const parsed = ExecutorOutputSchema.safeParse(
+      JSON.parse(stripFences(snapshot))
+    );
+    if (parsed.success) return parsed.data;
+    parseError = JSON.stringify(parsed.error.issues);
+  } catch (e) {
+    parseError = `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`;
+  }
+
+  // Single non-streaming retry with the validation error appended (SPEC §1).
+  return callJson({
+    runId,
+    system,
+    user: `${user}\nYour previous output failed validation:\n${parseError}\nOutput corrected JSON only, no markdown fences.`,
+    schema: ExecutorOutputSchema,
+    maxAttempts: 1,
+  });
+}
+
+/**
+ * One cohort-simulation call = 25–50 personas on the mini model
+ * (SPEC-V2 §1C). This is how "thousands of agents" stay inside $5.
+ */
+export async function callCohortSim(
+  runId: string,
+  cohort: Pick<Cohort, "label" | "locality" | "country" | "segment" | "role">,
+  profile: ClientProfile,
+  currency: string,
+  n: number,
+  batchIndex = 0
+): Promise<CohortSimOutput> {
+  if (config.mockMode) {
+    return CohortSimOutputSchema.parse(
+      mockCohortSim(cohort, currency, n, batchIndex)
+    );
+  }
+  // Each batch is a fresh, non-overlapping draw of people from the cohort.
+  const batchNote =
+    batchIndex > 0
+      ? ` This is persona batch #${batchIndex + 1} for this cohort: generate ${n} DIFFERENT individuals who do not overlap with earlier batches — push the demographic and attitudinal spread even wider.`
+      : "";
+  return callJson({
+    runId,
+    system: cohortSimSystem(cohort, profile, currency, n),
+    user: `Simulate ${n} personas now.${batchNote} Output JSON only.`,
+    schema: CohortSimOutputSchema,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: COHORT_BUDGET,
+    requestTimeoutMs: config.cohortTimeoutMs,
+    requestMaxRetries: 1, // fail a stuck call fast instead of retrying 2×
+  });
+}
+
+/** Audience Synthesis desk: aggregate stats -> typed conclusions. */
+export async function callAudienceSynth(
+  runId: string,
+  profile: ClientProfile,
+  aggregate: AudienceAggregate,
+  groundTruth?: string
+): Promise<ExecutorOutput> {
+  if (config.mockMode) {
+    return ExecutorOutputSchema.parse(mockAudienceSynth(aggregate));
+  }
+  return callJson({
+    runId,
+    system: audienceSynthSystem(profile, aggregate, groundTruth),
+    user: "Begin. Output JSON only.",
+    schema: ExecutorOutputSchema,
+  });
+}
+
+/**
+ * Real-demographics lookup for the audience calibration step (option A).
+ * Web-grounded in real mode (so cohort weights mirror real census data);
+ * deterministic fixture in mock mode. Returns null on failure — the caller
+ * then keeps the planner's own weights.
+ */
+export async function callDemographics(
+  runId: string,
+  localities: PlannerV2Output["cohortPlan"]["localities"]
+): Promise<DemographicsOutput | null> {
+  if (localities.length === 0) return null;
+  if (config.mockMode) {
+    return DemographicsOutputSchema.parse(mockDemographics(localities));
+  }
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: DEMOGRAPHICS_SYSTEM },
+        {
+          role: "user",
+          content: `Localities:\n${demographicsUser(
+            localities
+          )}\nSearch for real figures, then output JSON only.`,
+        },
+      ],
+      max_output_tokens: 4000,
+      reasoning: { effort: "low" },
+    });
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = DemographicsOutputSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    return parsed.success ? parsed.data : null;
+  } catch (e) {
+    console.log(`[llm] demographics lookup failed: ${e}`);
+    return null;
+  }
+}
+
+export async function callEntangler(
+  runId: string,
+  blocks: {
+    id: string;
+    name: string;
+    domain?: string;
+    conclusions: Conclusion[];
+  }[],
+  round: number
+): Promise<EntanglerOutput> {
+  if (config.mockMode) {
+    return EntanglerOutputSchema.parse(mockEntanglerV2(blocks, round));
+  }
+  return callJson({
+    runId,
+    system: ENTANGLER_V2_SYSTEM,
+    user: entanglerUser(blocks),
+    schema: EntanglerOutputSchema,
+  });
+}
+
+// Intake interview (Shot 8). No run exists yet, so usage is not metered
+// against a run. Mock mode walks a fixed 4-question script.
+export async function callIntake(
+  messages: ChatMessage[]
+): Promise<IntakeOutput> {
+  if (config.mockMode) {
+    const answers = messages.filter((m) => m.role === "user");
+    const script: { question: string; options: string[]; multiSelect: boolean }[] = [
+      {
+        question:
+          "How much capital do you have available, and how long does it need to last?",
+        options: [
+          "Under ₹10 lakh, 6 months",
+          "₹10–25 lakh, 12 months",
+          "₹25 lakh–1 crore, 18 months",
+          "Over ₹1 crore, 24+ months",
+        ],
+        multiSelect: false,
+      },
+      {
+        question: "What's your background with physical products?",
+        options: [
+          "First venture",
+          "Built/sold products before",
+          "Family business in this category",
+          "Operator at a brand, first time founding",
+        ],
+        multiSelect: false,
+      },
+      {
+        question: "Which markets are you targeting? (pick all that apply)",
+        options: ["Mumbai", "Delhi NCR", "Bangalore", "Dubai / Gulf", "London / UK"],
+        multiSelect: true,
+      },
+      {
+        question: "Any restrictions I should plan around?",
+        options: [
+          "No outside investors",
+          "Must stay online-only year one",
+          "Limited time (side project)",
+          "No restrictions",
+        ],
+        multiSelect: true,
+      },
+    ];
+    if (answers.length <= script.length) {
+      return { done: false, ...script[answers.length - 1] };
+    }
+    const [brief, capital, experience, scale, restrictions] = answers.map(
+      (m) => m.content
+    );
+    const capitalLakh = parseFloat(capital.replace(/[^\d.]/g, ""));
+    const runwayMatch = capital.match(/(\d+)\s*\+?\s*months/i);
+    return {
+      done: true,
+      brief,
+      profile: {
+        ambitions: brief,
+        product: brief,
+        capitalInr: Number.isFinite(capitalLakh) ? capitalLakh * 100000 : null,
+        experience,
+        scale,
+        restrictions: restrictions
+          .split(",")
+          .map((r) => r.trim())
+          .filter(Boolean),
+        goal: scale,
+        category: "consumer product",
+        priceBand: "premium",
+        geography: scale.split(",").map((s) => s.trim()).filter(Boolean),
+        targetAudience: "affluent urban consumers",
+        funding: {
+          capitalAvailable: capital.split(",")[0]?.trim() || null,
+          runwayMonths: runwayMatch ? parseInt(runwayMatch[1], 10) : null,
+        },
+      },
+    };
+  }
+
+  const questionsAsked = messages.filter((m) => m.role === "assistant").length;
+  let lastError = "";
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await client().chat.completions.create({
+      ...baseParams(),
+      messages: [
+        {
+          role: "system",
+          content:
+            INTAKE_SYSTEM +
+            (questionsAsked >= 8
+              ? "\nYou have asked 8 questions. You MUST output done:true now."
+              : "") +
+            (attempt > 0
+              ? `\nYour previous output failed validation:\n${lastError}`
+              : ""),
+        },
+        ...messages,
+      ],
+    });
+    const text = response.choices[0]?.message?.content ?? "";
+    try {
+      const parsed = IntakeOutputSchema.safeParse(JSON.parse(stripFences(text)));
+      if (parsed.success) return parsed.data;
+      lastError = JSON.stringify(parsed.error.issues);
+    } catch (e) {
+      lastError = `Invalid JSON: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+  throw new Error(`Intake output failed validation after retry: ${lastError}`);
+}
+
+export async function callQuery(
+  runId: string,
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  aggregate: AudienceAggregate | null,
+  question: string
+): Promise<QueryOutput> {
+  if (config.mockMode) {
+    return QueryOutputSchema.parse({
+      ...mockQueryOutput,
+      citedConclusionIds: conclusions.slice(0, 3).map((c) => c.id),
+    });
+  }
+  return callJson({
+    runId,
+    system: QUERY_SYSTEM,
+    user: queryV2User(profile, conclusions, aggregate, question),
+    schema: QueryOutputSchema,
+  });
+}
+
+export async function callAudienceChat(
+  runId: string,
+  profile: ClientProfile,
+  cohort: Cohort,
+  personas: Persona[],
+  mode: AudienceChatMode,
+  question: string,
+  history: AudienceChatHistoryItem[]
+): Promise<AudienceChatOutput> {
+  if (config.mockMode) {
+    return AudienceChatOutputSchema.parse(
+      mockAudienceChatOutput(mode, personas, question)
+    );
+  }
+  return callJson({
+    runId,
+    system: audienceChatSystem(profile, cohort, personas, mode),
+    user: audienceChatUser(question, history),
+    schema: AudienceChatOutputSchema,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: 5000,
+    requestTimeoutMs: config.blockTimeoutMs,
+    requestMaxRetries: 1,
+  });
+}
+
+/**
+ * Owner Dashboard › Brand & Social Action Plan (one call over the converged
+ * world model). Web-grounded so comparable accounts come back as REAL, cited
+ * handles (the ~60/40 mix); on any web/parse failure it falls back to a plain
+ * JSON call (ungrounded accounts) — like the desks, it never hard-fails.
+ */
+export async function callBrandKit(
+  runId: string,
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  aggregate: AudienceAggregate | null
+): Promise<BrandKit> {
+  if (config.mockMode) return BrandKitSchema.parse(mockBrandKit);
+
+  const system = `${BRAND_KIT_SYSTEM}\n\n--- INPUT ---\n${brandKitUser(
+    profile,
+    conclusions,
+    aggregate
+  )}`;
+
+  // Preferred path: Responses API with web_search so accounts are verifiable.
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content:
+            "Search the web to verify comparable accounts, then output JSON only.",
+        },
+      ],
+      max_output_tokens: 16000,
+      reasoning: { effort: "low" },
+    });
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = BrandKitSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (parsed.success) return parsed.data;
+    throw new Error(
+      `brand kit (web) failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  } catch (e) {
+    console.error(`[brandkit] web-grounded path failed, falling back:`, e);
+    // Ungrounded fallback — accounts come from model knowledge (grounded:false).
+    return callJson({
+      runId,
+      system: BRAND_KIT_SYSTEM,
+      user: brandKitUser(profile, conclusions, aggregate),
+      schema: BrandKitSchema,
+      maxCompletionTokens: 16000,
+    });
+  }
+}

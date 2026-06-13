@@ -1,0 +1,205 @@
+generator client {
+  provider = "prisma-client-js"
+  // "native" covers local dev; the linux targets cover Railway/containers.
+  binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// The durable workspace: one project = one venture. Everything the UI can
+// show is recoverable from this row (plus the Run machinery it points to).
+model Project {
+  id                  String   @id @default(cuid())
+  name                String
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+  // JSONB: { messages: ChatMessage[], pending: {question,options,multiSelect} | null, done: boolean, brief?: string }
+  interviewTranscript Json     @default("{\"messages\":[],\"pending\":null,\"done\":false}") @map("interview_transcript")
+  // JSONB: ClientProfile incl. product, category, priceBand, geography, targetAudience, funding
+  ventureProfile      Json?    @map("venture_profile")
+  // JSONB: { desks, cohortPlan } from the planner — the audience matrix
+  audienceConfig      Json?    @map("audience_config")
+  // JSONB: append-only array of { runId, timestamp, params, results }
+  simulationRuns      Json     @default("[]") @map("simulation_runs")
+  // JSONB: Owner Dashboard state — extensible container of owner-facing tools.
+  // Today: { brandSocial: { kit, checks, generatedAt, sourceRunId } }
+  ownerDashboard      Json?    @map("owner_dashboard")
+
+  runs      Run[]
+  documents Document[]
+
+  @@map("projects")
+}
+
+// Founder-uploaded reference data (sales, surveys, competitor lists, …) used
+// as RAG ground truth: research desks and audience synthesis retrieve the
+// most relevant chunks of these and treat them as fact (SPEC-V2 §1A "pull
+// from real data"). Chunks + their embedding vectors live in one JSONB column
+// so retrieval is a single-row read + in-process cosine (no pgvector needed).
+model Document {
+  id         String   @id @default(cuid())
+  projectId  String   @map("project_id")
+  name       String
+  charCount  Int      @map("char_count")
+  chunkCount Int      @map("chunk_count")
+  embModel   String   @map("emb_model") // which embedder produced the vectors
+  // JSONB: [{ idx, content, embedding: number[] }]
+  chunks     Json
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@map("documents")
+}
+
+model Run {
+  id               String   @id @default(cuid())
+  projectId        String?
+  brief            String
+  clientProfile    String // Json (ClientProfile)
+  status           String // RunStatus
+  parentRunId      String?
+  forkPointBlockId String?
+  // Follow-up simulations: a focus question + extra context steer the run,
+  // mode picks full vs. scoped, sourceRunId is the run a scoped run reuses
+  // the simulated audience from.
+  focusQuestion     String?
+  additionalContext String?
+  mode              String  @default("full") // "full" | "scoped"
+  sourceRunId       String?
+  // Per-run audience size chosen in the UI (slider/number). Null → use the
+  // TARGET_AUDIENCE_SIZE env default. 0 → research desks only, no audience.
+  targetAudienceSize Int?
+  tokensUsed       Int      @default(0)
+  costUsd          Float    @default(0)
+  createdAt        DateTime @default(now())
+
+  project Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  blocks  Block[]
+  edges   Edge[]
+  events  RunEvent[]
+  cohorts Cohort[]
+
+  @@index([projectId])
+}
+
+model Block {
+  id            String @id @default(cuid())
+  runId         String
+  name          String
+  mission       String
+  layer         Int
+  kind          String @default("research") // "research" | "synthesis" | "audience"
+  domain        String @default("market") // market|competitor|channel|regulation|pricing|social|audience|synthesis
+  state         String // BlockState
+  inputBlockIds String // Json string[]
+  params        String // Json Record<string, number | string>
+  logs          String // Json string[]
+
+  run         Run          @relation(fields: [runId], references: [id])
+  conclusions Conclusion[]
+
+  @@index([runId])
+}
+
+model Conclusion {
+  id         String @id @default(cuid())
+  blockId    String
+  claim      String
+  value      String
+  confidence Float
+  entities   String // Json string[]
+  sources    String // Json string[]
+
+  block Block @relation(fields: [blockId], references: [id])
+
+  @@index([blockId])
+}
+
+model Edge {
+  id          String @id @default(cuid())
+  runId       String
+  fromBlockId String
+  toBlockId   String
+  kind        String // "entangle" | "feeds"
+  reason      String
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@index([runId])
+}
+
+// One simulated audience cohort = locality x income segment x role.
+// A single mini-model call simulates `size` personas for the cohort.
+model Cohort {
+  id        String  @id @default(cuid())
+  runId     String
+  label     String // e.g. "Mumbai · affluent · consumer"
+  locality  String // city/neighbourhood name
+  country   String
+  lat       Float
+  lng       Float
+  segment   String // "budget" | "middle" | "affluent" | "luxury"
+  role      String // "consumer" | "retail_exec" | "institutional" | "distributor" | "influencer"
+  weightPct Float // share of the addressable audience this cohort represents
+  size      Int // personas simulated in this cohort
+  state     String  @default("pending") // "pending" | "simulating" | "done" | "failed"
+  stats     String? // Json CohortStats
+  summary   String?
+
+  run      Run       @relation(fields: [runId], references: [id])
+  personas Persona[]
+
+  @@index([runId])
+}
+
+model Persona {
+  id          String @id @default(cuid())
+  cohortId    String
+  name        String
+  age         Int
+  gender      String
+  occupation  String
+  incomeBand  String
+  lat         Float
+  lng         Float
+  intent      Float // 0–1 purchase/stocking intent
+  wtp         Float // willingness to pay (in wtpCurrency)
+  wtpCurrency String
+  channelPref String
+  platforms   String // Json string[] social platforms
+  objection   String
+  quote       String
+
+  // Depth fields — the "why" behind intent/WTP, not just the numbers.
+  lifestyle        String @default("") // daily routine, work hours, social habits
+  lifeStage        String @default("") // household / living / family context
+  values           String @default("[]") // Json string[] — decision drivers
+  shoppingHabits   String @default("") // how/where/how often they shop this category
+  priceSensitivity Float  @default(0.5) // 0–1, 1 = extremely price-sensitive
+  reasoning        String @default("") // explicit life -> intent & price-tier chain
+  personality       String @default("") // distinct temperament, flavoured by locality
+  personalityTraits String @default("[]") // Json string[] — personality trait tags
+
+  cohort Cohort @relation(fields: [cohortId], references: [id])
+
+  @@index([cohortId])
+}
+
+model RunEvent {
+  id      String @id @default(cuid())
+  runId   String
+  seq     Int
+  type    String
+  payload String // Json
+  ts      BigInt
+
+  run Run @relation(fields: [runId], references: [id])
+
+  @@unique([runId, seq])
+  @@index([runId, seq])
+}
