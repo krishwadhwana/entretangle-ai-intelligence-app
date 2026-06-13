@@ -96,11 +96,15 @@ export default function BrandSocialSection({
   projectId,
   state,
   initial,
+  onChange,
 }: {
   runId: string;
   projectId: string | null;
   state: CanvasState;
   initial: BrandSocialState | null;
+  // Lift saved state into the parent so it survives a section-switch remount
+  // (the parent only hydrates once, on mount). Mirrors FinancialsSection.onSaved.
+  onChange?: (next: BrandSocialState) => void;
 }) {
   const ready = state.status === "complete" || state.status === "capped";
 
@@ -128,6 +132,12 @@ export default function BrandSocialSection({
       setKit(data.kit);
       setChecks(data.checks ?? {});
       setGeneratedAt(data.generatedAt ?? null);
+      onChange?.({
+        kit: data.kit,
+        checks: data.checks ?? {},
+        generatedAt: data.generatedAt ?? null,
+        sourceRunId: runId,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
@@ -138,17 +148,34 @@ export default function BrandSocialSection({
   // Optimistic toggle + persist to the project (survives reload / sibling runs).
   async function toggle(id: string) {
     const next = !checks[id];
-    setChecks((c) => ({ ...c, [id]: next }));
+    const nextChecks = { ...checks, [id]: next };
+    setChecks(nextChecks);
+    // Keep the parent in sync so the toggle survives a section-switch remount,
+    // not just a full page reload.
+    onChange?.({
+      kit,
+      checks: nextChecks,
+      generatedAt,
+      sourceRunId: initial?.sourceRunId ?? null,
+    });
     if (!projectId) return;
     try {
-      await fetch(`/api/projects/${projectId}`, {
+      const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ownerDashboardChecks: { [id]: next } }),
       });
+      if (!res.ok) throw new Error(`save failed (${res.status})`);
     } catch {
-      // revert on failure
-      setChecks((c) => ({ ...c, [id]: !next }));
+      // revert on failure (both local + parent)
+      const reverted = { ...nextChecks, [id]: !next };
+      setChecks(reverted);
+      onChange?.({
+        kit,
+        checks: reverted,
+        generatedAt,
+        sourceRunId: initial?.sourceRunId ?? null,
+      });
     }
   }
 

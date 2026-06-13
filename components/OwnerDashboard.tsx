@@ -111,6 +111,7 @@ export default function OwnerDashboard({
             projectId={projectId}
             state={state}
             initial={brandSocial}
+            onChange={setBrandSocial}
           />
         ) : null}
       </div>
