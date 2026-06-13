@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { callFinalReport } from "@/lib/llm";
 import { ClientProfileSchema } from "@/lib/schema";
+import { getFinancialModel } from "@/lib/store";
 import { getCostUsd, getTokensUsed } from "@/lib/usage";
 import { blockToWire } from "@/lib/wire";
 
@@ -11,9 +12,13 @@ export const dynamic = "force-dynamic";
 const READY = new Set(["complete", "capped"]);
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  // force=true regenerates even if a report exists — used to fold a freshly
+  // built/overridden financial model into the report's economics.
+  const force = (await req.json().catch(() => ({})))?.force === true;
+
   const run = await prisma.run.findUnique({
     where: { id: params.id },
     include: {
@@ -32,7 +37,7 @@ export async function POST(
     where: { runId: run.id, type: "final_report" },
     orderBy: { seq: "desc" },
   });
-  if (existing) {
+  if (existing && !force) {
     const [tokensUsed, costUsd] = await Promise.all([
       getTokensUsed(run.id),
       getCostUsd(run.id),
@@ -50,11 +55,15 @@ export async function POST(
   });
   const aggregate = aggEvent ? JSON.parse(aggEvent.payload).aggregate : null;
   const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
+  const financials = run.projectId
+    ? await getFinancialModel(run.projectId)
+    : null;
   const report = await callFinalReport(
     run.id,
     profile,
     run.blocks.map((b) => blockToWire(b, b.conclusions)),
-    aggregate
+    aggregate,
+    financials
   );
 
   const emitter = await RunEmitter.create(run.id);

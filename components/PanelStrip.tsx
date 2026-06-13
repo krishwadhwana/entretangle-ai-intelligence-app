@@ -252,7 +252,7 @@ export function ConclusionWorkspace({
   state: CanvasState;
   onQuery: (q: string) => Promise<string>;
   reportBusy: boolean;
-  onGenerateReport: () => void;
+  onGenerateReport: (force?: boolean) => void;
 }) {
   const [question, setQuestion] = useState("");
   // Turns asked this session — persisted turns arrive via state.conversation on
@@ -294,14 +294,23 @@ export function ConclusionWorkspace({
         <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
           <div className="space-y-2">
             <FinalReportView report={report} />
-            {!report && ready && (
+            {ready && (
               <button
-                onClick={onGenerateReport}
+                onClick={() => onGenerateReport(!!report)}
                 disabled={reportBusy}
+                title={
+                  report
+                    ? "Rewrite the report — folds in your latest financial model"
+                    : undefined
+                }
                 className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
               >
                 {reportBusy && <Loader2 className="h-3 w-3 animate-spin" />}
-                {reportBusy ? "Writing report..." : "Generate final report"}
+                {reportBusy
+                  ? "Writing report..."
+                  : report
+                    ? "Regenerate with financials"
+                    : "Generate final report"}
               </button>
             )}
           </div>

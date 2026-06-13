@@ -265,12 +265,16 @@ export default function RunDashboard({
     []
   );
 
-  const onGenerateReport = useCallback(async () => {
+  const onGenerateReport = useCallback(async (force = false) => {
     if (reportBusy) return;
     setReportBusy(true);
     patchState({ phaseLabel: "Writing final business report" });
     try {
-      const res = await fetch(`/api/runs/${runId}/report`, { method: "POST" });
+      const res = await fetch(`/api/runs/${runId}/report`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
       if (!res.ok) throw new Error(`report failed (${res.status})`);
       const data = await res.json();
       patchState({

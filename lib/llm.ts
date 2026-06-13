@@ -24,6 +24,7 @@ import {
   type CohortSimOutput,
   type BrandKit,
   type FinancialInputs,
+  type FinancialModel,
   type FinalReport,
   type ChatMessage,
   type ClientProfile,
@@ -643,7 +644,8 @@ export async function callFinalReport(
   runId: string,
   profile: ClientProfile,
   blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
-  aggregate: AudienceAggregate | null
+  aggregate: AudienceAggregate | null,
+  financials: FinancialModel | null = null
 ): Promise<FinalReport> {
   if (config.mockMode) {
     return FinalReportSchema.parse({
@@ -704,7 +706,7 @@ export async function callFinalReport(
   return callJson({
     runId,
     system: FINAL_REPORT_SYSTEM,
-    user: finalReportUser(profile, blocks, aggregate),
+    user: finalReportUser(profile, blocks, aggregate, financials),
     schema: FinalReportSchema,
     maxCompletionTokens: 16000,
   });

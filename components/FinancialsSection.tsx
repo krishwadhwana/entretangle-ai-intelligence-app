@@ -18,6 +18,7 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  Legend,
   CartesianGrid,
   Cell,
   ReferenceLine,
@@ -40,6 +41,48 @@ const SOURCE_META: Record<FinSource, { dot: string; label: string }> = {
   computed: { dot: "bg-neutral-400", label: "Computed" },
 };
 
+const METRIC_HELP: Record<string, string> = {
+  "TAM / yr":
+    "Total addressable market: the broad annual revenue pool if the business could sell to the entire relevant market.",
+  "SAM / yr":
+    "Serviceable addressable market: the annual revenue pool reachable by this business model, geography, channel and product scope.",
+  "SOM / yr (top-down)":
+    "Serviceable obtainable market: a conservative annual revenue target from the top-down market model.",
+  "Bottom-up / yr":
+    "Annual revenue implied by this model's base price tier, reachable prospects and simulated-buyer conversion.",
+  Price:
+    "Retail price per unit for this tier. Editing it recomputes demand, revenue, gross profit and break-even.",
+  margin:
+    "Gross margin percentage: contribution per unit divided by retail price.",
+  "units/mo":
+    "Estimated monthly units sold: reachable prospects multiplied by simulated buyers who can afford this price and intend to buy.",
+  "Revenue/mo":
+    "Estimated monthly revenue for this price tier: units per month multiplied by price.",
+  "Gross profit/mo":
+    "Estimated monthly gross profit for this price tier: units per month multiplied by contribution per unit.",
+  "Per-unit landed cost":
+    "All variable costs required to get one sellable unit ready for sale, including production and logistics assumptions.",
+  "Landed cost / unit":
+    "Total per-unit landed cost, computed as the sum of the cost-structure line items.",
+  "Blended CAC":
+    "Customer acquisition cost weighted across channels when channel share is available, otherwise the mean of channel CAC assumptions.",
+  LTV: "Lifetime value. Uses the provided LTV estimate when available, otherwise a single-purchase contribution proxy.",
+  "LTV : CAC":
+    "Ratio of lifetime value to blended CAC. Higher means each acquired customer produces more value relative to acquisition cost.",
+  "Break-even units/mo":
+    "Monthly unit sales needed for contribution profit to cover fixed monthly costs.",
+  "Months to break even":
+    "Estimated months for cumulative net gross profit to repay the MOQ cash requirement.",
+  Runway:
+    "Months the available capital can cover fixed monthly burn before additional financing or revenue is needed.",
+  "Fixed costs / mo":
+    "Monthly operating costs that do not vary directly with unit sales, such as salaries, rent, software, retainers and baseline marketing.",
+  "Reachable prospects / mo":
+    "Prospects this business can realistically reach each month through its intended channels.",
+  "MOQ cash required":
+    "Cash needed to fund one minimum-order-quantity cycle before sales proceeds come back.",
+};
+
 function fmt(v: number, currency: string, unit?: string): string {
   if (!isFinite(v)) return "—";
   const compact = new Intl.NumberFormat(undefined, {
@@ -50,6 +93,24 @@ function fmt(v: number, currency: string, unit?: string): string {
   if (unit === "x") return `${compact}×`;
   if (!unit || unit.startsWith(currency)) return `${currency} ${compact}`;
   return `${compact} ${unit}`; // units/mo, months, prospects/mo, purchases
+}
+
+function MetricLabel({
+  label,
+  className = "",
+}: {
+  label: string;
+  className?: string;
+}) {
+  const help = METRIC_HELP[label];
+  return (
+    <span
+      className={`${help ? "cursor-help decoration-dotted underline-offset-2 hover:underline" : ""} ${className}`}
+      title={help}
+    >
+      {label}
+    </span>
+  );
 }
 
 function Dot({ source, basis }: { source: FinSource; basis?: string }) {
@@ -77,7 +138,7 @@ function Stat({
   return (
     <div className="rounded-xl border border-neutral-200 bg-white p-3">
       <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
-        {label}
+        <MetricLabel label={label} />
       </p>
       <p
         className={`mt-0.5 flex items-center gap-1.5 font-semibold text-neutral-900 ${
@@ -115,7 +176,8 @@ function NumField({
   return (
     <label className="flex flex-col gap-1">
       <span className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
-        {label} {unit ? `(${unit === "INR" ? currency : unit})` : ""}
+        <MetricLabel label={label} />{" "}
+        {unit ? `(${unit === "INR" ? currency : unit})` : ""}
       </span>
       <input
         type="number"
@@ -359,6 +421,11 @@ export default function FinancialsSection({
                       formatter={(v, name) => [fmt(Number(v), currency), String(name)]}
                       contentStyle={{ fontSize: 11, borderRadius: 8 }}
                     />
+                    <Legend
+                      verticalAlign="top"
+                      align="right"
+                      wrapperStyle={{ fontSize: 11, paddingBottom: 8 }}
+                    />
                     <Bar dataKey="revenue" name="Revenue/mo" radius={[3, 3, 0, 0]}>
                       {tierChart.map((d, i) => (
                         <Cell key={i} fill={d.isBase ? "#4f46e5" : "#a5b4fc"} />
@@ -415,16 +482,17 @@ export default function FinancialsSection({
                       disabled={busy}
                     />
                     <div className="flex items-center gap-1 text-[12px] text-neutral-700">
-                      <span className="text-neutral-400">margin</span>
+                      <MetricLabel label="margin" className="text-neutral-400" />
                       {fmt(t.grossMarginPct.value, currency, "%")}
                       <Dot source={t.grossMarginPct.source} basis={t.grossMarginPct.basis} />
                     </div>
                     <div className="flex items-center gap-1 text-[12px] text-neutral-700">
-                      <span className="text-neutral-400">units/mo</span>
+                      <MetricLabel label="units/mo" className="text-neutral-400" />
                       {fmt(t.estUnitsPerMonth.value, currency, "units/mo")}
                       <Dot source={t.estUnitsPerMonth.source} basis={t.estUnitsPerMonth.basis} />
                     </div>
                     <div className="flex items-center gap-1 text-[12px] font-medium text-neutral-900">
+                      <MetricLabel label="Revenue/mo" className="text-neutral-400" />
                       {fmt(t.estRevenuePerMonth.value, currency)}
                       <span className="text-[10px] font-normal text-neutral-400">/mo</span>
                     </div>
@@ -436,7 +504,7 @@ export default function FinancialsSection({
             {/* Cost structure */}
             <section className="rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4">
               <h3 className="text-sm font-semibold text-neutral-900">
-                Per-unit landed cost
+                <MetricLabel label="Per-unit landed cost" />
               </h3>
               <div className="mt-2 divide-y divide-neutral-200/70">
                 {model.costStructure.map((c, i) => (
@@ -463,7 +531,7 @@ export default function FinancialsSection({
                 ))}
                 <div className="flex items-center justify-between gap-4 pt-2">
                   <span className="text-[12px] font-semibold text-neutral-900">
-                    Landed cost / unit
+                    <MetricLabel label="Landed cost / unit" />
                   </span>
                   <span className="shrink-0 whitespace-nowrap text-[12px] font-semibold tabular-nums text-neutral-900">
                     {fmt(
