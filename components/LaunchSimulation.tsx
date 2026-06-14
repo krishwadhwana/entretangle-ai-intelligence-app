@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   ResponsiveContainer,
   ComposedChart,
@@ -288,23 +295,151 @@ export default function LaunchSimulation({
           </div>
 
           {showAdvanced && (
-            <div className="mt-4 grid grid-cols-2 gap-3 border-t border-neutral-100 pt-4 sm:grid-cols-4">
-              <NumField label="Reachable pool (null→auto)" value={inputs.reachablePool ?? 0} onChange={(v) => set("reachablePool", v || null)} small />
-              <NumField label="CPM" value={inputs.cpm} onChange={(v) => set("cpm", v)} small />
-              <NumField label="Frequency cap" value={inputs.frequencyCap} onChange={(v) => set("frequencyCap", v)} small />
-              <NumField label="Targeting quality (0–1)" value={inputs.targetingQuality} onChange={(v) => set("targetingQuality", clamp01(v))} step={0.05} small />
-              <NumField label="Virality k" value={inputs.viralityK} onChange={(v) => set("viralityK", v)} step={0.05} small />
-              <NumField label="Organic reach/step" value={inputs.organicReachPerStep} onChange={(v) => set("organicReachPerStep", v)} small />
-              <NumField label="Abandon rate" value={inputs.abandonRate} onChange={(v) => set("abandonRate", clamp01(v))} step={0.01} small />
-              <NumField label="Shipping/order" value={inputs.shippingPerOrder} onChange={(v) => set("shippingPerOrder", v)} small />
-              <NumField label="Payment fee %" value={inputs.paymentFeePct} onChange={(v) => set("paymentFeePct", clamp01(v))} step={0.005} small />
-              <NumField label="Fixed costs/month" value={inputs.fixedCostsPerMonth} onChange={(v) => set("fixedCostsPerMonth", v)} small />
-              <NumField label="Return window (days)" value={inputs.returnWindowDays} onChange={(v) => set("returnWindowDays", Math.round(v))} small />
-              <NumField label="Refund rate ×" value={inputs.refundRateMult} onChange={(v) => set("refundRateMult", v)} step={0.1} small />
-              <NumField label="Resellable % of returns" value={inputs.resellablePct} onChange={(v) => set("resellablePct", clamp01(v))} step={0.05} small />
-              <NumField label="Initial inventory (null→auto)" value={inputs.initialInventoryUnits ?? 0} onChange={(v) => set("initialInventoryUnits", v ? Math.round(v) : null)} small />
-              <NumField label="Reorder lead (days)" value={inputs.reorderLeadTimeDays} onChange={(v) => set("reorderLeadTimeDays", Math.round(v))} small />
-              <NumField label="Repeat rate ×" value={inputs.repeatRateMult} onChange={(v) => set("repeatRateMult", v)} step={0.1} small />
+            <div className="mt-4 space-y-4 border-t border-neutral-100 pt-4">
+              <AdvancedGroup
+                title="Acquisition"
+                description="Controls how many qualified people the launch can put into the funnel."
+              >
+                <NumField
+                  label="Reachable pool"
+                  help="Unique prospects available over the scenario. Use 0 to auto-size from the financial model."
+                  value={inputs.reachablePool ?? 0}
+                  onChange={(v) => set("reachablePool", v || null)}
+                  small
+                />
+                <NumField
+                  label="CPM"
+                  help="Estimated cost per 1,000 paid impressions."
+                  value={inputs.cpm}
+                  onChange={(v) => set("cpm", v)}
+                  small
+                />
+                <NumField
+                  label="Frequency cap"
+                  help="Impressions needed before one person is likely to notice the launch."
+                  value={inputs.frequencyCap}
+                  onChange={(v) => set("frequencyCap", v)}
+                  small
+                />
+                <NumField
+                  label="Organic reach/step"
+                  help="Non-paid people reached per day or month."
+                  value={inputs.organicReachPerStep}
+                  onChange={(v) => set("organicReachPerStep", v)}
+                  small
+                />
+              </AdvancedGroup>
+
+              <AdvancedGroup
+                title="Funnel behavior"
+                description="Controls how quickly reached people decide, drop off, or spread word of mouth."
+              >
+                <NumField
+                  label="Targeting quality"
+                  help="0 = broad delivery, 1 = strongly aimed at high-intent personas."
+                  value={inputs.targetingQuality}
+                  onChange={(v) => set("targetingQuality", clamp01(v))}
+                  step={0.05}
+                  small
+                />
+                <NumField
+                  label="Virality k"
+                  help="Extra awareness created by recent buyers through referrals or sharing."
+                  value={inputs.viralityK}
+                  onChange={(v) => set("viralityK", v)}
+                  step={0.05}
+                  small
+                />
+                <NumField
+                  label="Abandon rate"
+                  help="Share of considerers who lose interest each step before buying."
+                  value={inputs.abandonRate}
+                  onChange={(v) => set("abandonRate", clamp01(v))}
+                  step={0.01}
+                  small
+                />
+              </AdvancedGroup>
+
+              <AdvancedGroup
+                title="Operations & costs"
+                description="Controls fulfillment economics, working capital, and inventory constraints."
+              >
+                <NumField
+                  label="Shipping/order"
+                  help="Outbound fulfillment cost per shipped order."
+                  value={inputs.shippingPerOrder}
+                  onChange={(v) => set("shippingPerOrder", v)}
+                  small
+                />
+                <NumField
+                  label="Payment fee %"
+                  help="Payment gateway or marketplace fee as a fraction of revenue."
+                  value={inputs.paymentFeePct}
+                  onChange={(v) => set("paymentFeePct", clamp01(v))}
+                  step={0.005}
+                  small
+                />
+                <NumField
+                  label="Fixed costs/month"
+                  help="Monthly overhead burned regardless of sales."
+                  value={inputs.fixedCostsPerMonth}
+                  onChange={(v) => set("fixedCostsPerMonth", v)}
+                  small
+                />
+                <NumField
+                  label="Initial inventory"
+                  help="Opening units available. Use 0 to let the simulator auto-size it."
+                  value={inputs.initialInventoryUnits ?? 0}
+                  onChange={(v) =>
+                    set("initialInventoryUnits", v ? Math.round(v) : null)
+                  }
+                  small
+                />
+                <NumField
+                  label="Reorder lead"
+                  help="Days between placing replenishment and receiving sellable inventory."
+                  value={inputs.reorderLeadTimeDays}
+                  onChange={(v) => set("reorderLeadTimeDays", Math.round(v))}
+                  small
+                />
+              </AdvancedGroup>
+
+              <AdvancedGroup
+                title="Returns & retention"
+                description="Controls refund timing, resale value of returns, and repeat purchasing."
+              >
+                <NumField
+                  label="Return window"
+                  help="Days after purchase when refunds land in cash and inventory."
+                  value={inputs.returnWindowDays}
+                  onChange={(v) => set("returnWindowDays", Math.round(v))}
+                  small
+                />
+                <NumField
+                  label="Refund rate ×"
+                  help="Multiplier on persona-level refund risk from objections and channel."
+                  value={inputs.refundRateMult}
+                  onChange={(v) => set("refundRateMult", v)}
+                  step={0.1}
+                  small
+                />
+                <NumField
+                  label="Resellable returns"
+                  help="Fraction of returned units that can be sold again."
+                  value={inputs.resellablePct}
+                  onChange={(v) => set("resellablePct", clamp01(v))}
+                  step={0.05}
+                  small
+                />
+                <NumField
+                  label="Repeat rate ×"
+                  help="Multiplier on segment-level repeat purchase behavior."
+                  value={inputs.repeatRateMult}
+                  onChange={(v) => set("repeatRateMult", v)}
+                  step={0.1}
+                  small
+                />
+              </AdvancedGroup>
             </div>
           )}
 
@@ -824,14 +959,40 @@ function Ratio({
   );
 }
 
+function AdvancedGroup({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="space-y-2">
+      <div>
+        <h3 className="text-[11px] font-semibold text-neutral-800">{title}</h3>
+        <p className="mt-0.5 text-[10px] leading-snug text-neutral-500">
+          {description}
+        </p>
+      </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {children}
+      </div>
+    </section>
+  );
+}
+
 function NumField({
   label,
+  help,
   value,
   onChange,
   step,
   small,
 }: {
   label: string;
+  help?: string;
   value: number;
   onChange: (v: number) => void;
   step?: number;
@@ -851,6 +1012,11 @@ function NumField({
           small ? "py-1 text-xs" : "py-1.5 text-sm"
         }`}
       />
+      {help && (
+        <p className="mt-1 text-[10px] leading-snug text-neutral-400">
+          {help}
+        </p>
+      )}
     </div>
   );
 }
