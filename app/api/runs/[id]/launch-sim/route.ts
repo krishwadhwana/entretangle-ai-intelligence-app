@@ -3,7 +3,11 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { getFinancialModel } from "@/lib/store";
 import { simulateLaunch, type LaunchPersona } from "@/lib/launchSim";
-import { LaunchSimInputsSchema, type LaunchSimRecord } from "@/lib/schema";
+import {
+  LaunchSimInputsSchema,
+  type LaunchSimInputs,
+  type LaunchSimRecord,
+} from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -96,7 +100,10 @@ export async function GET(
   };
 
   const scenarios: LaunchSimRecord[] = rows.map((r) => {
-    const inputs = LaunchSimInputsSchema.parse(r.inputs);
+    const inputs = applyLegacyAcquisitionDefault(
+      LaunchSimInputsSchema.parse(r.inputs),
+      defaults.suggestedAdSpendPerMonth
+    );
     return {
       id: r.id,
       runId: r.runId,
@@ -235,4 +242,20 @@ function suggestAdSpendPerMonth(
   }
   const suggested = candidates.find((n) => Number.isFinite(n) && n > 0);
   return suggested == null ? null : Math.round(suggested);
+}
+
+function applyLegacyAcquisitionDefault(
+  inputs: LaunchSimInputs,
+  suggestedAdSpendPerMonth: number | null
+): LaunchSimInputs {
+  if (
+    inputs.adSpendPerMonth === 0 &&
+    inputs.organicReachPerStep === 0 &&
+    inputs.initialInventoryUnits == null &&
+    suggestedAdSpendPerMonth != null &&
+    suggestedAdSpendPerMonth > 0
+  ) {
+    return { ...inputs, adSpendPerMonth: suggestedAdSpendPerMonth };
+  }
+  return inputs;
 }

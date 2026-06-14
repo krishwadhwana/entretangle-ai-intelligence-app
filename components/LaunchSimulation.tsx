@@ -617,7 +617,7 @@ function Pnl({
     ...costStack.map((c) => ({ name: `− ${c.name}`, value: -c.value, kind: "out" as const })),
     { name: "Net profit", value: netProfit, kind: "net" as const },
   ];
-  const max = Math.max(grossRevenue, 1);
+  const max = Math.max(...rows.map((r) => Math.abs(r.value)), 1);
   return (
     <div className="space-y-1.5">
       {rows.map((r) => (
@@ -636,7 +636,7 @@ function Pnl({
                       : "bg-red-600"
                     : "bg-red-300"
               }`}
-              style={{ width: `${(Math.abs(r.value) / max) * 100}%` }}
+              style={{ width: `${Math.min(100, (Math.abs(r.value) / max) * 100)}%` }}
             />
           </div>
           <span
