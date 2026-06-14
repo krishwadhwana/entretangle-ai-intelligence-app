@@ -64,13 +64,14 @@ export async function GET(
   const run = await prisma.run.findUnique({ where: { id: params.id } });
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
-  const [rows, { currency }] = await Promise.all([
+  const [rows, personaData] = await Promise.all([
     prisma.launchSimulation.findMany({
       where: { runId: run.id },
       orderBy: { createdAt: "desc" },
     }),
     loadPersonas(run.id),
   ]);
+  const { personas, currency } = personaData;
 
   // Prefill suggestions from the saved financial model, if the founder built one.
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
@@ -94,14 +95,20 @@ export async function GET(
     fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
   };
 
-  const scenarios: LaunchSimRecord[] = rows.map((r) => ({
-    id: r.id,
-    runId: r.runId,
-    name: r.name,
-    inputs: r.inputs as unknown as LaunchSimRecord["inputs"],
-    result: r.result as unknown as LaunchSimRecord["result"],
-    createdAt: r.createdAt.toISOString(),
-  }));
+  const scenarios: LaunchSimRecord[] = rows.map((r) => {
+    const inputs = LaunchSimInputsSchema.parse(r.inputs);
+    return {
+      id: r.id,
+      runId: r.runId,
+      name: r.name,
+      inputs,
+      result:
+        personas.length > 0
+          ? simulateLaunch(personas, inputs, { reachableProspectsPerMonth })
+          : (r.result as unknown as LaunchSimRecord["result"]),
+      createdAt: r.createdAt.toISOString(),
+    };
+  });
 
   return NextResponse.json({ scenarios, defaults });
 }
