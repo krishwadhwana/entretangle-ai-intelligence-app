@@ -53,6 +53,7 @@ type Defaults = {
 
 const DEFAULT_INPUTS: LaunchSimInputs = {
   currency: "INR",
+  businessModel: "generic",
   costPrice: 0,
   salePrice: 0,
   adSpendPerMonth: 0,
@@ -79,7 +80,21 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   reorderEnabled: true,
   repeatRateMult: 1,
   jitterAmplitude: 0.06,
+  channels: [],
 };
+
+const BUSINESS_MODEL_OPTIONS: {
+  value: LaunchSimInputs["businessModel"];
+  label: string;
+}[] = [
+  { value: "generic", label: "Generic" },
+  { value: "apparel", label: "Apparel" },
+  { value: "furniture", label: "Furniture" },
+  { value: "consumable", label: "Consumable" },
+  { value: "saas", label: "SaaS" },
+  { value: "services", label: "Services" },
+  { value: "marketplace", label: "Marketplace" },
+];
 
 export default function LaunchSimulation({
   runId,
@@ -271,6 +286,25 @@ export default function LaunchSimulation({
           </div>
 
           <div className="mt-3 flex flex-wrap items-end gap-3">
+            <div>
+              <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                Product model
+              </label>
+              <select
+                value={inputs.businessModel}
+                onChange={(e) => {
+                  set("businessModel", e.target.value as LaunchSimInputs["businessModel"]);
+                  set("channels", []);
+                }}
+                className="h-[31px] rounded-lg border border-neutral-300 bg-white px-2.5 text-xs outline-none focus:border-indigo-500"
+              >
+                {BUSINESS_MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
             <div>
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
                 Granularity
@@ -589,6 +623,11 @@ function Results({
         <Stat label="Net revenue" value={fmt.money(s.netRevenue)} sub={`${fmt.money(s.grossRevenue)} gross`} />
         <Stat label="Orders" value={fmt.num(s.totalOrders)} sub={`${s.returningCustomerSharePct}% returning`} />
         <Stat
+          label="Product visits"
+          value={fmt.num(s.totalProductVisits)}
+          sub={`${fmt.num(s.totalCheckoutsStarted)} checkout starts`}
+        />
+        <Stat
           label="Refund rate"
           value={`${s.refundRatePct}%`}
           tone={s.refundRatePct > 15 ? "bad" : "neutral"}
@@ -678,12 +717,15 @@ function Results({
         </section>
         <section className="rounded-xl border border-neutral-200 bg-white p-4">
           <h3 className="mb-3 text-xs font-semibold text-neutral-700">
-            Awareness funnel
+            Acquisition funnel
           </h3>
           <Funnel
             fmt={fmt}
             impressions={s.totalImpressions}
             reached={s.totalReached}
+            engaged={s.totalEngaged}
+            productVisits={s.totalProductVisits}
+            checkoutsStarted={s.totalCheckoutsStarted}
             scrolledPast={s.totalScrolledPast}
             orders={s.totalOrders}
           />
@@ -692,6 +734,10 @@ function Results({
 
       {/* Breakdowns */}
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        <AcquisitionChannelTable
+          data={b.byAcquisitionChannel}
+          fmt={fmt}
+        />
         <BreakdownCard title="Orders by channel" data={b.byChannel} fmt={fmt} />
         <BreakdownCard
           title="Orders by segment"
@@ -727,6 +773,8 @@ function Results({
           </div>
         </section>
       </div>
+
+      <Assumptions assumptions={result.assumptions} fmt={fmt} />
 
       {/* Determinism footnote */}
       <p className="text-center text-[10px] text-neutral-400">
@@ -876,18 +924,27 @@ function Funnel({
   fmt,
   impressions,
   reached,
+  engaged,
+  productVisits,
+  checkoutsStarted,
   scrolledPast,
   orders,
 }: {
   fmt: Formatters;
   impressions: number;
   reached: number;
+  engaged: number;
+  productVisits: number;
+  checkoutsStarted: number;
   scrolledPast: number;
   orders: number;
 }) {
   const steps = [
     { name: "Impressions", value: impressions, color: "#c7d2fe" },
     { name: "People reached", value: reached, color: "#a5b4fc" },
+    { name: "Engaged", value: engaged, color: "#93c5fd" },
+    { name: "Product visits", value: productVisits, color: "#67e8f9" },
+    { name: "Checkout starts", value: checkoutsStarted, color: "#5eead4" },
     { name: "Scrolled past", value: scrolledPast, color: "#fca5a5" },
     { name: "Orders", value: orders, color: "#6366f1" },
   ];
@@ -913,6 +970,81 @@ function Funnel({
         </div>
       ))}
     </div>
+  );
+}
+
+function AcquisitionChannelTable({
+  data,
+  fmt,
+}: {
+  data: {
+    id: string;
+    name: string;
+    kind: string;
+    impressions: number;
+    reached: number;
+    productVisits: number;
+    checkoutsStarted: number;
+    orders: number;
+    revenue: number;
+    adSpend: number;
+    cac: number;
+  }[];
+  fmt: Formatters;
+}) {
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <h3 className="mb-3 text-xs font-semibold text-neutral-700">
+        Acquisition by channel
+      </h3>
+      {data.length === 0 ? (
+        <p className="flex h-[170px] items-center justify-center text-[11px] text-neutral-400">
+          No channel activity
+        </p>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[540px] text-left text-[11px]">
+            <thead className="text-[10px] uppercase tracking-wide text-neutral-400">
+              <tr>
+                <th className="pb-2 font-medium">Channel</th>
+                <th className="pb-2 text-right font-medium">Visits</th>
+                <th className="pb-2 text-right font-medium">Checkouts</th>
+                <th className="pb-2 text-right font-medium">Orders</th>
+                <th className="pb-2 text-right font-medium">Spend</th>
+                <th className="pb-2 text-right font-medium">CAC</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-neutral-100">
+              {data.slice(0, 6).map((row) => (
+                <tr key={row.id}>
+                  <td className="py-2">
+                    <div className="font-medium text-neutral-700">{row.name}</div>
+                    <div className="text-[10px] text-neutral-400">
+                      {row.kind} · {fmt.num(row.reached)} reached
+                    </div>
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-neutral-600">
+                    {fmt.num(row.productVisits)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-neutral-600">
+                    {fmt.num(row.checkoutsStarted)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums font-medium text-neutral-800">
+                    {fmt.num(row.orders)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-neutral-600">
+                    {fmt.money(row.adSpend)}
+                  </td>
+                  <td className="py-2 text-right tabular-nums text-neutral-600">
+                    {row.cac > 0 ? fmt.money(row.cac) : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -994,6 +1126,60 @@ function Ratio({
       </div>
     </div>
   );
+}
+
+function Assumptions({
+  assumptions,
+  fmt,
+}: {
+  assumptions: LaunchSimRecord["result"]["assumptions"];
+  fmt: Formatters;
+}) {
+  if (!assumptions || assumptions.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <h3 className="text-xs font-semibold text-neutral-700">
+        Assumptions & confidence
+      </h3>
+      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+        {assumptions.map((a) => (
+          <div key={a.key} className="border-t border-neutral-100 pt-2">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-[11px] font-medium text-neutral-700">
+                  {a.label}
+                </p>
+                <p className="mt-0.5 text-[10px] leading-snug text-neutral-400">
+                  {a.basis}
+                </p>
+              </div>
+              <div className="shrink-0 text-right">
+                <p className="text-[11px] font-semibold text-neutral-800">
+                  {formatAssumptionValue(a.value, a.unit, fmt)}
+                </p>
+                <p className="text-[10px] text-neutral-400">
+                  {a.source.replace("_", " ")} · {(a.confidence * 100).toFixed(0)}%
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function formatAssumptionValue(
+  value: string | number,
+  unit: string,
+  fmt: Formatters
+): string {
+  if (typeof value === "string") return value;
+  const formatted =
+    Math.abs(value) < 10 && !Number.isInteger(value)
+      ? value.toFixed(2).replace(/\.?0+$/, "")
+      : fmt.num(value);
+  return unit ? `${formatted} ${unit}` : formatted;
 }
 
 function AdvancedGroup({

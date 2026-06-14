@@ -20,6 +20,9 @@
 
 import {
   LaunchSimInputsSchema,
+  type LaunchAssumption,
+  type LaunchBusinessModel,
+  type LaunchChannelInput,
   type LaunchSimInputs,
   type LaunchSimResult,
   type LaunchSimStep,
@@ -98,6 +101,134 @@ const ANNUAL_REPEAT_BY_SEGMENT: Record<string, number> = {
   luxury: 0.75,
 };
 
+const BUSINESS_PRESETS: Record<
+  LaunchBusinessModel,
+  {
+    repeatMult: number;
+    refundMult: number;
+    decisionMult: number;
+    abandonMult: number;
+    inventoryBuffer: number;
+    defaultChannels: LaunchChannelInput[];
+  }
+> = {
+  generic: {
+    repeatMult: 1,
+    refundMult: 1,
+    decisionMult: 1,
+    abandonMult: 1,
+    inventoryBuffer: 1.5,
+    defaultChannels: [
+      channel("paid_social", "Paid social", "paid", 0.7, 250, 0, 3, 0.18, 0.35, 0.45, 1, 1, 1),
+      channel("search", "Search", "paid", 0.3, 350, 0, 2, 0.32, 0.55, 0.55, 1.15, 0.9, 1),
+    ],
+  },
+  apparel: {
+    repeatMult: 1.2,
+    refundMult: 1.35,
+    decisionMult: 1.1,
+    abandonMult: 1,
+    inventoryBuffer: 1.4,
+    defaultChannels: [
+      channel("paid_social", "Paid social", "paid", 0.65, 230, 0, 3, 0.2, 0.38, 0.42, 1, 1.2, 1.1),
+      channel("creator", "Creators", "paid", 0.2, 500, 0, 2.5, 0.28, 0.45, 0.48, 1.2, 0.95, 1.2),
+      channel("marketplace", "Marketplace", "marketplace", 0.15, 300, 0, 2, 0.3, 0.6, 0.6, 1.25, 1.15, 1),
+    ],
+  },
+  furniture: {
+    repeatMult: 0.45,
+    refundMult: 1.15,
+    decisionMult: 0.55,
+    abandonMult: 0.7,
+    inventoryBuffer: 1.2,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.45, 600, 0, 2, 0.35, 0.6, 0.5, 1.25, 0.9, 0.6),
+      channel("paid_social", "Paid social", "paid", 0.35, 350, 0, 4, 0.16, 0.32, 0.35, 0.9, 1.05, 0.5),
+      channel("showroom", "Showroom / retail", "retail", 0.2, 700, 0, 1.5, 0.45, 0.7, 0.65, 1.4, 0.8, 0.4),
+    ],
+  },
+  consumable: {
+    repeatMult: 2.2,
+    refundMult: 0.65,
+    decisionMult: 1.25,
+    abandonMult: 1.05,
+    inventoryBuffer: 1.8,
+    defaultChannels: [
+      channel("paid_social", "Paid social", "paid", 0.55, 220, 0, 3, 0.16, 0.35, 0.55, 1, 0.75, 1.6),
+      channel("search", "Search", "paid", 0.25, 320, 0, 2, 0.3, 0.55, 0.65, 1.15, 0.7, 1.5),
+      channel("owned", "Owned audience", "owned", 0.2, 180, 0, 1.5, 0.4, 0.65, 0.7, 1.3, 0.6, 2),
+    ],
+  },
+  saas: {
+    repeatMult: 3,
+    refundMult: 0.4,
+    decisionMult: 0.8,
+    abandonMult: 0.85,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.45, 500, 0, 2, 0.35, 0.7, 0.45, 1.25, 0.5, 2),
+      channel("content", "Content / organic", "organic", 0.2, 250, 0, 1.5, 0.3, 0.65, 0.4, 1.15, 0.5, 2.5),
+      channel("paid_social", "Paid social", "paid", 0.35, 300, 0, 3, 0.14, 0.35, 0.3, 0.85, 0.7, 1.5),
+    ],
+  },
+  services: {
+    repeatMult: 0.9,
+    refundMult: 0.5,
+    decisionMult: 0.65,
+    abandonMult: 0.75,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.55, 450, 0, 2, 0.4, 0.7, 0.45, 1.25, 0.5, 0.9),
+      channel("referral", "Referral / network", "owned", 0.25, 200, 0, 1.5, 0.5, 0.75, 0.55, 1.5, 0.4, 1.1),
+      channel("paid_social", "Paid social", "paid", 0.2, 300, 0, 3, 0.15, 0.35, 0.3, 0.85, 0.6, 0.8),
+    ],
+  },
+  marketplace: {
+    repeatMult: 1.1,
+    refundMult: 1.1,
+    decisionMult: 1.15,
+    abandonMult: 0.9,
+    inventoryBuffer: 1.3,
+    defaultChannels: [
+      channel("marketplace", "Marketplace", "marketplace", 0.55, 280, 0, 2, 0.35, 0.65, 0.65, 1.35, 1.1, 1),
+      channel("search", "Search", "paid", 0.25, 350, 0, 2, 0.28, 0.55, 0.55, 1.15, 0.95, 1),
+      channel("paid_social", "Paid social", "paid", 0.2, 230, 0, 3, 0.16, 0.35, 0.45, 0.95, 1.1, 1),
+    ],
+  },
+};
+
+function channel(
+  id: string,
+  label: string,
+  kind: LaunchChannelInput["kind"],
+  spendPct: number,
+  cpm: number,
+  reachPerStep: number,
+  frequencyCap: number,
+  engagementRate: number,
+  visitRate: number,
+  checkoutRate: number,
+  trustMultiplier: number,
+  refundMultiplier: number,
+  repeatMultiplier: number
+): LaunchChannelInput {
+  return {
+    id,
+    label,
+    kind,
+    spendPct,
+    cpm,
+    reachPerStep,
+    frequencyCap,
+    engagementRate,
+    visitRate,
+    checkoutRate,
+    trustMultiplier,
+    refundMultiplier,
+    repeatMultiplier,
+  };
+}
+
 const REFUND_OBJECTION_RE =
   /damage|deliver|return|see and touch|touch it|quality|fake|warranty|fragile|broke/i;
 
@@ -121,6 +252,7 @@ export function resolveLaunchInputs(
   ctx: LaunchContext = {}
 ): LaunchSimInputs {
   const i = LaunchSimInputsSchema.parse(raw); // apply schema defaults first
+  const preset = BUSINESS_PRESETS[i.businessModel] ?? BUSINESS_PRESETS.generic;
   const stepsPerMonth = i.granularity === "day" ? 30 : 1;
 
   // Reach ceiling: a finite pool the ad spend saturates over time.
@@ -137,10 +269,12 @@ export function resolveLaunchInputs(
   // Decision speed: how quickly considerers resolve. A day-step audience decides
   // a small slice per day; a month-step audience resolves most of it per month.
   const decisionSpeed =
-    i.decisionSpeed ?? (i.granularity === "day" ? 0.1 : 0.5);
+    i.decisionSpeed ??
+    clamp((i.granularity === "day" ? 0.1 : 0.5) * preset.decisionMult, 0.01, 1);
 
   const returnShippingPerOrder =
     i.returnShippingPerOrder ?? i.shippingPerOrder;
+  const channels = normalizeChannels(i, preset);
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
   // founder didn't pin a MOQ. Size it from first-month reachable demand, not
@@ -161,16 +295,54 @@ export function resolveLaunchInputs(
     const decisionCoverage = 1 - Math.pow(1 - decisionSpeed, stepsPerMonth);
     const estMonthlyOrders = firstMonthReach * meanBuy * decisionCoverage;
     initialInventoryUnits =
-      estMonthlyOrders > 0 ? Math.max(10, Math.ceil(estMonthlyOrders * 1.5)) : 0;
+      estMonthlyOrders > 0
+        ? Math.max(10, Math.ceil(estMonthlyOrders * preset.inventoryBuffer))
+        : 0;
   }
 
   return {
     ...i,
     reachablePool,
     decisionSpeed,
+    channels,
     returnShippingPerOrder,
     initialInventoryUnits,
+    refundRateMult: i.refundRateMult * preset.refundMult,
+    repeatRateMult: i.repeatRateMult * preset.repeatMult,
+    abandonRate: clamp(i.abandonRate * preset.abandonMult, 0, 1),
   };
+}
+
+function normalizeChannels(
+  inputs: LaunchSimInputs,
+  preset: (typeof BUSINESS_PRESETS)[LaunchBusinessModel]
+): LaunchChannelInput[] {
+  const base = inputs.channels.length > 0 ? inputs.channels : preset.defaultChannels;
+  const parsed = base.map((c) => ({
+    ...c,
+    id: c.id || c.label.toLowerCase().replace(/\W+/g, "_"),
+    label: c.label || c.id,
+  }));
+  const paidTotal = parsed
+    .filter((c) => c.kind === "paid" || c.kind === "marketplace" || c.kind === "retail")
+    .reduce((s, c) => s + c.spendPct, 0);
+  return parsed.map((c) => ({
+    ...c,
+    spendPct:
+      c.kind === "paid" || c.kind === "marketplace" || c.kind === "retail"
+        ? paidTotal > 0
+          ? c.spendPct / paidTotal
+          : 0
+        : 0,
+    reachPerStep:
+      c.reachPerStep > 0
+        ? c.reachPerStep
+        : c.kind === "organic" || c.kind === "owned"
+          ? inputs.organicReachPerStep
+          : 0,
+    cpm: c.cpm > 0 ? c.cpm : inputs.cpm,
+    frequencyCap: c.frequencyCap > 0 ? c.frequencyCap : inputs.frequencyCap,
+  }));
 }
 
 // Smooth, price-elastic purchase probability for one persona at `price`.
@@ -225,6 +397,26 @@ function platformAffinity(platforms: string[], funded: Set<string>): number {
   return Math.max(0.05, hit / platforms.length);
 }
 
+function channelPlatformAffinity(p: LaunchPersona, ch: LaunchChannelInput): number {
+  const id = `${ch.id} ${ch.label}`.toLowerCase();
+  if (/social|instagram|meta|facebook|creator|tiktok/.test(id)) {
+    return platformAffinity(p.platforms, new Set(["instagram", "facebook", "tiktok"]));
+  }
+  if (/search|google|youtube|content/.test(id)) {
+    return platformAffinity(p.platforms, new Set(["google", "youtube", "search"]));
+  }
+  if (/marketplace|amazon|flipkart/.test(id)) {
+    return /marketplace|amazon|flipkart/i.test(p.channelPref) ? 1.2 : 0.55;
+  }
+  if (/retail|showroom|store/.test(id)) {
+    return /retail|showroom|store/i.test(p.channelPref) ? 1.2 : 0.5;
+  }
+  if (/owned|email|whatsapp|referral|network/.test(id)) {
+    return platformAffinity(p.platforms, new Set(["whatsapp", "email", "referral"]));
+  }
+  return 0.8;
+}
+
 // --- a NameCount accumulator -----------------------------------------------
 
 class Bucket {
@@ -249,6 +441,81 @@ class Bucket {
   }
 }
 
+class ChannelBucket {
+  private rows = new Map<
+    string,
+    {
+      id: string;
+      name: string;
+      kind: LaunchChannelInput["kind"];
+      impressions: number;
+      reached: number;
+      engaged: number;
+      productVisits: number;
+      checkoutsStarted: number;
+      orders: number;
+      revenue: number;
+      adSpend: number;
+    }
+  >();
+  ensure(ch: LaunchChannelInput) {
+    if (!this.rows.has(ch.id)) {
+      this.rows.set(ch.id, {
+        id: ch.id,
+        name: ch.label,
+        kind: ch.kind,
+        impressions: 0,
+        reached: 0,
+        engaged: 0,
+        productVisits: 0,
+        checkoutsStarted: 0,
+        orders: 0,
+        revenue: 0,
+        adSpend: 0,
+      });
+    }
+    return this.rows.get(ch.id)!;
+  }
+  addFunnel(
+    ch: LaunchChannelInput,
+    impressions: number,
+    reached: number,
+    engaged: number,
+    visits: number,
+    checkouts: number,
+    adSpend: number
+  ) {
+    const r = this.ensure(ch);
+    r.impressions += impressions;
+    r.reached += reached;
+    r.engaged += engaged;
+    r.productVisits += visits;
+    r.checkoutsStarted += checkouts;
+    r.adSpend += adSpend;
+  }
+  addOrders(ch: LaunchChannelInput, orders: number, revenue: number) {
+    const r = this.ensure(ch);
+    r.orders += orders;
+    r.revenue += revenue;
+  }
+  list() {
+    return Array.from(this.rows.values())
+      .map((r) => ({
+        ...r,
+        impressions: count(r.impressions),
+        reached: count(r.reached),
+        engaged: count(r.engaged),
+        productVisits: count(r.productVisits),
+        checkoutsStarted: count(r.checkoutsStarted),
+        orders: count(r.orders),
+        revenue: money(r.revenue),
+        adSpend: money(r.adSpend),
+        cac: r.orders > 0 ? money(r.adSpend / r.orders) : 0,
+      }))
+      .sort((a, b) => b.orders - a.orders || b.reached - a.reached);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The simulation.
 // ---------------------------------------------------------------------------
@@ -270,6 +537,7 @@ export function simulateLaunch(
   const stepsPerYear = inputs.granularity === "day" ? 365 : 12;
   const daysPerStep = inputs.granularity === "day" ? 1 : 30;
   const reachablePool = inputs.reachablePool ?? 20000;
+  const channels = inputs.channels;
   const scaleFactor = N > 0 ? reachablePool / N : 0; // real people per persona
   const returnWindowSteps = Math.round(inputs.returnWindowDays / daysPerStep);
   const reorderLeadSteps = Math.round(inputs.reorderLeadTimeDays / daysPerStep);
@@ -282,6 +550,9 @@ export function simulateLaunch(
   const funded = new Set(inputs.adPlatforms.map((p) => p.toLowerCase()));
   const homeCountry = modal(personas.map((p) => p.country));
   const meanBuy = meanBuyProb(personas, inputs.salePrice);
+  const hasChannelOrganic = channels.some(
+    (c) => c.kind === "organic" || c.kind === "owned"
+  );
 
   // Precompute per-persona constants.
   const pre = personas.map((p) => {
@@ -305,7 +576,11 @@ export function simulateLaunch(
   // Compartment state (fractions of each persona's represented sub-population).
   const unaware = new Array(N).fill(1);
   const considering = new Array(N).fill(0);
+  const consideringTrust = new Array(N).fill(1);
+  const consideringRefundMult = new Array(N).fill(1);
+  const consideringRepeatMult = new Array(N).fill(1);
   const active = new Array(N).fill(0); // bought ≥1, eligible to repeat
+  const activeRepeatMult = new Array(N).fill(1);
 
   // Schedules (real-count, indexed by absolute step).
   const refundArrivals = new Array(inputs.horizon + returnWindowSteps + 2).fill(0);
@@ -322,6 +597,23 @@ export function simulateLaunch(
   const byLocality = new Bucket();
   const byAge = new Bucket();
   const byGender = new Bucket();
+  const byAcquisitionChannel = new ChannelBucket();
+  const returningChannel = channel(
+    "returning",
+    "Returning customers",
+    "owned",
+    0,
+    inputs.cpm,
+    0,
+    inputs.frequencyCap,
+    0,
+    0,
+    0,
+    1,
+    1,
+    1
+  );
+  for (const ch of channels) byAcquisitionChannel.ensure(ch);
   let newCustomers = 0;
   let returningOrders = 0;
   let refundsGenerated = 0;
@@ -343,8 +635,17 @@ export function simulateLaunch(
     const jitter = 1 + (rng() * 2 - 1) * inputs.jitterAmplitude;
 
     const adSpend = inputs.adSpendPerMonth / stepsPerMonth;
-    const impressions =
-      inputs.cpm > 0 ? (adSpend / inputs.cpm) * 1000 * jitter : 0;
+    const channelMedia = channels.map((ch) => {
+      const paid =
+        ch.kind === "paid" || ch.kind === "marketplace" || ch.kind === "retail";
+      const spend = paid ? adSpend * ch.spendPct : 0;
+      const impressions =
+        paid && ch.cpm > 0
+          ? (spend / ch.cpm) * 1000 * jitter
+          : ch.reachPerStep * ch.frequencyCap * jitter;
+      return { ch, spend, impressions };
+    });
+    const impressions = channelMedia.reduce((s, c) => s + c.impressions, 0);
 
     // Word-of-mouth + organic awareness, as per-person fractions of the pool.
     const woMPerPerson =
@@ -352,35 +653,137 @@ export function simulateLaunch(
         ? (inputs.viralityK * lastStepNewBuyers) / reachablePool
         : 0;
     const organicPerPerson =
-      reachablePool > 0 ? inputs.organicReachPerStep / reachablePool : 0;
+      !hasChannelOrganic && reachablePool > 0
+        ? inputs.organicReachPerStep / reachablePool
+        : 0;
 
     let stepNewlyReached = 0;
+    let stepEngaged = 0;
+    let stepProductVisits = 0;
+    let stepCheckoutsStarted = 0;
+    const stepChannelFunnel = new Map<
+      string,
+      {
+        ch: LaunchChannelInput;
+        reached: number;
+        engaged: number;
+        visits: number;
+        checkouts: number;
+      }
+    >();
+    for (const { ch } of channelMedia) {
+      stepChannelFunnel.set(ch.id, {
+        ch,
+        reached: 0,
+        engaged: 0,
+        visits: 0,
+        checkouts: 0,
+      });
+    }
     let stepNewOrders = 0;
     let stepRepeatOrders = 0;
     // Desired (pre-inventory) orders, kept per-persona so we can apply the fill
     // rate and attribute refunds/breakdowns proportionally.
-    const desired: { idx: number; first: number; repeat: number; firstFrac: number }[] = [];
+    const desired: {
+      idx: number;
+      first: number;
+      repeat: number;
+      firstFrac: number;
+      refundMult: number;
+      channelShares: { ch: LaunchChannelInput; share: number }[];
+    }[] = [];
     let demand = 0;
     let repeatDemand = 0;
 
     for (let k = 0; k < N; k++) {
       const { buyProb, attract, repeatHazard } = pre[k];
-      // Ad impressions reaching one person in this group, then awareness.
-      const imprPerPerson = (impressions * attract) / (totalAttract * scaleFactor || 1);
-      const adAware = 1 - Math.exp(-imprPerPerson / inputs.frequencyCap);
-      const awareProb = clamp(adAware + organicPerPerson + woMPerPerson, 0, 1);
+      const channelAwareness = channelMedia.map(({ ch, spend, impressions }) => {
+        const chAffinity = channelPlatformAffinity(pre[k].p, ch);
+        const chAttract = Math.max(0.02, attract * chAffinity);
+        const imprPerPerson =
+          (impressions * chAttract) / (totalAttract * scaleFactor || 1);
+        const paidAware = 1 - Math.exp(-imprPerPerson / ch.frequencyCap);
+        const directAware =
+          ch.kind === "organic" || ch.kind === "owned"
+            ? ch.reachPerStep / Math.max(reachablePool, 1)
+            : 0;
+        return {
+          ch,
+          spend,
+          impressions,
+          prob: clamp(paidAware + directAware, 0, 1),
+        };
+      });
+      const paidOrganicAware = 1 - channelAwareness.reduce(
+        (survival, x) => survival * (1 - x.prob),
+        1
+      );
+      const awareProb = clamp(paidOrganicAware + organicPerPerson + woMPerPerson, 0, 1);
 
       const newlyAware = unaware[k] * awareProb;
-      unaware[k] -= newlyAware;
-      considering[k] += newlyAware;
+      const channelProbSum =
+        channelAwareness.reduce((s, x) => s + x.prob, 0) || 1;
+      const channelShares = channelAwareness
+        .filter((x) => x.prob > 0)
+        .map((x) => ({ ch: x.ch, share: x.prob / channelProbSum }));
+      const trust =
+        channelShares.reduce((s, x) => s + x.share * x.ch.trustMultiplier, 0) || 1;
+      const refundMult =
+        channelShares.reduce((s, x) => s + x.share * x.ch.refundMultiplier, 0) || 1;
+      const repeatMult =
+        channelShares.reduce((s, x) => s + x.share * x.ch.repeatMultiplier, 0) || 1;
 
-      const decideRate = clamp(buyProb * decisionSpeed * jitter, 0, 1);
+      unaware[k] -= newlyAware;
+      const oldConsidering = considering[k];
+      considering[k] += newlyAware;
+      if (considering[k] > 0 && newlyAware > 0) {
+        consideringTrust[k] =
+          (consideringTrust[k] * oldConsidering + trust * newlyAware) /
+          considering[k];
+        consideringRefundMult[k] =
+          (consideringRefundMult[k] * oldConsidering + refundMult * newlyAware) /
+          considering[k];
+        consideringRepeatMult[k] =
+          (consideringRepeatMult[k] * oldConsidering + repeatMult * newlyAware) /
+          considering[k];
+      }
+
+      for (const x of channelShares) {
+        const reached = newlyAware * scaleFactor * x.share;
+        const engaged = reached * x.ch.engagementRate;
+        const visits = engaged * x.ch.visitRate;
+        const checkouts = visits * x.ch.checkoutRate;
+        stepEngaged += engaged;
+        stepProductVisits += visits;
+        stepCheckoutsStarted += checkouts;
+        const row = stepChannelFunnel.get(x.ch.id);
+        if (row) {
+          row.reached += reached;
+          row.engaged += engaged;
+          row.visits += visits;
+          row.checkouts += checkouts;
+        }
+      }
+
+      const decideRate = clamp(
+        buyProb * consideringTrust[k] * decisionSpeed * jitter,
+        0,
+        1
+      );
       const firstBuyers = considering[k] * decideRate;
       const abandon = considering[k] * inputs.abandonRate;
       considering[k] = Math.max(0, considering[k] - firstBuyers - abandon);
+      const oldActive = active[k];
       active[k] += firstBuyers;
+      if (active[k] > 0 && firstBuyers > 0) {
+        activeRepeatMult[k] =
+          (activeRepeatMult[k] * oldActive +
+            consideringRepeatMult[k] * firstBuyers) /
+          active[k];
+      }
 
-      const repeatBuyers = active[k] * clamp(repeatHazard * jitter, 0, 1);
+      const repeatBuyers =
+        active[k] * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
 
       const mi = scaleFactor;
       const first = firstBuyers * mi;
@@ -388,9 +791,29 @@ export function simulateLaunch(
       stepNewlyReached += newlyAware * mi;
       stepNewOrders += first;
       stepRepeatOrders += repeat;
-      desired.push({ idx: k, first, repeat, firstFrac: firstBuyers });
+      desired.push({
+        idx: k,
+        first,
+        repeat,
+        firstFrac: firstBuyers,
+        refundMult: consideringRefundMult[k],
+        channelShares,
+      });
       demand += first + repeat;
       repeatDemand += repeat;
+    }
+
+    for (const { ch, spend, impressions } of channelMedia) {
+      const row = stepChannelFunnel.get(ch.id);
+      byAcquisitionChannel.addFunnel(
+        ch,
+        impressions,
+        row?.reached ?? 0,
+        row?.engaged ?? 0,
+        row?.visits ?? 0,
+        row?.checkouts ?? 0,
+        spend
+      );
     }
 
     // If the financial model has a CAC, paid first-time acquisition cannot
@@ -429,7 +852,14 @@ export function simulateLaunch(
       byLocality.add(p.locality, orders, rev);
       byAge.add(ageBand(p.age), orders, rev);
       byGender.add(p.gender || "—", orders, rev);
-      const refunds = orders * refundP;
+      for (const share of d.channelShares) {
+        const chOrders = first * share.share;
+        if (chOrders > 0) byAcquisitionChannel.addOrders(share.ch, chOrders, chOrders * inputs.salePrice);
+      }
+      if (repeat > 0) {
+        byAcquisitionChannel.addOrders(returningChannel, repeat, repeat * inputs.salePrice);
+      }
+      const refunds = orders * clamp(refundP * d.refundMult, 0, 0.8);
       bySegment.add(String(p.segment ?? "—"), orders, rev, refunds);
       refundsGenerated += refunds;
       newCustomers += first;
@@ -502,6 +932,9 @@ export function simulateLaunch(
         (timeline[t - 1]?.cumulativeReached ?? 0) + stepNewlyReached
       ),
       scrolledPast: count(scrolledPast),
+      engaged: count(stepEngaged),
+      productVisits: count(stepProductVisits),
+      checkoutsStarted: count(stepCheckoutsStarted),
       newOrders: count(stepNewOrders * fillRate),
       repeatOrders: count(stepRepeatOrders * fillRate),
       unitsFulfilled: count(unitsFulfilled),
@@ -542,6 +975,9 @@ export function simulateLaunch(
   const totalRepeatOrders = sum((s) => s.repeatOrders);
   const totalOrders = totalNewOrders + totalRepeatOrders;
   const totalReached = timeline[timeline.length - 1]?.cumulativeReached ?? 0;
+  const totalEngaged = sum((s) => s.engaged);
+  const totalProductVisits = sum((s) => s.productVisits);
+  const totalCheckoutsStarted = sum((s) => s.checkoutsStarted);
   const totalScrolledPast = sum((s) => s.scrolledPast);
   const grossProfit = netRevenue - totalCogs;
   const deadstockUnits = Math.max(0, inventory);
@@ -549,6 +985,9 @@ export function simulateLaunch(
   const summary = {
     totalImpressions: count(sum((s) => s.impressions)),
     totalReached: count(totalReached),
+    totalEngaged: count(totalEngaged),
+    totalProductVisits: count(totalProductVisits),
+    totalCheckoutsStarted: count(totalCheckoutsStarted),
     totalScrolledPast: count(totalScrolledPast),
     totalOrders: count(totalOrders),
     newOrders: count(totalNewOrders),
@@ -588,6 +1027,7 @@ export function simulateLaunch(
   };
   const breakdowns = {
     byChannel: byChannel.list(),
+    byAcquisitionChannel: byAcquisitionChannel.list(),
     bySegment: bySegment.list(true) as {
       name: string;
       orders: number;
@@ -612,6 +1052,7 @@ export function simulateLaunch(
     diagnostics: buildDiagnostics(inputs, summary, breakdowns),
     summary,
     breakdowns,
+    assumptions: buildAssumptions(inputs, ctx),
   };
 }
 
@@ -621,6 +1062,7 @@ function buildDiagnostics(
   breakdowns: LaunchSimResult["breakdowns"]
 ): LaunchSimResult["diagnostics"] {
   const topChannel = breakdowns.byChannel[0];
+  const topAcquisitionChannel = breakdowns.byAcquisitionChannel[0];
   const topSegment = breakdowns.bySegment[0];
   const topLocality = breakdowns.byLocality[0];
   const drivers: string[] = [];
@@ -641,7 +1083,12 @@ function buildDiagnostics(
     nextMoves.push("Add launch spend, organic reach, or a channel with existing demand before judging price fit.");
   } else {
     drivers.push(
-      `${fmtCount(summary.totalReached)} people are reached from ${fmtCount(summary.totalImpressions)} impressions.`
+      `${fmtCount(summary.totalReached)} people are reached from ${fmtCount(summary.totalImpressions)} impressions, creating ${fmtCount(summary.totalProductVisits)} product visits.`
+    );
+  }
+  if (topAcquisitionChannel && topAcquisitionChannel.orders > 0) {
+    drivers.push(
+      `${topAcquisitionChannel.name} is the strongest acquisition channel with ${fmtCount(topAcquisitionChannel.orders)} orders at ${fmtMoney(topAcquisitionChannel.cac)} CAC.`
     );
   }
   if (topChannel && topChannel.orders > 0) {
@@ -672,6 +1119,13 @@ function buildDiagnostics(
     risks.push(`${summary.refundRatePct}% refund rate is a margin leak, likely tied to fit, delivery, or expectation mismatch.`);
     nextMoves.push("Test better sizing guidance, return policy, and product-page proof before increasing spend.");
   }
+  if (summary.totalReached > 0 && summary.totalProductVisits / summary.totalReached < 0.05) {
+    risks.push("The launch creates awareness but weak product-visit depth, so the channel mix may be too low-intent.");
+    nextMoves.push("Shift budget toward channels with higher visit and checkout rates before increasing total spend.");
+  }
+  if (summary.totalProductVisits > 0 && summary.totalOrders / summary.totalProductVisits < 0.01) {
+    risks.push("Product visits are not turning into enough orders, which points to price, proof, trust, or checkout friction.");
+  }
   if (summary.blendedCac > 0 && summary.blendedCac > inputs.salePrice * 0.4) {
     risks.push(`CAC is ${fmtMoney(summary.blendedCac)}, heavy for a ${fmtMoney(inputs.salePrice)} product.`);
     nextMoves.push("Shift budget toward the channels and segments with the lowest CAC before increasing total spend.");
@@ -689,6 +1143,78 @@ function buildDiagnostics(
     risks: risks.slice(0, 4),
     nextMoves: nextMoves.slice(0, 4),
   };
+}
+
+function buildAssumptions(
+  inputs: LaunchSimInputs,
+  ctx: LaunchContext
+): LaunchAssumption[] {
+  const preset = BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic;
+  const channelLabels = inputs.channels.map((c) => c.label).join(", ");
+  const presetChannelIds = preset.defaultChannels.map((c) => c.id).join("|");
+  const resolvedChannelIds = inputs.channels.map((c) => c.id).join("|");
+  const channelsFromPreset = resolvedChannelIds === presetChannelIds;
+  const fromFinancials = ctx.reachableProspectsPerMonth != null && ctx.reachableProspectsPerMonth > 0;
+  return [
+    {
+      key: "businessModel",
+      label: "Business model preset",
+      value: inputs.businessModel,
+      unit: "",
+      source: "founder_entered",
+      confidence: 0.7,
+      basis: "Controls default channel mix, repeat behavior, refund pressure, decision speed, and inventory buffer.",
+    },
+    {
+      key: "channels",
+      label: "Acquisition channels",
+      value: channelLabels || preset.defaultChannels.map((c) => c.label).join(", "),
+      unit: "",
+      source: channelsFromPreset ? "preset" : "founder_entered",
+      confidence: channelsFromPreset ? 0.45 : 0.65,
+      basis: "Each channel has its own spend share, CPM, frequency, engagement, visit, checkout, trust, refund, and repeat assumptions.",
+    },
+    {
+      key: "reachablePool",
+      label: "Reachable pool",
+      value: inputs.reachablePool ?? 0,
+      unit: "people",
+      source: fromFinancials ? "financial_model" : "computed",
+      confidence: fromFinancials ? 0.6 : 0.35,
+      basis: fromFinancials
+        ? "Derived from the project's reachable prospects per month."
+        : "Fallback ceiling used because the financial model did not provide reachable prospects.",
+    },
+    {
+      key: "blendedCac",
+      label: "CAC bound",
+      value: ctx.blendedCac ?? 0,
+      unit: inputs.currency,
+      source: ctx.blendedCac ? "financial_model" : "computed",
+      confidence: ctx.blendedCac ? 0.55 : 0.25,
+      basis: ctx.blendedCac
+        ? "Paid first-time acquisition is capped by ad spend divided by the financial model's blended CAC."
+        : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
+    },
+    {
+      key: "repeatRateMult",
+      label: "Repeat behavior",
+      value: inputs.repeatRateMult,
+      unit: "multiplier",
+      source: "preset",
+      confidence: 0.4,
+      basis: "Segment repeat rates are adjusted by the selected business model and the repeat-rate multiplier.",
+    },
+    {
+      key: "refundRateMult",
+      label: "Refund pressure",
+      value: inputs.refundRateMult,
+      unit: "multiplier",
+      source: "preset",
+      confidence: 0.4,
+      basis: "Persona objections, country mismatch, channel risk, and business model preset determine refund propensity.",
+    },
+  ];
 }
 
 function fmtCount(n: number): string {

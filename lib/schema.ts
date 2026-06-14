@@ -1088,11 +1088,60 @@ export type IndustryKnowledgePack = z.infer<typeof IndustryKnowledgePackSchema>;
 export const LaunchGranularitySchema = z.enum(["day", "month"]);
 export type LaunchGranularity = z.infer<typeof LaunchGranularitySchema>;
 
+export const LaunchBusinessModelSchema = z.enum([
+  "generic",
+  "apparel",
+  "furniture",
+  "consumable",
+  "saas",
+  "services",
+  "marketplace",
+]);
+export type LaunchBusinessModel = z.infer<typeof LaunchBusinessModelSchema>;
+
+export const LaunchChannelKindSchema = z.enum([
+  "paid",
+  "organic",
+  "owned",
+  "marketplace",
+  "retail",
+]);
+export type LaunchChannelKind = z.infer<typeof LaunchChannelKindSchema>;
+
+export const LaunchChannelInputSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  kind: LaunchChannelKindSchema.default("paid"),
+  spendPct: z.number().min(0).max(1).default(0),
+  cpm: z.number().positive().default(250),
+  reachPerStep: z.number().nonnegative().default(0),
+  frequencyCap: z.number().positive().default(3),
+  engagementRate: z.number().min(0).max(1).default(0.18),
+  visitRate: z.number().min(0).max(1).default(0.35),
+  checkoutRate: z.number().min(0).max(1).default(0.45),
+  trustMultiplier: z.number().nonnegative().default(1),
+  refundMultiplier: z.number().nonnegative().default(1),
+  repeatMultiplier: z.number().nonnegative().default(1),
+});
+export type LaunchChannelInput = z.infer<typeof LaunchChannelInputSchema>;
+
+export const LaunchAssumptionSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  value: z.union([z.string(), z.number()]),
+  unit: z.string(),
+  source: z.enum(["founder_entered", "financial_model", "preset", "computed"]),
+  confidence: z.number().min(0).max(1),
+  basis: z.string(),
+});
+export type LaunchAssumption = z.infer<typeof LaunchAssumptionSchema>;
+
 // Everything the founder can feed in. Only the first three are surfaced by
 // default; the rest live under "Advanced" and default to sensible, overridable
 // values resolved against the run (see resolveLaunchInputs in launchSim.ts).
 export const LaunchSimInputsSchema = z.object({
   currency: z.string().default("INR"),
+  businessModel: LaunchBusinessModelSchema.default("generic"),
   // --- the three headline knobs ---
   costPrice: z.number().nonnegative(), // landed COGS per unit
   salePrice: z.number().nonnegative(), // retail price per unit
@@ -1136,6 +1185,7 @@ export const LaunchSimInputsSchema = z.object({
 
   // --- realism jitter (the only randomness; seeded, so reruns still match) ---
   jitterAmplitude: z.number().min(0).max(0.5).default(0.06),
+  channels: z.array(LaunchChannelInputSchema).default([]),
 });
 export type LaunchSimInputs = z.infer<typeof LaunchSimInputsSchema>;
 
@@ -1147,6 +1197,9 @@ export const LaunchSimStepSchema = z.object({
   newlyReached: z.number(),
   cumulativeReached: z.number(),
   scrolledPast: z.number(), // reached this step but didn't buy
+  engaged: z.number(), // reached people who interact enough to continue
+  productVisits: z.number(), // product/site/store visits created by the launch
+  checkoutsStarted: z.number(), // high-intent checkout or buying conversations
   newOrders: z.number(), // first-time purchases
   repeatOrders: z.number(), // returning-customer purchases
   unitsFulfilled: z.number(), // orders actually shipped (capped by inventory)
@@ -1168,6 +1221,20 @@ export const LaunchSimStepSchema = z.object({
 export type LaunchSimStep = z.infer<typeof LaunchSimStepSchema>;
 
 const NameCount = z.object({ name: z.string(), orders: z.number(), revenue: z.number() });
+const LaunchChannelResult = z.object({
+  id: z.string(),
+  name: z.string(),
+  kind: LaunchChannelKindSchema,
+  impressions: z.number(),
+  reached: z.number(),
+  engaged: z.number(),
+  productVisits: z.number(),
+  checkoutsStarted: z.number(),
+  orders: z.number(),
+  revenue: z.number(),
+  adSpend: z.number(),
+  cac: z.number(),
+});
 
 export const LaunchSimResultSchema = z.object({
   seed: z.number(), // derived from hash(inputs) — exposed for transparency
@@ -1184,6 +1251,9 @@ export const LaunchSimResultSchema = z.object({
   summary: z.object({
     totalImpressions: z.number(),
     totalReached: z.number(),
+    totalEngaged: z.number(),
+    totalProductVisits: z.number(),
+    totalCheckoutsStarted: z.number(),
     totalScrolledPast: z.number(),
     totalOrders: z.number(),
     newOrders: z.number(),
@@ -1215,12 +1285,14 @@ export const LaunchSimResultSchema = z.object({
   }),
   breakdowns: z.object({
     byChannel: z.array(NameCount),
+    byAcquisitionChannel: z.array(LaunchChannelResult),
     bySegment: z.array(NameCount.extend({ refunds: z.number() })),
     byLocality: z.array(NameCount),
     byAgeBand: z.array(NameCount),
     byGender: z.array(NameCount),
     newVsReturning: z.object({ newCustomers: z.number(), returningOrders: z.number() }),
   }),
+  assumptions: z.array(LaunchAssumptionSchema).default([]),
 });
 export type LaunchSimResult = z.infer<typeof LaunchSimResultSchema>;
 
