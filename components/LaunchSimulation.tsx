@@ -44,6 +44,7 @@ import type { LaunchSimInputs, LaunchSimRecord } from "@/lib/schema";
 
 type Defaults = {
   currency: string;
+  suggestedBusinessModel: LaunchSimInputs["businessModel"];
   suggestedCostPrice: number | null;
   suggestedSalePrice: number | null;
   suggestedAdSpendPerMonth: number | null;
@@ -135,6 +136,10 @@ export default function LaunchSimulation({
         setInputs((cur) => ({
           ...cur,
           currency: data.defaults.currency ?? cur.currency,
+          businessModel:
+            cur.businessModel === "generic"
+              ? data.defaults.suggestedBusinessModel
+              : cur.businessModel,
           costPrice: cur.costPrice || data.defaults.suggestedCostPrice || 0,
           salePrice: cur.salePrice || data.defaults.suggestedSalePrice || 0,
           adSpendPerMonth:

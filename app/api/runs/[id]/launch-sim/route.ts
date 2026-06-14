@@ -4,7 +4,9 @@ import { prisma } from "@/lib/db";
 import { getFinancialModel } from "@/lib/store";
 import { simulateLaunch, type LaunchPersona } from "@/lib/launchSim";
 import {
+  ClientProfileSchema,
   LaunchSimInputsSchema,
+  type LaunchBusinessModel,
   type LaunchSimInputs,
   type LaunchSimRecord,
 } from "@/lib/schema";
@@ -84,8 +86,10 @@ export async function GET(
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
+  const suggestedBusinessModel = inferLaunchBusinessModel(run);
   const defaults = {
     currency: model?.currency ?? currency,
+    suggestedBusinessModel,
     suggestedCostPrice: model
       ? model.costStructure.reduce((s, c) => s + c.amount.value, 0)
       : null,
@@ -101,9 +105,12 @@ export async function GET(
   };
 
   const scenarios: LaunchSimRecord[] = rows.map((r) => {
-    const inputs = applyLegacyAcquisitionDefault(
-      LaunchSimInputsSchema.parse(r.inputs),
-      defaults.suggestedAdSpendPerMonth
+    const inputs = applyDefaultBusinessModel(
+      applyLegacyAcquisitionDefault(
+        LaunchSimInputsSchema.parse(r.inputs),
+        defaults.suggestedAdSpendPerMonth
+      ),
+      suggestedBusinessModel
     );
     return {
       id: r.id,
@@ -155,9 +162,14 @@ export async function POST(
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
+  const suggestedBusinessModel = inferLaunchBusinessModel(run);
 
   try {
-    const result = simulateLaunch(personas, body.data.inputs, {
+    const inputs = applyDefaultBusinessModel(
+      body.data.inputs,
+      suggestedBusinessModel
+    );
+    const result = simulateLaunch(personas, inputs, {
       reachableProspectsPerMonth,
       blendedCac,
     });
@@ -167,7 +179,7 @@ export async function POST(
         runId: run.id,
         projectId: run.projectId ?? body.data.projectId ?? null,
         name: body.data.name,
-        inputs: body.data.inputs as unknown as object,
+        inputs: inputs as unknown as object,
         result: result as unknown as object,
       },
     });
@@ -176,7 +188,7 @@ export async function POST(
       id: row.id,
       runId: row.runId,
       name: row.name,
-      inputs: body.data.inputs,
+      inputs,
       result,
       createdAt: row.createdAt.toISOString(),
     };
@@ -264,4 +276,63 @@ function applyLegacyAcquisitionDefault(
     return { ...inputs, adSpendPerMonth: suggestedAdSpendPerMonth };
   }
   return inputs;
+}
+
+function applyDefaultBusinessModel(
+  inputs: LaunchSimInputs,
+  businessModel: LaunchBusinessModel
+): LaunchSimInputs {
+  if (inputs.businessModel !== "generic") return inputs;
+  return { ...inputs, businessModel, channels: [] };
+}
+
+function inferLaunchBusinessModel(run: {
+  brief: string;
+  clientProfile: string;
+}): LaunchBusinessModel {
+  let rawProfile: unknown = {};
+  try {
+    rawProfile = JSON.parse(run.clientProfile || "{}");
+  } catch {
+    rawProfile = {};
+  }
+  const parsed = ClientProfileSchema.safeParse(
+    rawProfile
+  );
+  const profile = parsed.success ? parsed.data : null;
+  const text = [
+    run.brief,
+    profile?.product,
+    profile?.category,
+    profile?.targetAudience,
+    profile?.priceBand,
+    profile?.goal,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  if (hasAny(text, ["marketplace", "two-sided", "two sided", "sellers", "buyers and sellers", "aggregator"])) {
+    return "marketplace";
+  }
+  if (hasAny(text, ["saas", "software", "app", "subscription platform", "b2b platform", "ai tool", "dashboard", "crm"])) {
+    return "saas";
+  }
+  if (hasAny(text, ["service", "agency", "consulting", "consultancy", "clinic", "salon", "studio", "training", "course"])) {
+    return "services";
+  }
+  if (hasAny(text, ["furniture", "sofa", "chair", "table", "bed", "mattress", "home decor", "interior", "cabinet", "wardrobe"])) {
+    return "furniture";
+  }
+  if (hasAny(text, ["clothing", "apparel", "fashion", "garment", "shirt", "shirts", "dress", "dresses", "wear", "westernwear", "footwear", "shoes", "accessories", "jewellery", "jewelry"])) {
+    return "apparel";
+  }
+  if (hasAny(text, ["food", "beverage", "drink", "snack", "supplement", "skincare", "cosmetic", "beauty", "wellness", "grocery", "coffee", "tea", "protein"])) {
+    return "consumable";
+  }
+  return "generic";
+}
+
+function hasAny(text: string, needles: string[]): boolean {
+  return needles.some((needle) => text.includes(needle));
 }
