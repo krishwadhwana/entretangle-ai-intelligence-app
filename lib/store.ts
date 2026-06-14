@@ -3,14 +3,19 @@ import { prisma } from "./db";
 import { config } from "./config";
 import {
   BrandSocialSectionSchema,
+  ClientProfileSchema,
   FinancialsSectionSchema,
+  InspirationSectionSchema,
   InterviewTranscriptSchema,
   type BrandKit,
   type ClientProfile,
   type FinancialModel,
   type FinancialsSection,
+  type InspirationKit,
+  type InspirationSection,
   type InterviewTranscript,
   type OwnerDashboard,
+  type RunStatus,
   type SimulationRunRecord,
 } from "./schema";
 import { blockToWire, cohortToWire, personaToWire } from "./wire";
@@ -56,6 +61,7 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     generatedAt: null,
     sourceRunId: null,
   },
+  inspiration: { kit: null, generatedAt: null, sourceRunId: null },
 };
 
 // Parse the owner_dashboard JSONB SECTION BY SECTION. A whole-object parse
@@ -70,6 +76,7 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
   >;
   const brand = BrandSocialSectionSchema.safeParse(obj.brandSocial);
   const fin = FinancialsSectionSchema.safeParse(obj.financials);
+  const insp = InspirationSectionSchema.safeParse(obj.inspiration);
   return {
     brandSocial: brand.success
       ? brand.data
@@ -77,6 +84,9 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     financials: fin.success
       ? fin.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.financials),
+    inspiration: insp.success
+      ? insp.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.inspiration),
   };
 }
 
@@ -121,6 +131,115 @@ function toFull(row: {
     ownerDashboard: row.ownerDashboard
       ? parseOwnerDashboard(row.ownerDashboard)
       : null,
+  };
+}
+
+function emptyRunResults(
+  run: { tokensUsed: number; costUsd: number }
+): SimulationRunRecord["results"] {
+  return {
+    tokensUsed: run.tokensUsed,
+    costUsd: run.costUsd,
+    blocks: [],
+    edges: [],
+    cohorts: [],
+    audienceAggregate: null,
+  };
+}
+
+function runRowToRecord(row: {
+  id: string;
+  brief: string;
+  clientProfile: string;
+  status: string;
+  focusQuestion: string | null;
+  additionalContext: string | null;
+  mode: string;
+  sourceRunId: string | null;
+  tokensUsed: number;
+  costUsd: number;
+  createdAt: Date;
+}): SimulationRunRecord {
+  return {
+    runId: row.id,
+    timestamp: row.createdAt.toISOString(),
+    status: row.status as RunStatus,
+    params: {
+      brief: row.brief,
+      clientProfile: ClientProfileSchema.parse(JSON.parse(row.clientProfile)),
+      focusQuestion: row.focusQuestion,
+      additionalContext: row.additionalContext,
+      mode: row.mode as SimulationRunRecord["params"]["mode"],
+      sourceRunId: row.sourceRunId,
+      model: config.model,
+      miniModel: config.miniModel,
+      maxTokensPerRun: config.maxTokensPerRun,
+      maxCostUsd: config.maxCostUsd,
+      maxBlocksPerRun: config.maxBlocksPerRun,
+      maxDesksPerRun: config.maxDesksPerRun,
+      maxLayers: config.maxLayers,
+      maxCohorts: config.maxCohorts,
+      personasPerCohort: config.personasPerCohort,
+      mockMode: config.mockMode,
+    },
+    results: emptyRunResults(row),
+  };
+}
+
+/**
+ * Merge live Run rows into the saved project snapshots so the home page can
+ * show queued/planning/running runs before the final snapshot is appended.
+ */
+async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> {
+  const rows = await prisma.run.findMany({
+    where: { projectId: project.id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      brief: true,
+      clientProfile: true,
+      status: true,
+      focusQuestion: true,
+      additionalContext: true,
+      mode: true,
+      sourceRunId: true,
+      tokensUsed: true,
+      costUsd: true,
+      createdAt: true,
+    },
+  });
+  if (rows.length === 0) return project;
+
+  const byRunId = new Map<string, SimulationRunRecord>();
+  for (const snapshot of project.simulationRuns) {
+    byRunId.set(snapshot.runId, snapshot);
+  }
+  for (const row of rows) {
+    const existing = byRunId.get(row.id);
+    const live = runRowToRecord(row);
+    byRunId.set(
+      row.id,
+      existing
+        ? {
+            ...existing,
+            status: live.status,
+            params: { ...existing.params, ...live.params },
+            results: {
+              ...existing.results,
+              tokensUsed: row.tokensUsed,
+              costUsd: row.costUsd,
+            },
+          }
+        : live
+    );
+  }
+
+  return {
+    ...project,
+    simulationRuns: Array.from(byRunId.values()).sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    ),
   };
 }
 
@@ -246,17 +365,43 @@ export async function saveOwnerChecks(
 
 /**
  * Persist the Financials section (computed model + the assumptions it was
- * computed from + which inputs the founder overrode). Read-modify-write the
- * owner_dashboard column so the sibling brandSocial section is untouched.
+ * computed from + which inputs the founder overrode). Update only the
+ * owner_dashboard.financials key so sibling owner-dashboard sections stay
+ * untouched without a slow read-modify-write round trip.
  */
 export async function saveFinancials(
   id: string,
   section: FinancialsSection
 ): Promise<FinancialsSection> {
+  const updated = await prisma.$executeRaw`
+    UPDATE projects
+    SET owner_dashboard = jsonb_set(
+          COALESCE(owner_dashboard, '{}'::jsonb),
+          '{financials}',
+          ${JSON.stringify(section)}::jsonb,
+          true
+        ),
+        updated_at = now() AT TIME ZONE 'utc'
+    WHERE id = ${id}`;
+  if (updated === 0) throw new Error("project not found");
+  return section;
+}
+
+/**
+ * Persist the Inspiration section (verified videos, placement examples, success
+ * stories). Read-modify-write the owner_dashboard column so the sibling
+ * sections are untouched.
+ */
+export async function saveInspiration(
+  id: string,
+  kit: InspirationKit,
+  sourceRunId: string,
+  generatedAt: string
+): Promise<InspirationSection> {
   const owner = await readOwnerDashboard(id);
-  owner.financials = section;
+  owner.inspiration = { kit, generatedAt, sourceRunId };
   await writeOwnerDashboard(id, owner);
-  return owner.financials;
+  return owner.inspiration;
 }
 
 /**
@@ -385,12 +530,12 @@ function stripPersonas(project: ProjectFull): ProjectFull {
 
 export async function getLatestProjectLean(): Promise<ProjectFull | null> {
   const p = await getLatestProject();
-  return p ? stripPersonas(p) : null;
+  return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
 }
 
 export async function getProjectLean(id: string): Promise<ProjectFull | null> {
   const p = await getProject(id);
-  return p ? stripPersonas(p) : null;
+  return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
 }
 
 // ---------------------------------------------------------------------------
@@ -482,4 +627,55 @@ export async function getProjectChunks(
     }
   }
   return { chunks, embModels };
+}
+
+// ---------------------------------------------------------------------------
+// Industry knowledge cache (option A) — globally shared, auto-built per
+// industry, with provenance + freshness. Not scoped to a project.
+// ---------------------------------------------------------------------------
+export type IndustryKnowledgeRow = {
+  industryKey: string;
+  industry: string;
+  pack: unknown;
+  sources: string[];
+  builtModel: string;
+  builtAt: Date;
+};
+
+export async function getIndustryKnowledge(
+  industryKey: string
+): Promise<IndustryKnowledgeRow | null> {
+  const row = await prisma.industryKnowledge.findUnique({
+    where: { industryKey },
+  });
+  if (!row) return null;
+  return {
+    industryKey: row.industryKey,
+    industry: row.industry,
+    pack: row.pack,
+    sources: Array.isArray(row.sources) ? (row.sources as string[]) : [],
+    builtModel: row.builtModel,
+    builtAt: row.builtAt,
+  };
+}
+
+export async function upsertIndustryKnowledge(data: {
+  industryKey: string;
+  industry: string;
+  pack: unknown;
+  sources: string[];
+  builtModel: string;
+}): Promise<void> {
+  const payload = {
+    industry: data.industry,
+    pack: data.pack as Prisma.InputJsonValue,
+    sources: data.sources as unknown as Prisma.InputJsonValue,
+    builtModel: data.builtModel,
+    builtAt: new Date(),
+  };
+  await prisma.industryKnowledge.upsert({
+    where: { industryKey: data.industryKey },
+    create: { industryKey: data.industryKey, ...payload },
+    update: payload,
+  });
 }

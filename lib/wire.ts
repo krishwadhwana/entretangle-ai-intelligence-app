@@ -101,5 +101,7 @@ export function personaToWire(row: DbPersona): Persona {
     reasoning: row.reasoning,
     personality: row.personality,
     personalityTraits: JSON.parse(row.personalityTraits),
+    intentOriginal: row.intentOriginal ?? null,
+    voteChangedAt: row.voteChangedAt ? row.voteChangedAt.toISOString() : null,
   };
 }

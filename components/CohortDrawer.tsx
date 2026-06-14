@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical, Loader2, MessageCircle, Send, Users, X } from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
 import { SEGMENT_COLORS } from "./segments";
+import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 
 type Props = {
   runId: string;
   cohort: CohortWithPersonas;
   onClose: () => void;
+  /** When set, auto-open the chat targeting this persona (win-back deep link). */
+  initialChatPersonaId?: string;
 };
 
 type ChatMode = "customer" | "group";
@@ -100,10 +103,10 @@ function IntentHistogram({ cohort }: { cohort: CohortWithPersonas }) {
   const color = SEGMENT_COLORS[cohort.segment] ?? "#6366f1";
   return (
     <div className="mb-4">
-      <p className="mb-1 text-[10px] font-medium text-neutral-500">
+      <p className="mb-1 text-[11px] font-medium text-neutral-500">
         Intent distribution
       </p>
-      <div className="flex h-12 items-end gap-0.5">
+      <div className="flex h-14 items-end gap-0.5">
         {bins.map((n, i) => (
           <div
             key={i}
@@ -118,7 +121,7 @@ function IntentHistogram({ cohort }: { cohort: CohortWithPersonas }) {
           />
         ))}
       </div>
-      <div className="flex justify-between text-[8px] text-neutral-400">
+      <div className="mt-0.5 flex justify-between text-[10px] text-neutral-400">
         <span>0%</span>
         <span>intent</span>
         <span>100%</span>
@@ -135,7 +138,7 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
   const color = SEGMENT_COLORS[cohort.segment] ?? "#6366f1";
   return (
     <div className="mb-4">
-      <p className="mb-1 text-[10px] font-medium text-neutral-500">
+      <p className="mb-1 text-[11px] font-medium text-neutral-500">
         Willingness to pay ({s.wtpCurrency})
       </p>
       <div className="relative h-4 rounded bg-neutral-100">
@@ -152,7 +155,7 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
           style={{ left: `${(s.wtpP50 / max) * 100}%`, background: color }}
         />
       </div>
-      <div className="flex justify-between text-[8px] text-neutral-400">
+      <div className="mt-0.5 flex justify-between text-[10px] text-neutral-400">
         <span>P25 {s.wtpP25.toLocaleString()}</span>
         <span>P50 {s.wtpP50.toLocaleString()}</span>
         <span>P75 {s.wtpP75.toLocaleString()}</span>
@@ -162,8 +165,14 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
 }
 
 /** Right-side drawer: cohort stats + individual persona cards (SPEC-V2 §5). */
-export default function CohortDrawer({ runId, cohort, onClose }: Props) {
+export default function CohortDrawer({
+  runId,
+  cohort,
+  onClose,
+  initialChatPersonaId,
+}: Props) {
   const [shown, setShown] = useState(12);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => {
     if (typeof window === "undefined") return DRAWER_DEFAULT_WIDTH;
     const saved = Number(window.localStorage.getItem("cohortDrawerWidth"));
@@ -210,6 +219,27 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
       setSelectedPersonaId(cohort.personas[0].id);
     }
   }, [cohort.personas, selectedPersonaId]);
+
+  // Win-back deep link: open the chat focused on a specific persona (e.g. from
+  // the Insights "Win back rejectors" panel). Runs after the cohort-reset
+  // effect above so it wins on first open.
+  useEffect(() => {
+    if (!initialChatPersonaId) return;
+    if (!cohort.personas.some((p) => p.id === initialChatPersonaId)) return;
+    setChatOpen(true);
+    setChatMode("customer");
+    setSelectedPersonaId(initialChatPersonaId);
+    setChatError(null);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [cohort.id, initialChatPersonaId, cohort.personas]);
+
+  const startWinBack = (personaId: string) => {
+    setChatOpen(true);
+    setChatMode("customer");
+    setSelectedPersonaId(personaId);
+    setChatError(null);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
@@ -266,17 +296,29 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
     setChatError(null);
     setChatLoading(true);
     try {
-      const res = await fetch(`/api/runs/${runId}/audience-chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: chatMode,
-          cohortId: cohort.id,
-          personaId: chatMode === "customer" ? selectedPersona?.id : null,
-          question,
-          history,
-        }),
-      });
+      // Customer (1:1) chats go to the win-back endpoint, which persists any
+      // vote change and emits an event; group chats stay on the audience route.
+      const customer = chatMode === "customer" && selectedPersona;
+      const res = await fetch(
+        customer
+          ? `/api/runs/${runId}/persona/${selectedPersona.id}/chat`
+          : `/api/runs/${runId}/audience-chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            customer
+              ? { question, history }
+              : {
+                  mode: chatMode,
+                  cohortId: cohort.id,
+                  personaId: null,
+                  question,
+                  history,
+                }
+          ),
+        }
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `chat failed (${res.status})`);
       const result = data as AudienceChatResponse;
@@ -326,8 +368,8 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
           style={{ background: SEGMENT_COLORS[cohort.segment] }}
         />
         <div className="flex-1">
-          <h3 className="text-sm font-semibold leading-tight">{cohort.label}</h3>
-          <p className="text-[11px] text-neutral-500">
+          <h3 className="text-base font-semibold leading-tight">{cohort.label}</h3>
+          <p className="mt-0.5 text-xs text-neutral-500">
             {cohort.locality}, {cohort.country} · {cohort.weightPct}% of
             audience · {cohort.state}
           </p>
@@ -348,9 +390,9 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
         {cohort.summary && (
-          <p className="mb-3 rounded-lg bg-neutral-50 p-2 text-[11px] leading-snug text-neutral-600">
+          <p className="mb-3 rounded-lg bg-neutral-50 p-2.5 text-xs leading-relaxed text-neutral-600">
             {cohort.summary}
           </p>
         )}
@@ -469,23 +511,23 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
 
         {s && (
           <div className="mb-4 grid grid-cols-3 gap-2 text-center">
-            <div className="rounded-lg border border-neutral-200 p-2">
-              <p className="text-sm font-semibold">{s.n}</p>
-              <p className="text-[9px] text-neutral-500">personas</p>
+            <div className="rounded-lg border border-neutral-200 p-2.5">
+              <p className="text-lg font-semibold">{s.n}</p>
+              <p className="text-[11px] text-neutral-500">personas</p>
             </div>
-            <div className="rounded-lg border border-neutral-200 p-2">
-              <p className="text-sm font-semibold">
+            <div className="rounded-lg border border-neutral-200 p-2.5">
+              <p className="text-lg font-semibold">
                 {Math.round(s.meanIntent * 100)}%
               </p>
-              <p className="text-[9px] text-neutral-500">mean intent</p>
+              <p className="text-[11px] text-neutral-500">mean intent</p>
             </div>
-            <div className="rounded-lg border border-neutral-200 p-2">
-              <p className="text-sm font-semibold">
+            <div className="rounded-lg border border-neutral-200 p-2.5">
+              <p className="text-lg font-semibold">
                 {s.wtpP50 >= 1000
                   ? `${Math.round(s.wtpP50 / 1000)}k`
                   : s.wtpP50}
               </p>
-              <p className="text-[9px] text-neutral-500">
+              <p className="text-[11px] text-neutral-500">
                 WTP P50 ({s.wtpCurrency})
               </p>
             </div>
@@ -496,24 +538,24 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
         <WtpSpread cohort={cohort} />
 
         {s && (
-          <div className="mb-4 space-y-2 text-[11px]">
+          <div className="mb-4 space-y-2.5 text-xs">
             <div>
-              <p className="font-medium text-neutral-700">Channels</p>
-              <p className="text-neutral-500">
+              <p className="font-semibold text-neutral-700">Channels</p>
+              <p className="mt-0.5 leading-relaxed text-neutral-500">
                 {s.topChannels.map((c) => `${c.name} ${c.share}%`).join(" · ")}
               </p>
             </div>
             <div>
-              <p className="font-medium text-neutral-700">Platforms</p>
-              <p className="text-neutral-500">
+              <p className="font-semibold text-neutral-700">Platforms</p>
+              <p className="mt-0.5 leading-relaxed text-neutral-500">
                 {s.topPlatforms.length
                   ? s.topPlatforms.map((p) => `${p.name} ${p.share}%`).join(" · ")
                   : "mostly offline"}
               </p>
             </div>
             <div>
-              <p className="font-medium text-neutral-700">Objections</p>
-              <ul className="list-inside list-disc text-neutral-500">
+              <p className="font-semibold text-neutral-700">Objections</p>
+              <ul className="mt-0.5 list-inside list-disc leading-relaxed text-neutral-500">
                 {s.topObjections.map((o, i) => (
                   <li key={i}>{o}</li>
                 ))}
@@ -522,47 +564,66 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
           </div>
         )}
 
-        <p className="mb-2 flex items-center gap-1 text-xs font-semibold text-neutral-700">
-          <Users className="h-3.5 w-3.5" /> Personas
+        <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-neutral-700">
+          <Users className="h-4 w-4" /> Personas
         </p>
         {cohort.personas.length === 0 ? (
-          <p className="text-[11px] text-neutral-400">
+          <p className="text-xs text-neutral-400">
             {cohort.state === "done" ? "No personas." : "Simulating…"}
           </p>
         ) : (
-          <ul className="space-y-2">
+          <ul className="space-y-2.5">
             {cohort.personas.slice(0, shown).map((p) => (
               <li
                 key={p.id}
-                className="rounded-lg border border-neutral-100 p-2.5"
+                className="rounded-lg border border-neutral-200 p-3"
               >
-                <div className="flex items-baseline justify-between">
-                  <p className="text-[11px] font-semibold">
+                <div className="flex items-baseline justify-between gap-2">
+                  <p className="text-sm font-semibold">
                     {p.name}{" "}
-                    <span className="font-normal text-neutral-400">
+                    <span className="text-xs font-normal text-neutral-500">
                       {p.age} · {p.occupation}
                       {p.lifeStage ? ` · ${p.lifeStage}` : ""}
                     </span>
                   </p>
-                  <span
-                    className={`text-[10px] font-medium ${p.intent >= 0.4 ? "text-emerald-600" : p.intent >= 0.2 ? "text-amber-600" : "text-neutral-400"}`}
-                  >
-                    intent {Math.round(p.intent * 100)}%
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <span className="flex items-center gap-1">
+                      <span
+                        className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white"
+                        style={{
+                          background:
+                            SENTIMENT_META[classifySentiment(p.intent)].color,
+                        }}
+                      >
+                        {SENTIMENT_META[classifySentiment(p.intent)].label}
+                      </span>
+                      <span
+                        className={`text-[11px] font-medium ${p.intent >= 0.4 ? "text-emerald-600" : p.intent >= 0.2 ? "text-amber-600" : "text-neutral-400"}`}
+                      >
+                        {Math.round(p.intent * 100)}%
+                      </span>
+                    </span>
+                    {typeof p.intentOriginal === "number" &&
+                      p.intentOriginal !== p.intent && (
+                        <span className="text-[9px] text-neutral-400">
+                          was {Math.round(p.intentOriginal * 100)}%
+                        </span>
+                      )}
+                  </div>
                 </div>
 
                 {p.personality && (
-                  <p className="mt-1 text-[9px] leading-snug text-indigo-500">
+                  <p className="mt-1.5 text-[11px] leading-snug text-indigo-500">
                     ✦ {p.personality}
                   </p>
                 )}
 
                 {p.personalityTraits.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1">
                     {p.personalityTraits.map((t, i) => (
                       <span
                         key={i}
-                        className="rounded-full border border-indigo-100 bg-indigo-50 px-1.5 py-0.5 text-[8px] text-indigo-600"
+                        className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-600"
                       >
                         {t}
                       </span>
@@ -571,28 +632,28 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
                 )}
 
                 {p.lifestyle && (
-                  <p className="mt-1 text-[9px] leading-snug text-neutral-500">
+                  <p className="mt-1.5 text-[11px] leading-snug text-neutral-500">
                     {p.lifestyle}
                   </p>
                 )}
 
-                <p className="mt-1 text-[10px] italic leading-snug text-neutral-600">
+                <p className="mt-1.5 text-xs italic leading-relaxed text-neutral-600">
                   “{p.quote}”
                 </p>
 
                 {p.reasoning && (
-                  <p className="mt-1 rounded bg-neutral-50 px-1.5 py-1 text-[9px] leading-snug text-neutral-600">
-                    <span className="font-medium text-neutral-500">Why: </span>
+                  <p className="mt-1.5 rounded bg-neutral-50 px-2 py-1.5 text-[11px] leading-snug text-neutral-600">
+                    <span className="font-semibold text-neutral-500">Why: </span>
                     {p.reasoning}
                   </p>
                 )}
 
                 {p.values.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-1">
+                  <div className="mt-1.5 flex flex-wrap gap-1">
                     {p.values.map((v, i) => (
                       <span
                         key={i}
-                        className="rounded-full border border-neutral-200 bg-white px-1.5 py-0.5 text-[8px] text-neutral-500"
+                        className="rounded-full border border-neutral-200 bg-white px-2 py-0.5 text-[10px] text-neutral-500"
                       >
                         {v}
                       </span>
@@ -600,7 +661,7 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
                   </div>
                 )}
 
-                <p className="mt-1 text-[9px] text-neutral-400">
+                <p className="mt-1.5 text-[11px] leading-snug text-neutral-500">
                   WTP {p.wtpCurrency} {p.wtp.toLocaleString()}
                   {" · "}
                   {Math.round(p.priceSensitivity * 100)}% price-sensitive · buys
@@ -608,11 +669,22 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
                   {p.platforms.length ? p.platforms.join(", ") : "offline"}
                 </p>
                 {p.shoppingHabits && (
-                  <p className="text-[9px] text-neutral-400">
+                  <p className="mt-1 text-[11px] leading-snug text-neutral-500">
                     🛒 {p.shoppingHabits}
                   </p>
                 )}
-                <p className="text-[9px] text-red-400">⚠ {p.objection}</p>
+                <p className="mt-1 text-[11px] leading-snug text-red-400">
+                  ⚠ {p.objection}
+                </p>
+                {isRejector(p.intent) && (
+                  <button
+                    type="button"
+                    onClick={() => startWinBack(p.id)}
+                    className="mt-2 flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                  >
+                    <MessageCircle className="h-3 w-3" /> Win back
+                  </button>
+                )}
               </li>
             ))}
           </ul>
@@ -620,7 +692,7 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
         {shown < cohort.personas.length && (
           <button
             onClick={() => setShown((n) => n + 12)}
-            className="mt-2 w-full rounded-lg border border-neutral-200 py-1.5 text-[11px] text-neutral-500 hover:border-neutral-400"
+            className="mt-2.5 w-full rounded-lg border border-neutral-200 py-2 text-xs text-neutral-500 hover:border-neutral-400"
           >
             Show more ({cohort.personas.length - shown} remaining)
           </button>

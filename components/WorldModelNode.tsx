@@ -69,7 +69,7 @@ function WorldModelNodeImpl({ data }: NodeProps<WorldModelNodeType>) {
           {data.parentRunId && (
             <a
               href={`/runs/${data.parentRunId}`}
-              className="text-indigo-400 underline-offset-2 hover:underline"
+              className="nodrag text-indigo-400 underline-offset-2 hover:underline"
             >
               parent run
             </a>
@@ -78,7 +78,7 @@ function WorldModelNodeImpl({ data }: NodeProps<WorldModelNodeType>) {
             <a
               key={id}
               href={`/runs/${id}`}
-              className="text-indigo-400 underline-offset-2 hover:underline"
+              className="nodrag text-indigo-400 underline-offset-2 hover:underline"
             >
               fork {i + 1}
             </a>
@@ -87,7 +87,7 @@ function WorldModelNodeImpl({ data }: NodeProps<WorldModelNodeType>) {
       )}
 
       {ready && (
-        <form onSubmit={ask} className="mt-3">
+        <form onSubmit={ask} className="nodrag mt-3">
           <div className="flex items-center gap-2 rounded-lg border border-neutral-700 bg-neutral-800 px-3 py-2">
             <input
               value={question}
@@ -98,7 +98,7 @@ function WorldModelNodeImpl({ data }: NodeProps<WorldModelNodeType>) {
             <button
               type="submit"
               disabled={busy}
-              className="text-neutral-400 hover:text-white disabled:opacity-40"
+              className="nodrag text-neutral-400 hover:text-white disabled:opacity-40"
             >
               {busy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />

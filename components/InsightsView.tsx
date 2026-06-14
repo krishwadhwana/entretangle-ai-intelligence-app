@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown, MessageCircle } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -181,6 +182,109 @@ function TextList({
   );
 }
 
+type ResistanceExample = {
+  id: string;
+  cohortId: string;
+  cohortLabel: string;
+  personaName: string;
+  objection: string;
+  intent: number;
+};
+
+type RoleResistanceItem = {
+  role: string;
+  roleLabel: string;
+  text: string;
+  count: number;
+  examples: ResistanceExample[];
+};
+
+function RoleResistanceList({
+  items,
+  empty,
+  onSelectCohort,
+}: {
+  items: RoleResistanceItem[];
+  empty: string;
+  onSelectCohort: (cohortId: string) => void;
+}) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+
+  if (items.length === 0) return <Empty label={empty} />;
+  return (
+    <ul className="space-y-2">
+      {items.map((item, i) => {
+        const key = `${item.role}-${item.text}`;
+        const open = expandedKey === key;
+        const panelId = `role-resistance-${i}`;
+        return (
+          <li
+            key={key}
+            className="overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50"
+          >
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={panelId}
+              onClick={() => setExpandedKey(open ? null : key)}
+              className="flex w-full items-start gap-2 px-3 py-2 text-left transition hover:bg-neutral-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+            >
+              <span className="min-w-0 flex-1">
+                <span className="block text-[11px] leading-relaxed text-neutral-800">
+                  {item.text}
+                </span>
+                <span className="mt-1 block text-[10px] text-neutral-400">
+                  {item.roleLabel} · {item.count} similar responses
+                </span>
+              </span>
+              <ChevronDown
+                className={`mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-400 transition ${
+                  open ? "rotate-180" : ""
+                }`}
+                aria-hidden="true"
+              />
+            </button>
+
+            {open && (
+              <div id={panelId} className="border-t border-neutral-200 px-3 py-2">
+                <ul className="space-y-1.5">
+                  {item.examples.map((example) => (
+                    <li key={example.id}>
+                      <button
+                        type="button"
+                        onClick={() => onSelectCohort(example.cohortId)}
+                        title={`Open ${example.cohortLabel}`}
+                        className="block w-full rounded-md border border-neutral-200 bg-white px-2.5 py-2 text-left transition hover:border-indigo-200 hover:bg-indigo-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400"
+                      >
+                        <span className="line-clamp-2 text-[10px] leading-snug text-neutral-700">
+                          {example.objection}
+                        </span>
+                        <span className="mt-1 flex items-center justify-between gap-2 text-[9px] text-neutral-400">
+                          <span className="truncate">
+                            {example.personaName} · {example.cohortLabel}
+                          </span>
+                          <span className="shrink-0 tabular-nums">
+                            intent {Math.round(example.intent * 100)}%
+                          </span>
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {item.count > item.examples.length && (
+                  <p className="mt-2 text-[9px] text-neutral-400">
+                    {item.count - item.examples.length} more similar responses
+                  </p>
+                )}
+              </div>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
 function normalizeOpinion(text: string): string {
   return text.trim().replace(/\s+/g, " ").replace(/[.?!]+$/, "").toLowerCase();
 }
@@ -351,6 +455,7 @@ type Props = {
   maxCostUsd: number;
   maxTokens: number;
   onSelectCohort: (cohortId: string) => void;
+  onChatPersona?: (cohortId: string, personaId: string) => void;
 };
 
 export default function InsightsView({
@@ -358,6 +463,7 @@ export default function InsightsView({
   maxCostUsd,
   maxTokens,
   onSelectCohort,
+  onChatPersona,
 }: Props) {
   const agg = state.aggregate;
 
@@ -374,6 +480,16 @@ export default function InsightsView({
         return c.personas.map((p) => ({ ...p, cohort: c }));
       }),
     [state.cohorts, state.cohortOrder]
+  );
+
+  // Non-approvers (reject + mixed, intent < 65%) we can try to win back, with
+  // the closest-to-flipping first. Personas whose vote already moved sort last.
+  const winBackRejectors = useMemo(
+    () =>
+      personaRows
+        .filter((p) => p.intent < 0.65)
+        .sort((a, b) => b.intent - a.intent),
+    [personaRows]
   );
 
   const objectionThemes = useMemo(() => {
@@ -474,26 +590,50 @@ export default function InsightsView({
   }, [personaRows]);
 
   const roleResistance = useMemo(() => {
-    const byRole = new Map<string, Map<string, number>>();
+    const byRole = new Map<
+      string,
+      Map<string, { count: number; examples: ResistanceExample[] }>
+    >();
     for (const p of personaRows) {
-      if (!p.objection.trim()) continue;
+      const objection = p.objection.trim();
+      if (!objection) continue;
       const role = p.cohort.role;
-      const roleMap = byRole.get(role) ?? new Map<string, number>();
-      const key = objectionTheme(p.objection);
-      roleMap.set(key, (roleMap.get(key) ?? 0) + 1);
+      const roleMap =
+        byRole.get(role) ??
+        new Map<string, { count: number; examples: ResistanceExample[] }>();
+      const key = objectionTheme(objection);
+      const bucket = roleMap.get(key) ?? { count: 0, examples: [] };
+      bucket.count += 1;
+      if (bucket.examples.length < 5) {
+        bucket.examples.push({
+          id: p.id,
+          cohortId: p.cohort.id,
+          cohortLabel: p.cohort.label,
+          personaName: p.name,
+          objection,
+          intent: p.intent,
+        });
+      }
+      roleMap.set(key, bucket);
       byRole.set(role, roleMap);
     }
     return Array.from(byRole.entries())
       .map(([role, objections]) => {
-        const top = Array.from(objections.entries()).sort((a, b) => b[1] - a[1])[0];
-        return top ? { role, text: top[0], count: top[1] } : null;
+        const top = Array.from(objections.entries()).sort(
+          (a, b) => b[1].count - a[1].count
+        )[0];
+        return top
+          ? {
+              role,
+              roleLabel: role.replace("_", " "),
+              text: top[0],
+              count: top[1].count,
+              examples: top[1].examples,
+            }
+          : null;
       })
-      .filter(Boolean)
-      .sort((a, b) => b!.count - a!.count)
-      .map((r) => ({
-        text: r!.text,
-        meta: `${r!.role.replace("_", " ")} · ${r!.count} similar responses`,
-      }));
+      .filter((row): row is RoleResistanceItem => Boolean(row))
+      .sort((a, b) => b.count - a.count);
   }, [personaRows]);
 
   const supportiveQuotes = useMemo(
@@ -767,6 +907,68 @@ export default function InsightsView({
           />
         </Card>
 
+        <Card
+          title={`Win back rejectors${winBackRejectors.length ? ` (${winBackRejectors.length})` : ""}`}
+          wide
+        >
+          {winBackRejectors.length === 0 ? (
+            <Empty label="No rejectors yet — every persona approves." />
+          ) : (
+            <>
+              <p className="mb-2 text-[10px] leading-snug text-neutral-400">
+                Personas who didn&apos;t approve (intent &lt;65%), closest to
+                flipping first. Chat 1:1 to address their objection — if your
+                pitch lands, their vote updates across the run.
+              </p>
+              <ul className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
+                {winBackRejectors.map((p) => (
+                  <li
+                    key={p.id}
+                    className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11px]"
+                  >
+                    <span
+                      className="shrink-0 rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white"
+                      style={{
+                        background: SENTIMENT_META[classifySentiment(p.intent)].color,
+                      }}
+                    >
+                      {Math.round(p.intent * 100)}%
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-neutral-700">
+                        <span className="font-medium">{p.name}</span>{" "}
+                        <span className="text-neutral-400">
+                          · {p.cohort.label}
+                        </span>
+                        {typeof p.intentOriginal === "number" &&
+                          p.intentOriginal !== p.intent && (
+                            <span className="ml-1 text-emerald-600">
+                              ↑ was {Math.round(p.intentOriginal * 100)}%
+                            </span>
+                          )}
+                      </p>
+                      {p.objection.trim() && (
+                        <p className="truncate text-[10px] text-red-400">
+                          ⚠ {p.objection}
+                        </p>
+                      )}
+                    </div>
+                    {onChatPersona && (
+                      <button
+                        type="button"
+                        onClick={() => onChatPersona(p.cohort.id, p.id)}
+                        className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                      >
+                        <MessageCircle className="h-3 w-3" /> Chat
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </Card>
+
         <Card title="Repeated value drivers">
           <OpinionBars
             data={valueDrivers}
@@ -776,9 +978,10 @@ export default function InsightsView({
         </Card>
 
         <Card title="Resistance by buyer role">
-          <TextList
+          <RoleResistanceList
             items={roleResistance}
             empty="Waiting for audience opinions…"
+            onSelectCohort={onSelectCohort}
           />
         </Card>
 

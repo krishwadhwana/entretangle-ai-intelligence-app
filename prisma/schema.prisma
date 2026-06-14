@@ -84,6 +84,7 @@ model Run {
   events  RunEvent[]
   cohorts Cohort[]
   jobs    RunJob[]
+  launchSims LaunchSimulation[]
 
   @@index([projectId])
 }
@@ -213,9 +214,35 @@ model Persona {
   personality       String @default("") // distinct temperament, flavoured by locality
   personalityTraits String @default("[]") // Json string[] — personality trait tags
 
+  // Win-back: a 1:1 chat can move a non-approver's vote. We keep the original
+  // pre-chat intent so the UI can show "was X% -> Y%", plus a transcript.
+  intentOriginal Float?    // pre-chat intent, set on the first vote change
+  voteChangedAt  DateTime? // when intent was last changed via win-back chat
+  chatLog        String   @default("[]") // Json — win-back conversation transcript
+
   cohort Cohort @relation(fields: [cohortId], references: [id])
 
   @@index([cohortId])
+}
+
+// A saved Launch Simulation scenario. The engine is deterministic over the
+// run's frozen personas, so the inputs alone reproduce the result — but we
+// persist the computed result too so saved scenarios render instantly and can
+// be compared side by side without recomputation. projectId mirrors Run so a
+// scenario survives even if its run row is later detached.
+model LaunchSimulation {
+  id        String   @id @default(cuid())
+  runId     String   @map("run_id")
+  projectId String?  @map("project_id")
+  name      String   @default("Scenario")
+  inputs    Json // LaunchSimInputs
+  result    Json // LaunchSimResult
+  createdAt DateTime @default(now()) @map("created_at")
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("launch_simulations")
 }
 
 model RunEvent {
@@ -230,4 +257,21 @@ model RunEvent {
 
   @@unique([runId, seq])
   @@index([runId, seq])
+}
+
+// Auto-built, globally-shared industry knowledge (option A). One agent
+// researches an industry once and caches a knowledge pack + planning template
+// here, with provenance + freshness; all runs in that industry reuse it until
+// it goes stale. Not per-project — knowledge is shared across the platform.
+model IndustryKnowledge {
+  id          String   @id @default(cuid())
+  industryKey String   @unique @map("industry_key") // normalized libraryKey/slug
+  industry    String
+  pack        Json // IndustryKnowledgePack (summary, facts[], planningTemplate)
+  sources     Json     @default("[]") // string[]
+  builtModel  String   @default("") @map("built_model")
+  builtAt     DateTime @default(now()) @map("built_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@map("industry_knowledge")
 }

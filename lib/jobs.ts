@@ -36,7 +36,6 @@ export async function enqueueRunJob(
   const existing = await prisma.runJob.findFirst({
     where: {
       runId,
-      type,
       status: { in: ["queued", "running"] },
     },
     orderBy: { createdAt: "desc" },
@@ -143,9 +142,16 @@ export async function claimNextRunJob(
     WHERE id = (
       SELECT id
       FROM run_jobs
-      WHERE status = 'queued'
-        AND cancel_requested = false
-      ORDER BY priority DESC, created_at ASC
+      AS candidate
+      WHERE candidate.status = 'queued'
+        AND candidate.cancel_requested = false
+        AND NOT EXISTS (
+          SELECT 1
+          FROM run_jobs AS active
+          WHERE active.run_id = candidate.run_id
+            AND active.status = 'running'
+        )
+      ORDER BY candidate.priority DESC, candidate.created_at ASC
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )

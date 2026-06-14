@@ -3,6 +3,10 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enqueueRunJob } from "@/lib/jobs";
 import { ClientProfileSchema, RunModeSchema } from "@/lib/schema";
+import {
+  isPanIndiaProfile,
+  PAN_INDIA_MIN_RELEVANT_SPOTS,
+} from "@/lib/audienceCoverage";
 
 export const dynamic = "force-dynamic";
 
@@ -32,12 +36,18 @@ export async function POST(req: NextRequest) {
   let mode = body.data.mode;
   let sourceRunId = body.data.sourceRunId ?? null;
   if (mode === "scoped") {
-    const doneCohorts = sourceRunId
-      ? await prisma.cohort.count({
+    const reusable = sourceRunId
+      ? await prisma.cohort.findMany({
           where: { runId: sourceRunId, state: "done" },
+          select: { locality: true },
+          distinct: ["locality"],
         })
-      : 0;
-    if (doneCohorts === 0) {
+      : [];
+    const hasAudience = reusable.length > 0;
+    const panIndiaSourceTooNarrow =
+      isPanIndiaProfile(body.data.clientProfile) &&
+      reusable.length < PAN_INDIA_MIN_RELEVANT_SPOTS;
+    if (!hasAudience || panIndiaSourceTooNarrow) {
       mode = "full";
       sourceRunId = null;
     }
@@ -56,6 +66,12 @@ export async function POST(req: NextRequest) {
       targetAudienceSize: body.data.targetAudienceSize ?? null,
     },
   });
+  if (body.data.projectId) {
+    await prisma.project.update({
+      where: { id: body.data.projectId },
+      data: { updatedAt: new Date() },
+    });
+  }
 
   const job = await enqueueRunJob(run.id, "execute");
 

@@ -9,6 +9,11 @@ import type {
   FinancialModel,
   Persona,
 } from "./schema";
+import {
+  cultureContextForLocality,
+  INDIA_RELEVANT_MARKETS,
+  PAN_INDIA_MIN_RELEVANT_SPOTS,
+} from "./audienceCoverage";
 
 // All prompts demand JSON only, no markdown fences, and include the literal
 // JSON schema (SPEC §5). Anti-fabrication clause in the executor is
@@ -171,8 +176,8 @@ entrepreneur's profile (any product, any geography), output:
    Pick from these archetypes, localized to the client (skip only ones truly
    irrelevant to this product):
    - market: Market Demand (TAM/SAM, trends per geography); Brand &
-     Positioning (whitespace, premium cues); a Locality desk per key place
-     (REQUIRED — one for each metro/cluster you list) that researches the
+     Positioning (whitespace, premium cues); Locality desks for the most
+     decision-critical places/clusters that research the
      CURRENT, present-day state of THIS specific category in THAT specific
      place: what's actually selling there now, local taste and trends, the
      real local competitors and where people shop (named high streets, malls,
@@ -180,7 +185,9 @@ entrepreneur's profile (any product, any geography), output:
      Cities are NOT interchangeable — Mumbai, Delhi, Bangalore, Chennai and
      Kolkata each have a different fashion/market character, and a tier-2 city
      or town differs again; each Locality desk must surface what makes its
-     place distinct, never a generic national answer
+     place distinct, never a generic national answer. For broad national
+     geographies, group desks by region/culture cluster when necessary rather
+     than spawning a desk for every audience locality.
    - competitor: Competitor Stats (real numbers: pricing, revenue, funding,
      share); Competitor Stories (how rivals launched/pivoted/failed)
    - product: Product & Materials desk — for clothing: fabrics/blends, fits &
@@ -216,19 +223,27 @@ entrepreneur's profile (any product, any geography), output:
 2. "cohortPlan": the audience simulation matrix. This drives a simulated
    audience of THOUSANDS of personas, so maximise coverage and diversity.
    - "currency": ISO currency code personas quote willingness-to-pay in.
-   - "localities": 6–12 real places spanning the FULL settlement hierarchy of
-     the client's stated geography — NOT just metros. If the geography is
-     national or broad ("PAN-India", "all of India", "nationwide", a whole
-     country/region), you MUST include a spread across the hierarchy: a few
-     top metros, several tier-2 cities, at least one or two tier-3 cities, and
-     at least one representative small town / semi-urban or rural cluster —
-     because most of the population, and a very different kind of demand, lives
-     outside the metros (e.g. for India: not only Mumbai/Delhi/Bangalore but
-     also the likes of Jaipur, Indore, Surat, Lucknow, Coimbatore, plus a
-     smaller town/rural belt). Include export markets too where relevant. Each
-     locality needs real lat/lng (decimal degrees). Treat every place as
-     genuinely DISTINCT.
-   - "cohorts": 24–60 cells of locality x segment x role with weightPct
+   - "localities": for narrow geographies, 8–14 real places. For national or
+     broad geographies ("PAN-India", "all of India", "nationwide", a whole
+     country/region), include about 50 real places spanning the FULL settlement
+     hierarchy — metros and tier-B markets, but especially tier-C, tier-D and
+     tier-E cities/towns plus representative semi-urban clusters. If the
+     geography is India-wide, you MUST cover at least
+     ${PAN_INDIA_MIN_RELEVANT_SPOTS} of this relevant Indian market set, chosen
+     by product fit, cultural spread and long-tail coverage:
+     ${INDIA_RELEVANT_MARKETS.map((m) => m.name).join(", ")}.
+     Do NOT only pick the familiar metros. For plain "All India", prioritize
+     the C/D/E long-tail markets; the audience must include places like
+     Prayagraj, Aligarh, Bareilly, Gorakhpur, Kota, Udaipur, Kolhapur,
+     Jabalpur, Dhanbad, Muzaffarpur, Salem, Tiruchirappalli, Mangaluru and
+     comparable smaller markets, not just Mumbai/Delhi/Bengaluru. Include
+     North, West, South, East, Central and Northeast India where plausible.
+     Include export markets too where relevant. Each locality needs real
+     lat/lng (decimal degrees). Treat every place as genuinely DISTINCT in
+     culture, settlement tier, income mix, language, social norms and buying
+     behavior.
+   - "cohorts": for narrow geographies, 24–60 cells; for PAN-India or other
+     broad geographies, 80–140 cells of locality x segment x role with weightPct
      (share of addressable audience, must sum to ~100). Span as many distinct
      locality×segment×role combinations as plausibly buy/sell this product —
      breadth of cells is what makes the audience diverse, and the non-metro
@@ -260,6 +275,14 @@ export type RunFocus = {
   focusQuestion?: string | null;
   additionalContext?: string | null;
 };
+
+function runFocusSection(focus?: RunFocus): string {
+  const lines: string[] = [];
+  if (focus?.focusQuestion) lines.push(`Focus question: ${focus.focusQuestion}`);
+  if (focus?.additionalContext)
+    lines.push(`Additional context for this run: ${focus.additionalContext}`);
+  return lines.length ? `\nRun-specific context:\n${lines.join("\n")}\n` : "";
+}
 
 export function plannerV2User(
   profile: ClientProfile,
@@ -327,8 +350,14 @@ export function cohortSimSystem(
   cohort: Pick<Cohort, "label" | "locality" | "country" | "segment" | "role">,
   profile: ClientProfile,
   currency: string,
-  n: number
+  n: number,
+  focus?: RunFocus
 ): string {
+  const cultureContext = cultureContextForLocality(
+    cohort.locality,
+    cohort.country
+  );
+  const focusSection = runFocusSection(focus);
   const roleDesc: Record<string, string> = {
     consumer: "end consumers considering buying the product themselves",
     retail_exec:
@@ -348,6 +377,12 @@ Location: ${cohort.locality}, ${cohort.country}
 Income segment: ${cohort.segment}
 Role: ${roleDesc[cohort.role] ?? cohort.role}
 Venture: ${JSON.stringify(profile)}
+Local upbringing / culture prior: ${cultureContext}
+${focusSection}
+When run-specific context is present, treat it as true for THIS branch only.
+Let it shift intent, willingness-to-pay, objections and channel preferences
+where it would plausibly matter. Do not force a positive result; the goal is
+to measure whether the added information changes response quality.
 
 Every one of these ${n} people has a DISTINCT personality, and that
 personality is rooted in ${cohort.locality}, ${cohort.country} — its culture,
@@ -366,6 +401,9 @@ other. Deliberately spread them across:
 - attitude (sceptics, fence-sitters, and enthusiasts — not all warm),
 - digital behaviour (heavy social users through to offline-only),
 - household/life stage (students, young families, empty-nesters, etc.).
+Use the culture prior as context, not as a cage: individual people still vary
+by age, class, gender, education, migration history, family pressure, exposure
+to metros, and personality. Avoid flattening an entire city into one trait.
 
 Rules:
 - Each persona is a believable LOCAL individual: realistic local name, age,
@@ -427,9 +465,11 @@ Output JSON only: {"summary":"...","personas":[{"name":"...","age":0,
 export function audienceSynthSystem(
   profile: ClientProfile,
   aggregate: AudienceAggregate,
-  groundTruth?: string
+  groundTruth?: string,
+  focus?: RunFocus
 ): string {
   const groundTruthSection = groundTruth ? `\n${groundTruth}\n` : "";
+  const focusSection = runFocusSection(focus);
   return `You are the "Audience Synthesis" desk. A simulated audience of
 ${aggregate.totalPersonas} personas across ${aggregate.totalCohorts} cohorts
 (localities x income segments x roles) has been aggregated:
@@ -437,9 +477,12 @@ ${aggregate.totalPersonas} personas across ${aggregate.totalCohorts} cohorts
 ${JSON.stringify(aggregate, null, 2)}
 
 Client profile: ${JSON.stringify(profile)}
+${focusSection}
 ${groundTruthSection}
 When founder-provided ground truth is present, reconcile the simulated numbers
 against it and flag where they agree or diverge.
+When run-specific context is present, call out whether it improved, worsened
+or merely shifted purchase intent and objections versus the base venture logic.
 Turn this into decision-ready findings: which segments/localities convert,
 real willingness-to-pay vs planned pricing, channel ranking, which social
 platforms matter per segment, and the dominant objections to defuse.
@@ -816,6 +859,75 @@ export function brandKitUser(
 }
 
 // ---------------------------------------------------------------------------
+// Owner Dashboard › Inspiration ("swipe file"). REAL reference material the
+// founder opens and copies: video examples, product-placement patterns, and
+// social success stories. Every link the model returns is verified server-side
+// AFTER this call (YouTube via oEmbed, story sources via fetch), so the prompt
+// must push HARD for real, specific, current URLs — invented links get dropped.
+// ---------------------------------------------------------------------------
+
+export const INSPIRATION_SYSTEM = `You are a social-media reference scout for a specific venture. Using web
+search, assemble a "swipe file" of REAL, currently-live examples the founder
+can open and copy. You are given the venture profile and its research.
+
+Return three collections. EVERY url MUST be a real one you found via web
+search — never guess or construct a url. Items with fake/uncertain urls are
+worse than useless; omit them.
+
+1. "videoExamples" (5-8): real YouTube videos relevant to this category/audience
+   — brand films, ads, founder stories, or format breakdowns worth imitating.
+   - ONLY YouTube. For each give: a "title", the "channel", your best
+     "youtubeId" (the real 11-char id IF you are confident — otherwise leave it
+     ""), and ALWAYS a precise "searchQuery" (the exact phrase a person would
+     type into YouTube to find this specific video, e.g. "Todd Snyder New
+     Balance Hierro brand film"). The platform verifies the id and falls back to
+     the search when it can't — so the searchQuery must be specific and correct
+     even when you do give an id. Also "whyRelevant" (to THIS venture) and
+     "takeaway" (the exact move to copy: a hook, edit, framing, length).
+   - Do not guess random ids — a wrong id is dropped; the searchQuery is what
+     guarantees the founder still finds it. Do not include Instagram/TikTok.
+2. "placementExamples" (4-6): product-placement / styling PATTERNS for this
+   category (e.g. hero shot, in-context lifestyle, flat-lay, UGC unboxing,
+   styled-in-a-real-room). For each: "pattern", a real "account" that does it
+   well with its "accountUrl" (profile link only — never a specific post),
+   "platform", "recipe" (how to produce it), and "whyItWorks".
+3. "successStories" (3-5): real, documented cases of a brand in or near this
+   category winning on social. For each: "brand", "platform", "summary",
+   "theMove" (the specific play), "result" (the documented outcome), and a
+   working "sourceUrl" to the article/case study you read it in (a real,
+   citable page — not a homepage guess).
+
+Every id MUST be a stable kebab-case slug from the title/brand/pattern.
+Prefer FEWER, REAL items over more speculative ones.
+
+Output JSON ONLY, no markdown fences, matching exactly:
+{"videoExamples":[{"id","title","channel","youtubeId","searchQuery",
+"whyRelevant","takeaway"}],
+"placementExamples":[{"id","pattern","account","accountUrl","platform","recipe",
+"whyItWorks"}],
+"successStories":[{"id","brand","platform","summary","theMove","result",
+"sourceUrl"}]}`;
+
+export function inspirationUser(
+  profile: ClientProfile,
+  conclusions: Conclusion[]
+): string {
+  return JSON.stringify(
+    {
+      clientProfile: profile,
+      conclusions: conclusions.map((c) => ({
+        claim: c.claim,
+        value: c.value,
+        entities: c.entities,
+      })),
+      task: "Assemble the verified inspiration swipe file as specified.",
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Owner Dashboard › Financials. This call emits ASSUMPTIONS ONLY (typed
 // numbers + judgement) — it must NOT do arithmetic. computeFinancials() (pure
 // code) turns these into the full model using the simulated persona audience
@@ -906,6 +1018,103 @@ export function financialsUser(
       })),
       task: "Produce the financial-model assumptions as specified. Use the given currency for every monetary number.",
     },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Industry classifier (real-data routing). Maps the venture to an industry,
+// HS code(s), OSM shop tags and a curated-library key so the platform can pull
+// REAL trade/tariff/local-competition data matched to THIS venture.
+// ---------------------------------------------------------------------------
+export const INDUSTRY_CLASSIFIER_SYSTEM = `You classify a venture so a research platform can pull REAL, structured
+industry data for it. Given the venture profile, output:
+- "industry": the broad industry, lowercase (e.g. "apparel & fashion",
+  "furniture", "food & beverage", "beauty & personal care", "consumer
+  electronics", "jewellery", "home decor", "services").
+- "category": a narrower product category (e.g. "men's western shirts").
+- "isPhysicalGood": true if it is a manufactured physical product that can be
+  traded across borders; false for pure services/digital.
+- "hsCodes": the most specific Harmonized System codes you are confident in for
+  this product, as 2–6 digit strings (e.g. ["6205","6203"] for men's shirts).
+  Used for real trade-flow and tariff lookups. Use [] if not a physical good.
+- "osmShopTags": OpenStreetMap shop= tag VALUES for the retail outlets that
+  sell this category, lowercase (e.g. "clothes","boutique","shoes","furniture",
+  "electronics","supermarket","bakery","cosmetics","jewelry"). Used to count
+  real local competitors per city. [] if no physical storefront sells it.
+- "libraryKey": the single closest match from EXACTLY this list:
+  apparel | footwear | furniture | food_beverage | beauty | electronics |
+  jewellery | home_decor | services | general
+- "keywords": 3–8 search terms for this venture.
+- "openDataQueries": 1–4 SHORT topics you'd search a government/city open-data
+  portal for, to find REAL datasets about this industry's activity (e.g.
+  architecture/construction → "building permits","construction starts";
+  restaurants → "food business licenses"; retail → "retail trade","business
+  licenses"; real estate → "property transactions"). Lowercase noun phrases.
+Be accurate with HS codes — they drive real trade data. If unsure of a precise
+code, give the 2-digit chapter (e.g. "62").
+Output JSON only, no markdown fences:
+{"industry":"...","category":"...","isPhysicalGood":true,"hsCodes":["..."],
+"osmShopTags":["..."],"libraryKey":"...","keywords":["..."],
+"openDataQueries":["..."]}`;
+
+export function industryClassifierUser(profile: ClientProfile): string {
+  return JSON.stringify(
+    {
+      product: profile.product,
+      category: profile.category ?? null,
+      ambitions: profile.ambitions,
+      geography: profile.geography ?? null,
+      priceBand: profile.priceBand ?? null,
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Auto industry knowledge-builder (option A). Researches an industry once and
+// emits a reusable knowledge pack + planning template (cached globally). This
+// REPLACES hand-authoring per-industry knowledge.
+// ---------------------------------------------------------------------------
+export const INDUSTRY_KNOWLEDGE_SYSTEM = `You are an industry analyst building a REUSABLE knowledge pack for a named
+industry, so a venture-research platform can plan and ground any venture in
+that industry without a human curating it. Use web search for CURRENT, real
+facts (named bodies, real figures, regulations, leading players, typical
+economics). Output a compact, decision-useful pack:
+- "industry": the industry name.
+- "summary": 2–4 sentences on how this industry works and what a new entrant
+  must get right.
+- "facts": 6–14 grounded facts, each {"text": "...", "source": "<url or named
+  source>"}. Cover, where relevant: how the product/service is produced or
+  delivered, the real cost/economics drivers, regulation & bodies, key players,
+  channels, and demand drivers. Real numbers > vague claims. Cite each fact.
+- "planningTemplate": how to research & simulate THIS industry:
+   - "customerRoles": who actually buys/decides in this industry (use the
+     industry's real buyer types — e.g. for architecture: "developer",
+     "homeowner","institution","government","general contractor","interior
+     designer"; for SaaS: "smb","enterprise IT","procurement"). NOT generic
+     retail roles unless that's truly the buyer.
+   - "segments": the meaningful tiers (e.g. "residential","commercial",
+     "institutional","luxury" — whatever segments this industry by).
+   - "keyDesks": 4–10 research desks worth running, each {"name","domain","why"}
+     where domain is one of market|competitor|product|supply|operations|
+     channel|regulation|pricing|finance|social.
+   - "kpis": the metrics that decide success in this industry (e.g. for a
+     services industry: "project fee","win rate","utilisation"; for goods:
+     "MOQ","gross margin","sell-through").
+   - "notes": anything important about how this industry differs from
+     consumer-goods defaults.
+Output JSON only, no markdown fences:
+{"industry":"...","summary":"...","facts":[{"text":"...","source":"..."}],
+"planningTemplate":{"customerRoles":["..."],"segments":["..."],
+"keyDesks":[{"name":"...","domain":"...","why":"..."}],"kpis":["..."],
+"notes":"..."}}`;
+
+export function industryKnowledgeUser(industry: string, geography: string[]): string {
+  return JSON.stringify(
+    { industry, geography: geography.length ? geography : ["global"] },
     null,
     2
   );

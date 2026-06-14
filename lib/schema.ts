@@ -179,6 +179,10 @@ export const PersonaSchema = z.object({
   // Distinct personality, flavoured by the persona's locality/culture.
   personality: z.string().default(""),
   personalityTraits: z.array(z.string()).default([]),
+  // Win-back: original pre-chat intent (null until a chat moves the vote) and
+  // the ISO timestamp of that change. Defaulted so older personas still parse.
+  intentOriginal: z.number().min(0).max(1).nullable().default(null),
+  voteChangedAt: z.string().nullable().default(null),
 });
 export type Persona = z.infer<typeof PersonaSchema>;
 
@@ -355,6 +359,18 @@ export const RunEventSchema = z.discriminatedUnion("type", [
     cohortId: z.string(),
     error: z.string(),
   }),
+  // A single persona changed their vote via a 1:1 win-back chat. Folded into
+  // the cohort's persona list so sentiment/charts re-derive (canvas = f(log)).
+  z.object({
+    ...eventBase,
+    type: z.literal("persona_updated"),
+    cohortId: z.string(),
+    personaId: z.string(),
+    intent: z.number().min(0).max(1),
+    intentOriginal: z.number().min(0).max(1).nullable(),
+    objection: z.string(),
+    voteChangedAt: z.string(),
+  }),
   z.object({
     ...eventBase,
     type: z.literal("audience_aggregated"),
@@ -419,7 +435,7 @@ export const PlannerV2OutputSchema = z.object({
         })
       )
       .min(1)
-      .max(14),
+      .max(60),
     cohorts: z
       .array(
         z.object({
@@ -430,12 +446,13 @@ export const PlannerV2OutputSchema = z.object({
         })
       )
       .min(4)
-      .max(80),
+      .max(160),
   }),
 });
 export type PlannerV2Output = z.infer<typeof PlannerV2OutputSchema>;
 
-// One cohort-simulation call returns 25–50 individual personas.
+// One cohort-simulation call returns the requested number of individual personas
+// (usually 25–50, but custom audience sizes can require tiny final batches).
 // Length caps TRUNCATE instead of reject — a model that writes a slightly
 // long summary/field must never fail (and waste tokens on) the whole cohort.
 const cappedStr = (max: number) =>
@@ -471,7 +488,7 @@ export const CohortSimOutputSchema = z.object({
         personalityTraits: cappedArr(12).default([]),
       })
     )
-    .min(5)
+    .min(1)
     .max(60),
 });
 export type CohortSimOutput = z.infer<typeof CohortSimOutputSchema>;
@@ -819,6 +836,71 @@ const EMPTY_FINANCIALS = {
   sourceRunId: null,
 };
 
+// Owner Dashboard › Inspiration ("swipe file"). Real, verified reference
+// material the founder can open and copy. Every link is checked before it is
+// shown (YouTube via oEmbed; story sources via fetch) — see verifyInspiration.
+export const VideoExampleSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  channel: z.string().default(""),
+  // Best-effort 11-char id. Present only when verifyInspiration confirmed the
+  // video exists; otherwise blank and the item degrades to a search link.
+  youtubeId: z.string().default(""),
+  // The exact phrase to find the video on YouTube — always required, so an
+  // unverified item still becomes a working "search on YouTube" link.
+  searchQuery: z.string().default(""),
+  // Always a working link: a direct watch url when verified, else a YouTube
+  // search url built from searchQuery. The UI just opens this.
+  url: z.string().default(""),
+  // true = a specific verified video (thumbnail resolved); false = search link.
+  verified: z.boolean().default(false),
+  whyRelevant: z.string(),
+  takeaway: z.string(), // the specific move to copy
+});
+export type VideoExample = z.infer<typeof VideoExampleSchema>;
+
+export const PlacementExampleSchema = z.object({
+  id: z.string(),
+  pattern: z.string(), // "Hero shot", "In-context lifestyle", "Flat-lay", …
+  account: z.string(), // a real account that does it well
+  accountUrl: z.string().nullable().default(null),
+  platform: z.string().default(""),
+  recipe: z.string(), // how to shoot/produce it
+  whyItWorks: z.string(),
+});
+export type PlacementExample = z.infer<typeof PlacementExampleSchema>;
+
+export const SuccessStorySchema = z.object({
+  id: z.string(),
+  brand: z.string(),
+  platform: z.string().nullable().default(null),
+  summary: z.string(),
+  theMove: z.string(), // the specific play that worked
+  result: z.string(), // the outcome (growth, sales, …)
+  sourceUrl: z.string(), // cited, working article url
+});
+export type SuccessStory = z.infer<typeof SuccessStorySchema>;
+
+export const InspirationKitSchema = z.object({
+  videoExamples: z.array(VideoExampleSchema).default([]),
+  placementExamples: z.array(PlacementExampleSchema).default([]),
+  successStories: z.array(SuccessStorySchema).default([]),
+});
+export type InspirationKit = z.infer<typeof InspirationKitSchema>;
+
+export const InspirationSectionSchema = z.object({
+  kit: InspirationKitSchema.nullable().default(null),
+  generatedAt: z.string().nullable().default(null),
+  sourceRunId: z.string().nullable().default(null),
+});
+export type InspirationSection = z.infer<typeof InspirationSectionSchema>;
+
+const EMPTY_INSPIRATION = {
+  kit: null,
+  generatedAt: null,
+  sourceRunId: null,
+};
+
 export const OwnerDashboardSchema = z.object({
   brandSocial: BrandSocialSectionSchema.default({
     kit: null,
@@ -827,6 +909,7 @@ export const OwnerDashboardSchema = z.object({
     sourceRunId: null,
   }),
   financials: FinancialsSectionSchema.default(EMPTY_FINANCIALS),
+  inspiration: InspirationSectionSchema.default(EMPTY_INSPIRATION),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 
@@ -918,6 +1001,234 @@ export type SimulationRunRecord = {
     audienceAggregate: AudienceAggregate | null;
   };
 };
+
+// ---------------------------------------------------------------------------
+// Per-run industry classification — the routing key for REAL structured data.
+// One LLM call maps the venture to an industry, HS code(s) for physical goods,
+// and OSM shop tags, so trade/tariff/local-competition providers can be matched
+// to THIS venture (option C, industry-aware).
+// ---------------------------------------------------------------------------
+export const IndustryProfileSchema = z.object({
+  industry: z.string(), // broad, e.g. "apparel & fashion"
+  category: z.string().default(""), // narrower, e.g. "men's western shirts"
+  isPhysicalGood: z.boolean().default(true),
+  // 2–6 digit Harmonized System codes (trade + tariff lookups); [] if not a good.
+  hsCodes: z.array(z.string()).max(8).default([]),
+  // OpenStreetMap shop= values for the outlets that sell this (local competition).
+  osmShopTags: z.array(z.string()).max(8).default([]),
+  // Curated-dataset registry key (lib/datasources/library.ts).
+  libraryKey: z.string().default("general"),
+  keywords: z.array(z.string()).max(12).default([]),
+  // Government open-dataset TOPICS relevant to this industry (e.g. "building
+  // permits", "construction", "food business licenses", "retail trade"). Used
+  // to discover real datasets on city/national open-data portals.
+  openDataQueries: z.array(z.string()).max(6).default([]),
+});
+export type IndustryProfile = z.infer<typeof IndustryProfileSchema>;
+
+// ---------------------------------------------------------------------------
+// Auto-built industry knowledge pack (option A). One agent researches an
+// industry and emits this; it's cached globally and injected as ground truth +
+// planning guidance, so industry knowledge is never hand-authored.
+// ---------------------------------------------------------------------------
+export const PlanningTemplateSchema = z.object({
+  // Industry-appropriate buyer/customer types (architecture → developer,
+  // homeowner, institution, government; not retail shoppers).
+  customerRoles: z.array(z.string()).max(10).default([]),
+  // Industry-appropriate tiers/segments.
+  segments: z.array(z.string()).max(8).default([]),
+  // Suggested research desks for this industry.
+  keyDesks: z
+    .array(
+      z.object({
+        name: z.string(),
+        domain: DomainSchema,
+        why: z.string().default(""),
+      })
+    )
+    .max(16)
+    .default([]),
+  // The metrics that matter (architecture → project fee, win rate, not WTP).
+  kpis: z.array(z.string()).max(10).default([]),
+  notes: z.string().default(""),
+});
+export type PlanningTemplate = z.infer<typeof PlanningTemplateSchema>;
+
+export const IndustryKnowledgePackSchema = z.object({
+  industry: z.string(),
+  summary: z.string(),
+  facts: z
+    .array(
+      z.object({
+        text: z.string(),
+        source: z.string().default(""),
+      })
+    )
+    .max(20)
+    .default([]),
+  planningTemplate: PlanningTemplateSchema,
+});
+export type IndustryKnowledgePack = z.infer<typeof IndustryKnowledgePackSchema>;
+
+// ---------------------------------------------------------------------------
+// Launch Simulation — a deterministic, persona-driven, time-stepped projection
+// of how a product actually sells once it launches. Given a cost price, sale
+// price and ad spend, the engine (lib/launchSim.ts) fast-forwards day-by-day
+// or month-by-month over the FROZEN simulated personas and reports the whole
+// trajectory: who's reached, who scrolls past, who buys (on which channel),
+// who refunds, plus the full P&L, inventory/deadstock and demographics.
+//
+// CRITICAL CONTRACT: the engine takes NO LLM call and draws every "random"
+// event from a PRNG seeded by hash(inputs). So rerunning with identical inputs
+// reproduces an identical trajectory — that equality is an emergent property we
+// can assert as a test (scripts/launch-sim-check.ts), never a hardcoded short
+// circuit. If it ever fails, the app's predictiveness has a real bug.
+// ---------------------------------------------------------------------------
+
+export const LaunchGranularitySchema = z.enum(["day", "month"]);
+export type LaunchGranularity = z.infer<typeof LaunchGranularitySchema>;
+
+// Everything the founder can feed in. Only the first three are surfaced by
+// default; the rest live under "Advanced" and default to sensible, overridable
+// values resolved against the run (see resolveLaunchInputs in launchSim.ts).
+export const LaunchSimInputsSchema = z.object({
+  currency: z.string().default("INR"),
+  // --- the three headline knobs ---
+  costPrice: z.number().nonnegative(), // landed COGS per unit
+  salePrice: z.number().nonnegative(), // retail price per unit
+  adSpendPerMonth: z.number().nonnegative(), // monthly paid-media budget
+
+  // --- time axis ---
+  granularity: LaunchGranularitySchema.default("day"),
+  horizon: z.number().int().min(1).max(366).default(90), // steps to simulate
+
+  // --- reach / ad funnel ---
+  reachablePool: z.number().positive().nullable().default(null), // unique prospects ceiling (null → derived)
+  cpm: z.number().positive().default(250), // ad cost per 1000 impressions
+  frequencyCap: z.number().positive().default(3), // impressions/person for awareness
+  targetingQuality: z.number().min(0).max(1).default(0.5), // 0 broad … 1 optimised toward high-intent
+  adPlatforms: z.array(z.string()).default(["instagram", "facebook"]), // which platforms the spend buys
+  organicReachPerStep: z.number().nonnegative().default(0), // non-ad new awareness per step (null→derived)
+  viralityK: z.number().nonnegative().default(0.15), // word-of-mouth: new aware per recent buyer
+
+  // --- conversion dynamics ---
+  decisionSpeed: z.number().min(0).max(1).nullable().default(null), // per-step fraction of considerers who decide
+  abandonRate: z.number().min(0).max(1).default(0.05), // per-step fraction who drop out of consideration
+
+  // --- costs ---
+  shippingPerOrder: z.number().nonnegative().default(120),
+  paymentFeePct: z.number().min(0).max(1).default(0.02),
+  fixedCostsPerMonth: z.number().nonnegative().default(0),
+
+  // --- refunds / returns ---
+  returnWindowDays: z.number().int().min(0).max(180).default(30),
+  refundRateMult: z.number().nonnegative().default(1), // scales the per-persona base refund propensity
+  resellablePct: z.number().min(0).max(1).default(0.7), // fraction of returned units restocked as good
+  returnShippingPerOrder: z.number().nonnegative().nullable().default(null), // null → shippingPerOrder
+
+  // --- inventory ---
+  initialInventoryUnits: z.number().int().nonnegative().nullable().default(null), // null → derived from demand
+  reorderLeadTimeDays: z.number().int().min(0).max(180).default(30),
+  reorderEnabled: z.boolean().default(true),
+
+  // --- repeat purchase ---
+  repeatRateMult: z.number().nonnegative().default(1), // scales the per-segment annual repeat rate
+
+  // --- realism jitter (the only randomness; seeded, so reruns still match) ---
+  jitterAmplitude: z.number().min(0).max(0.5).default(0.06),
+});
+export type LaunchSimInputs = z.infer<typeof LaunchSimInputsSchema>;
+
+// One step of the trajectory. Every figure is at real market scale.
+export const LaunchSimStepSchema = z.object({
+  step: z.number().int(), // 0-based index
+  label: z.string(), // "Day 1" / "Month 3"
+  impressions: z.number(),
+  newlyReached: z.number(),
+  cumulativeReached: z.number(),
+  scrolledPast: z.number(), // reached this step but didn't buy
+  newOrders: z.number(), // first-time purchases
+  repeatOrders: z.number(), // returning-customer purchases
+  unitsFulfilled: z.number(), // orders actually shipped (capped by inventory)
+  unitsStockedOut: z.number(), // demand lost to empty shelves
+  refunds: z.number(), // refunds landing this step (lagged from earlier sales)
+  inventoryOnHand: z.number(),
+  adSpend: z.number(),
+  revenue: z.number(), // gross from fulfilled units
+  refundedRevenue: z.number(), // reversed by refunds landing this step
+  cogs: z.number(),
+  shippingCost: z.number(),
+  paymentFees: z.number(),
+  refundCost: z.number(), // return shipping + write-off on non-resellable returns
+  fixedCosts: z.number(),
+  netProfit: z.number(),
+  cumulativeNetProfit: z.number(),
+  cumulativeCash: z.number(), // includes inventory purchase outflows (working-capital view)
+});
+export type LaunchSimStep = z.infer<typeof LaunchSimStepSchema>;
+
+const NameCount = z.object({ name: z.string(), orders: z.number(), revenue: z.number() });
+
+export const LaunchSimResultSchema = z.object({
+  seed: z.number(), // derived from hash(inputs) — exposed for transparency
+  resolvedInputs: LaunchSimInputsSchema, // inputs after defaults/derivation
+  scaleFactor: z.number(), // real prospects each sampled persona represents
+  personaCount: z.number(),
+  timeline: z.array(LaunchSimStepSchema),
+  summary: z.object({
+    totalImpressions: z.number(),
+    totalReached: z.number(),
+    totalScrolledPast: z.number(),
+    totalOrders: z.number(),
+    newOrders: z.number(),
+    repeatOrders: z.number(),
+    returningCustomerSharePct: z.number(),
+    unitsSold: z.number(),
+    stockoutUnits: z.number(),
+    refunds: z.number(),
+    refundRatePct: z.number(),
+    grossRevenue: z.number(),
+    netRevenue: z.number(), // after refunds
+    totalAdSpend: z.number(),
+    adSpendPerConversion: z.number(), // "Meta spend per conversion"
+    blendedCac: z.number(),
+    totalCogs: z.number(),
+    totalShipping: z.number(),
+    totalPaymentFees: z.number(),
+    totalRefundCost: z.number(),
+    totalFixedCosts: z.number(),
+    grossProfit: z.number(), // net revenue − COGS
+    netProfit: z.number(), // bottom line over the horizon
+    grossMarginPct: z.number(),
+    netMarginPct: z.number(),
+    deadstockUnits: z.number(),
+    deadstockValue: z.number(),
+    peakCapitalNeeded: z.number(), // worst cumulative cash trough (working capital)
+    breakEvenStep: z.number().nullable(), // step index cumulative net profit first ≥ 0
+    breakEvenLabel: z.string().nullable(),
+  }),
+  breakdowns: z.object({
+    byChannel: z.array(NameCount),
+    bySegment: z.array(NameCount.extend({ refunds: z.number() })),
+    byLocality: z.array(NameCount),
+    byAgeBand: z.array(NameCount),
+    byGender: z.array(NameCount),
+    newVsReturning: z.object({ newCustomers: z.number(), returningOrders: z.number() }),
+  }),
+});
+export type LaunchSimResult = z.infer<typeof LaunchSimResultSchema>;
+
+// A saved scenario (persisted in the LaunchSimulation table). `name` lets the
+// founder label & compare scenarios (e.g. "₹50k Meta" vs "₹200k Meta").
+export const LaunchSimRecordSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  name: z.string(),
+  inputs: LaunchSimInputsSchema,
+  result: LaunchSimResultSchema,
+  createdAt: z.string(),
+});
+export type LaunchSimRecord = z.infer<typeof LaunchSimRecordSchema>;
 
 // World model — the converged terminal object (SPEC §4.5, v2: + audience)
 export type WorldModel = {

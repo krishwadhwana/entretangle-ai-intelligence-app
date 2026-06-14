@@ -1,5 +1,8 @@
 import { config } from "../config";
 import type { Domain } from "../schema";
+import { fetchTradeForDomain } from "./trade";
+import { fetchLocalCompetition } from "./geo";
+import { fetchOpenData } from "./opendata";
 
 // ---------------------------------------------------------------------------
 // Structured real-data providers per desk domain (SPEC-V2 §1A option C).
@@ -19,6 +22,11 @@ export type StructuredCtx = {
   countries: string[];
   currency: string;
   product: string;
+  // Industry routing (from the per-run classifier) + localities for geo data.
+  hsCodes?: string[];
+  osmShopTags?: string[];
+  openDataQueries?: string[];
+  localities?: { name: string; country: string; lat: number; lng: number }[];
 };
 
 // country name (as it appears in localities) -> ISO2 + currency code.
@@ -208,22 +216,77 @@ function mockStructured(domain: Domain, ctx: StructuredCtx): StructuredData | nu
   return null;
 }
 
+/** Merge several structured sources for one desk into a single block. */
+function mergeStructured(parts: StructuredData[]): StructuredData | null {
+  const kept = parts.filter(Boolean);
+  if (kept.length === 0) return null;
+  return {
+    text: kept.map((p) => p.text).join("\n\n"),
+    sources: Array.from(new Set(kept.flatMap((p) => p.sources))),
+  };
+}
+
 /**
- * Fetch structured real data relevant to a desk domain. Returns null when no
- * provider covers the domain (the desk then falls back to web search) or when
- * every provider fails. Never throws.
+ * Fetch structured real data relevant to a desk domain, merging every provider
+ * that covers it: the generic macro/FX providers PLUS the industry-aware ones
+ * (trade & tariffs by HS code, local competitor density by city). Returns null
+ * when nothing resolves (the desk then falls back to web search). Never throws.
  */
 export async function fetchStructuredForDesk(
   domain: Domain,
   ctx: StructuredCtx
 ): Promise<StructuredData | null> {
   try {
-    if (config.mockMode) return mockStructured(domain, ctx);
-    if (domain === "pricing") return await pricingData(ctx);
-    if (domain === "market") return await marketData(ctx);
-    // Extension point: regulation/social/competitor/channel providers can be
-    // added here (often key-gated). Until then those desks use web search.
-    return null;
+    const tasks: Promise<StructuredData | null>[] = [];
+
+    // Generic macro/FX providers (mock or real).
+    if (config.mockMode) {
+      const m = mockStructured(domain, ctx);
+      if (m) tasks.push(Promise.resolve(m));
+    } else {
+      if (domain === "pricing") tasks.push(pricingData(ctx));
+      if (domain === "market") tasks.push(marketData(ctx));
+    }
+
+    // Industry-aware: trade flows & tariffs by HS code.
+    if (
+      ctx.hsCodes?.length &&
+      ["market", "competitor", "supply", "pricing", "regulation", "finance"].includes(
+        domain
+      )
+    ) {
+      const countries = knownCountries(ctx.countries).map((c) => ({
+        name: c.name,
+        iso2: c.meta.iso2,
+      }));
+      if (countries.length) {
+        tasks.push(fetchTradeForDomain(domain, countries, ctx.hsCodes));
+      }
+    }
+
+    // Industry-aware: real local competitor density per city (OSM).
+    if (
+      ctx.osmShopTags?.length &&
+      ctx.localities?.length &&
+      ["competitor", "channel", "market"].includes(domain)
+    ) {
+      tasks.push(fetchLocalCompetition(ctx.localities, ctx.osmShopTags));
+    }
+
+    // Government open data (permits/construction/licences) — real per-place
+    // activity & demand signal for market/competitor/operations desks.
+    if (
+      ctx.openDataQueries?.length &&
+      ctx.localities?.length &&
+      ["market", "competitor", "operations"].includes(domain)
+    ) {
+      tasks.push(fetchOpenData(ctx.localities, ctx.openDataQueries));
+    }
+
+    const results = (await Promise.all(tasks)).filter(
+      (r): r is StructuredData => r != null
+    );
+    return mergeStructured(results);
   } catch {
     return null;
   }

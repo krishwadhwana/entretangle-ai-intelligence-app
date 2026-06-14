@@ -1,6 +1,7 @@
 import { prisma } from "./db";
 import { config } from "./config";
 import { callCohortSim } from "./llm";
+import { spreadKmForLocality } from "./audienceCoverage";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import type { RunEmitter } from "./events";
@@ -12,6 +13,7 @@ import type {
   Persona,
   PlannerV2Output,
 } from "./schema";
+import type { RunFocus } from "./prompts";
 
 // ---------------------------------------------------------------------------
 // Audience simulation engine (SPEC-V2 §1C, §1D).
@@ -36,25 +38,58 @@ function jitter(base: number, seedStr: string, spread: number): number {
   return base + (hashSeed(seedStr) - 0.5) * spread;
 }
 
+function spreadPoint(
+  baseLat: number,
+  baseLng: number,
+  seedStr: string,
+  spreadKm: number
+): [number, number] {
+  const angle = hashSeed(seedStr + ":angle") * Math.PI * 2;
+  const radiusKm = spreadKm * (0.35 + hashSeed(seedStr + ":radius") * 0.65);
+  const lat = baseLat + (Math.cos(angle) * radiusKm) / 111;
+  const lngScale = Math.max(0.25, Math.cos((baseLat * Math.PI) / 180));
+  const lng = baseLng + (Math.sin(angle) * radiusKm) / (111 * lngScale);
+  return [lat, lng];
+}
+
 /**
  * Distribute the target audience size across cohorts in proportion to their
  * audience share (weightPct). The per-cohort floor scales DOWN for small
- * targets so a custom size (e.g. 200 agents) isn't blown past by the floor.
- * Returns one persona-count per cohort; the sum is ≈ target.
+ * targets so a custom size (e.g. 200 agents) is respected exactly.
+ * Returns one persona-count per cohort; the sum is exactly target.
  */
 function distributeAudience(weights: number[], target: number): number[] {
   if (target <= 0 || weights.length === 0) return weights.map(() => 0);
+  if (target < weights.length) {
+    return weights.map((_, i) => (i < target ? 1 : 0));
+  }
+
   // Floor never exceeds the even-split size, so a small target is respected.
   const floor = Math.max(
     1,
     Math.min(config.minPersonasPerCohort, Math.floor(target / weights.length))
   );
   const totalW = weights.reduce((s, w) => s + Math.max(0, w), 0);
-  // Even split if the planner gave no usable weights.
-  return weights.map((w) => {
+  const base = weights.map(() => floor);
+  const remaining = target - floor * weights.length;
+  if (remaining === 0) return base;
+
+  const quotas = weights.map((w) => {
     const share = totalW > 0 ? Math.max(0, w) / totalW : 1 / weights.length;
-    return Math.max(floor, Math.round(target * share));
+    return remaining * share;
   });
+  const extras = quotas.map(Math.floor);
+  let assigned = extras.reduce((sum, n) => sum + n, 0);
+  const order = quotas
+    .map((quota, i) => ({ i, remainder: quota - Math.floor(quota) }))
+    .sort((a, b) => b.remainder - a.remainder);
+  for (const { i } of order) {
+    if (assigned >= remaining) break;
+    extras[i] += 1;
+    assigned += 1;
+  }
+
+  return base.map((n, i) => n + extras[i]);
 }
 
 /** Phase 1b: persist the planner's cohort matrix and emit spawn events. */
@@ -64,25 +99,34 @@ export async function spawnCohorts(
   targetSize: number = config.targetAudienceSize
 ): Promise<string[]> {
   const localities = new Map(plan.localities.map((l) => [l.name, l]));
-  const cohorts = plan.cohorts.slice(0, config.maxCohorts);
+  const target = Math.max(0, Math.floor(targetSize));
+  const maxCohorts = target > 0 ? Math.min(config.maxCohorts, target) : 0;
+  const cohorts = plan.cohorts.slice(0, maxCohorts);
   const sizes = distributeAudience(
     cohorts.map((c) => c.weightPct),
-    targetSize
+    target
   );
   const ids: string[] = [];
   for (const [i, c] of cohorts.entries()) {
     await throwIfRunCancelled(emitter.runId);
     const loc = localities.get(c.locality) ?? plan.localities[0];
     const label = `${loc.name} · ${c.segment} · ${c.role.replace("_", " ")}`;
+    const [lat, lng] = spreadPoint(
+      loc.lat,
+      loc.lng,
+      label,
+      spreadKmForLocality(loc.name, loc.country)
+    );
     const row = await prisma.cohort.create({
       data: {
         runId: emitter.runId,
         label,
         locality: loc.name,
         country: loc.country,
-        // spread cohorts of the same city apart so bubbles don't stack
-        lat: jitter(loc.lat, label + "lat", 0.12),
-        lng: jitter(loc.lng, label + "lng", 0.12),
+        // Spread same-city cohorts across the metro/market area instead of
+        // stacking them on the city centroid.
+        lat,
+        lng,
         segment: c.segment,
         role: c.role,
         weightPct: c.weightPct,
@@ -97,9 +141,9 @@ export async function spawnCohorts(
 }
 
 /**
- * Split a cohort's target size into per-call batches each within the schema's
- * [10, 60] bounds. A small final remainder (<10) is folded into the prior
- * batch (perCall ≤ 50 keeps the merged batch ≤ 60).
+ * Split a cohort's target size into per-call batches. Kept for callers that
+ * want a precomputed schedule; the live simulation loop now requests the
+ * remaining exact count directly so custom tiny audiences work too.
  */
 export function batchSizes(total: number, perCall: number): number[] {
   if (total <= perCall) return [Math.max(1, total)];
@@ -263,7 +307,8 @@ async function simulateCohort(
   emitter: RunEmitter,
   cohortId: string,
   profile: ClientProfile,
-  currency: string
+  currency: string,
+  focus?: RunFocus
 ): Promise<boolean> {
   const cohort = await prisma.cohort.findUniqueOrThrow({
     where: { id: cohortId },
@@ -275,14 +320,19 @@ async function simulateCohort(
       data: { state: "simulating" },
     });
 
-    const batches = batchSizes(cohort.size, config.personasPerCall);
     const personas: Persona[] = [];
     let summary = "";
     let idx = 0;
-    for (const [batchIndex, n] of batches.entries()) {
+    let batchIndex = 0;
+    const maxAttempts =
+      Math.ceil(cohort.size / Math.max(1, config.personasPerCall)) + 3;
+    while (personas.length < cohort.size && batchIndex < maxAttempts) {
       await throwIfRunCancelled(emitter.runId);
       // Cap-aware mid-cohort: keep whatever batches already landed.
       if (batchIndex > 0 && (await isOverTokenCap(emitter.runId))) break;
+      const n = Math.min(config.personasPerCall, cohort.size - personas.length);
+      const attemptIndex = batchIndex;
+      batchIndex += 1;
       let out;
       try {
         // callCohortSim carries an SDK-level request timeout (config.
@@ -294,16 +344,17 @@ async function simulateCohort(
           profile,
           currency,
           n,
-          batchIndex
+          attemptIndex,
+          focus
         );
       } catch (e) {
         console.log(
-          `[audience] cohort ${cohort.label} batch ${batchIndex} failed: ${e}`
+          `[audience] cohort ${cohort.label} batch ${attemptIndex} failed: ${e}`
         );
         continue; // partial-failure tolerant
       }
       if (!summary) summary = out.summary;
-      for (const p of out.personas) {
+      for (const p of out.personas.slice(0, n)) {
         await throwIfRunCancelled(emitter.runId);
         const row = await prisma.persona.create({
           data: {
@@ -382,7 +433,8 @@ export async function simulateAllCohorts(
   emitter: RunEmitter,
   cohortIds: string[],
   profile: ClientProfile,
-  currency: string
+  currency: string,
+  focus?: RunFocus
 ): Promise<number> {
   const concurrency = Math.max(1, config.audienceConcurrency);
   let done = 0;
@@ -406,7 +458,13 @@ export async function simulateAllCohorts(
       if (i >= cohortIds.length) return;
       // simulateCohort never throws (it catches + marks the cohort failed), so
       // one bad cohort can't kill its worker — the worker just grabs the next.
-      const ok = await simulateCohort(emitter, cohortIds[i], profile, currency);
+      const ok = await simulateCohort(
+        emitter,
+        cohortIds[i],
+        profile,
+        currency,
+        focus
+      );
       if (ok) done += 1;
       // Live spend tracking after each cohort.
       await emitter.emit({

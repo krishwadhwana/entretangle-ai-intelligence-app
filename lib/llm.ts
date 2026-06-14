@@ -11,8 +11,14 @@ import {
   IntakeOutputSchema,
   CohortSimOutputSchema,
   BrandKitSchema,
+  InspirationKitSchema,
+  type InspirationKit,
   FinancialInputsSchema,
   FinalReportSchema,
+  IndustryProfileSchema,
+  IndustryKnowledgePackSchema,
+  type IndustryProfile,
+  type IndustryKnowledgePack,
   type PlannerV2Output,
   type ExecutorOutput,
   type EntanglerOutput,
@@ -52,8 +58,14 @@ import {
   audienceChatUser,
   BRAND_KIT_SYSTEM,
   brandKitUser,
+  INSPIRATION_SYSTEM,
+  inspirationUser,
   FINANCIALS_SYSTEM,
   financialsUser,
+  INDUSTRY_CLASSIFIER_SYSTEM,
+  industryClassifierUser,
+  INDUSTRY_KNOWLEDGE_SYSTEM,
+  industryKnowledgeUser,
 } from "./prompts";
 import {
   mockPlannerV2Output,
@@ -64,6 +76,7 @@ import {
   mockQueryOutput,
   mockAudienceChatOutput,
   mockBrandKit,
+  mockInspiration,
 } from "./fixtures/venture-sim";
 import {
   DEMOGRAPHICS_SYSTEM,
@@ -91,6 +104,8 @@ type Msg = OpenAI.Chat.ChatCompletionMessageParam;
 // reasoning effort low so blocks stay inside BLOCK_TIMEOUT_MS.
 const COMPLETION_BUDGET = 8000;
 const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per batch
+const FINANCIALS_WEB_TIMEOUT_MS = 12_000;
+const FINANCIALS_FALLBACK_TIMEOUT_MS = 30_000;
 
 function baseParams(
   model: string = config.model
@@ -204,7 +219,7 @@ export async function callPlannerV2(
     system: PLANNER_V2_SYSTEM,
     user: plannerV2User(profile, focus, groundTruth),
     schema: PlannerV2OutputSchema,
-    maxCompletionTokens: 12000,
+    maxCompletionTokens: 20000,
   });
 }
 
@@ -390,7 +405,8 @@ export async function callCohortSim(
   profile: ClientProfile,
   currency: string,
   n: number,
-  batchIndex = 0
+  batchIndex = 0,
+  focus?: RunFocus
 ): Promise<CohortSimOutput> {
   if (config.mockMode) {
     return CohortSimOutputSchema.parse(
@@ -402,9 +418,9 @@ export async function callCohortSim(
     batchIndex > 0
       ? ` This is persona batch #${batchIndex + 1} for this cohort: generate ${n} DIFFERENT individuals who do not overlap with earlier batches — push the demographic and attitudinal spread even wider.`
       : "";
-  return callJson({
+  const out = await callJson({
     runId,
-    system: cohortSimSystem(cohort, profile, currency, n),
+    system: cohortSimSystem(cohort, profile, currency, n, focus),
     user: `Simulate ${n} personas now.${batchNote} Output JSON only.`,
     schema: CohortSimOutputSchema,
     model: config.miniModel,
@@ -413,6 +429,7 @@ export async function callCohortSim(
     requestTimeoutMs: config.cohortTimeoutMs,
     requestMaxRetries: 1, // fail a stuck call fast instead of retrying 2×
   });
+  return { ...out, personas: out.personas.slice(0, n) };
 }
 
 /** Audience Synthesis desk: aggregate stats -> typed conclusions. */
@@ -420,14 +437,15 @@ export async function callAudienceSynth(
   runId: string,
   profile: ClientProfile,
   aggregate: AudienceAggregate,
-  groundTruth?: string
+  groundTruth?: string,
+  focus?: RunFocus
 ): Promise<ExecutorOutput> {
   if (config.mockMode) {
     return ExecutorOutputSchema.parse(mockAudienceSynth(aggregate));
   }
   return callJson({
     runId,
-    system: audienceSynthSystem(profile, aggregate, groundTruth),
+    system: audienceSynthSystem(profile, aggregate, groundTruth, focus),
     user: "Begin. Output JSON only.",
     schema: ExecutorOutputSchema,
   });
@@ -460,7 +478,7 @@ export async function callDemographics(
           )}\nSearch for real figures, then output JSON only.`,
         },
       ],
-      max_output_tokens: 4000,
+      max_output_tokens: 10000,
       reasoning: { effort: "low" },
     });
     const searchCalls = Array.isArray(response.output)
@@ -483,6 +501,136 @@ export async function callDemographics(
     return parsed.success ? parsed.data : null;
   } catch (e) {
     console.log(`[llm] demographics lookup failed: ${e}`);
+    return null;
+  }
+}
+
+/**
+ * Classify the venture into an industry + HS codes + OSM shop tags so the
+ * real-data providers (trade, tariffs, local competition, curated library) can
+ * be matched to THIS venture. One cheap model call (no web search); on any
+ * failure returns a permissive "general" profile so the run never blocks.
+ */
+export async function callClassifyVenture(
+  runId: string,
+  profile: ClientProfile
+): Promise<IndustryProfile> {
+  const fallback: IndustryProfile = {
+    industry: profile.category ?? "general",
+    category: profile.category ?? "",
+    isPhysicalGood: true,
+    hsCodes: [],
+    osmShopTags: [],
+    libraryKey: "general",
+    keywords: [],
+    openDataQueries: [],
+  };
+  if (config.mockMode) {
+    // Mock venture = Jodhpur teak furniture.
+    return IndustryProfileSchema.parse({
+      industry: "furniture",
+      category: "premium solid-wood furniture",
+      isPhysicalGood: true,
+      hsCodes: ["9403", "940360"],
+      osmShopTags: ["furniture"],
+      libraryKey: "furniture",
+      keywords: ["teak", "furniture", "dining table", "export"],
+      openDataQueries: ["building permits", "retail trade"],
+    });
+  }
+  try {
+    return await callJson({
+      runId,
+      system: INDUSTRY_CLASSIFIER_SYSTEM,
+      user: industryClassifierUser(profile),
+      schema: IndustryProfileSchema,
+      maxCompletionTokens: 1200,
+    });
+  } catch (e) {
+    console.log(`[llm] industry classification failed, using general: ${e}`);
+    return fallback;
+  }
+}
+
+/**
+ * Auto knowledge-builder (option A): research an industry once into a reusable
+ * pack + planning template, web-grounded with real sources. Returns the pack
+ * and the source URLs it used. Null on failure (caller falls back to the
+ * curated library). Not metered to a run when runId is null.
+ */
+export async function callBuildIndustryKnowledge(
+  runId: string | null,
+  industry: string,
+  geography: string[]
+): Promise<{ pack: IndustryKnowledgePack; sources: string[] } | null> {
+  if (config.mockMode) {
+    const pack = IndustryKnowledgePackSchema.parse({
+      industry,
+      summary: `${industry}: auto-built knowledge pack (mock). New entrants must nail sourcing/production economics, the right buyer types, and regulation before scaling.`,
+      facts: [
+        { text: `${industry} has distinct manufacturing/sourcing clusters and MOQ economics.`, source: "mock:industry-body" },
+        { text: `Working capital tied in inventory is the dominant constraint for new entrants.`, source: "mock:analysis" },
+      ],
+      planningTemplate: {
+        customerRoles: ["consumer", "retail_exec", "distributor", "institutional", "influencer"],
+        segments: ["budget", "middle", "affluent", "luxury"],
+        keyDesks: [
+          { name: "Market Demand", domain: "market", why: "size & trends" },
+          { name: "Manufacturing & Sourcing", domain: "supply", why: "MOQ & lead times" },
+          { name: "Unit Economics", domain: "finance", why: "margins & funding fit" },
+        ],
+        kpis: ["MOQ", "gross margin", "sell-through"],
+        notes: "Mock pack — replace with web-grounded build in real mode.",
+      },
+    });
+    return { pack, sources: ["mock:industry-knowledge"] };
+  }
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: INDUSTRY_KNOWLEDGE_SYSTEM },
+        {
+          role: "user",
+          content: `${industryKnowledgeUser(
+            industry,
+            geography
+          )}\nSearch for current, real facts, then output JSON only.`,
+        },
+      ],
+      max_output_tokens: 6000,
+      reasoning: { effort: "low" },
+    });
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (runId && response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = IndustryKnowledgePackSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (!parsed.success) return null;
+    // Collect the real URLs the facts cite as provenance.
+    const sources = Array.from(
+      new Set(
+        parsed.data.facts
+          .map((f) => f.source)
+          .filter((s) => s && s.startsWith("http"))
+      )
+    );
+    return { pack: parsed.data, sources };
+  } catch (e) {
+    console.log(`[llm] industry knowledge build failed: ${e}`);
     return null;
   }
 }
@@ -809,6 +957,193 @@ export async function callBrandKit(
   }
 }
 
+/**
+ * Owner Dashboard › Inspiration ("swipe file"): real video examples, product-
+ * placement patterns, and social success stories. Web-grounded so every url is
+ * one the model actually found; on web/parse failure it falls back to a JSON
+ * call. The links are then VERIFIED (verifyInspiration) before they reach the
+ * founder — generation and verification are deliberately separate so the route
+ * can drop dead links without re-prompting.
+ */
+export async function callInspiration(
+  runId: string,
+  profile: ClientProfile,
+  conclusions: Conclusion[]
+): Promise<InspirationKit> {
+  if (config.mockMode) return InspirationKitSchema.parse(mockInspiration);
+
+  const system = `${INSPIRATION_SYSTEM}\n\n--- INPUT ---\n${inspirationUser(
+    profile,
+    conclusions
+  )}`;
+
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: system },
+        {
+          role: "user",
+          content:
+            "Search the web to find real, current examples, then output JSON only.",
+        },
+      ],
+      max_output_tokens: 16000,
+      reasoning: { effort: "low" },
+    });
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = InspirationKitSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (parsed.success) return parsed.data;
+    throw new Error(
+      `inspiration (web) failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  } catch (e) {
+    console.error(`[inspiration] web-grounded path failed, falling back:`, e);
+    return callJson({
+      runId,
+      system: INSPIRATION_SYSTEM,
+      user: inspirationUser(profile, conclusions),
+      schema: InspirationKitSchema,
+      maxCompletionTokens: 16000,
+    });
+  }
+}
+
+const YT_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+
+async function fetchOk(url: string, timeoutMs = 6000): Promise<boolean> {
+  try {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), timeoutMs);
+    // A browser-ish UA — many publishers 403 unknown agents (would wrongly drop
+    // a real source). GET (not HEAD) since some hosts reject HEAD.
+    const res = await fetch(url, {
+      method: "GET",
+      redirect: "follow",
+      signal: ac.signal,
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      },
+    });
+    clearTimeout(t);
+    return res.status < 400;
+  } catch {
+    return false;
+  }
+}
+
+// A YouTube video EXISTS iff its thumbnail resolves. This beats oEmbed, which
+// returns 401 for real videos that merely disable embedding (label/brand
+// videos often do) — those are still perfectly watchable via a link, so oEmbed
+// would wrongly drop them. The thumbnail is served regardless of embed policy
+// and 404s only for genuinely non-existent ids.
+async function youtubeExists(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://img.youtube.com/vi/${id}/hqdefault.jpg`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+// Enrich a verified video with oEmbed's real title/channel when available, so
+// those fields are never the model's guess. Returns null on network error
+// (caller already confirmed existence, so we just keep the model's text).
+async function youtubeMeta(
+  id: string
+): Promise<{ title?: string; channel?: string } | null> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(
+        `https://www.youtube.com/watch?v=${id}`
+      )}`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) return null; // 401 (embedding disabled) etc. — keep model text
+    const data = (await res.json()) as { title?: string; author_name?: string };
+    return { title: data.title, channel: data.author_name };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Trust gate for the Inspiration swipe file (verified-only). Drops anything we
+ * can't confirm is live:
+ *  - videos: real 11-char YouTube id whose thumbnail resolves (existence),
+ *    title/channel enriched from oEmbed when reachable;
+ *  - success stories: a sourceUrl that fetches < 400;
+ *  - placement accountUrl: kept if present (IG/TikTok can't be reliably checked
+ *    without auth).
+ * Runs all checks concurrently. Mock mode skips this (fixtures are pre-clean).
+ */
+export async function verifyInspiration(
+  kit: InspirationKit
+): Promise<InspirationKit> {
+  if (config.mockMode) return kit;
+
+  const searchUrl = (v: InspirationKit["videoExamples"][number]) =>
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      v.searchQuery || `${v.title} ${v.channel}`.trim()
+    )}`;
+
+  const videos = await Promise.all(
+    kit.videoExamples.map(async (v) => {
+      // Drop only an item with nothing to act on (no id AND no searchable text).
+      if (!v.youtubeId && !v.searchQuery && !v.title) return null;
+      // Verified specific video — the thumbnail (not oEmbed) proves existence.
+      if (YT_ID_RE.test(v.youtubeId) && (await youtubeExists(v.youtubeId))) {
+        const meta = await youtubeMeta(v.youtubeId);
+        return {
+          ...v,
+          verified: true,
+          url: `https://www.youtube.com/watch?v=${v.youtubeId}`,
+          title: meta?.title || v.title,
+          channel: meta?.channel || v.channel,
+        };
+      }
+      // Fallback: a working YouTube search link (verified-only chose this over
+      // showing a fabricated specific id).
+      return { ...v, verified: false, youtubeId: "", url: searchUrl(v) };
+    })
+  );
+
+  const stories = await Promise.all(
+    kit.successStories.map(async (s) =>
+      s.sourceUrl && (await fetchOk(s.sourceUrl)) ? s : null
+    )
+  );
+
+  return {
+    videoExamples: videos.filter(
+      (v): v is InspirationKit["videoExamples"][number] => v !== null
+    ),
+    placementExamples: kit.placementExamples,
+    successStories: stories.filter(
+      (s): s is InspirationKit["successStories"][number] => s !== null
+    ),
+  };
+}
+
 // Mock assumptions for MOCK_MODE — shaped like a furniture venture so the
 // deterministic engine has something realistic to compute against.
 const mockFinancialInputs: FinancialInputs = FinancialInputsSchema.parse({
@@ -865,20 +1200,23 @@ export async function callFinancialInputs(
   )}`;
 
   try {
-    const response = await client().responses.create({
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content:
-            "Search the web to sanity-check market size and prices, then output JSON only.",
-        },
-      ],
-      max_output_tokens: 16000,
-      reasoning: { effort: "low" },
-    });
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content:
+              "Search the web to sanity-check market size and prices, then output JSON only.",
+          },
+        ],
+        max_output_tokens: 16000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: FINANCIALS_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
     const searchCalls = Array.isArray(response.output)
       ? response.output.filter((o: { type?: string }) =>
           String(o.type ?? "").startsWith("web_search")
@@ -908,6 +1246,9 @@ export async function callFinancialInputs(
       user: financialsUser(profile, conclusions, aggregate, currency),
       schema: FinancialInputsSchema,
       maxCompletionTokens: 16000,
+      maxAttempts: 1,
+      requestTimeoutMs: FINANCIALS_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
     });
   }
 }

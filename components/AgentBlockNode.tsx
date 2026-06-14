@@ -16,6 +16,8 @@ export type AgentBlockNodeData = {
   highlighted: boolean;
   forkable: boolean;
   onForkParam: (blockId: string, key: string, value: number | string) => void;
+  /** When false the node renders a compact header; click toggles it. */
+  expanded: boolean;
 };
 
 export type AgentBlockNodeType = Node<AgentBlockNodeData, "agentBlock">;
@@ -37,8 +39,11 @@ function ConclusionChip({ conclusion }: { conclusion: Conclusion }) {
   return (
     <div className="relative">
       <button
-        onClick={() => setOpen((o) => !o)}
-        className="max-w-full truncate rounded-full border border-neutral-300 bg-neutral-50 px-2.5 py-1 text-left text-[11px] leading-tight text-neutral-700 hover:border-indigo-400"
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((o) => !o);
+        }}
+        className="nodrag max-w-full truncate rounded-full border border-neutral-300 bg-neutral-50 px-2.5 py-1 text-left text-[11px] leading-tight text-neutral-700 hover:border-indigo-400"
         title={label}
       >
         <span className="font-medium">{conclusion.claim}</span>
@@ -74,8 +79,11 @@ function ConclusionChip({ conclusion }: { conclusion: Conclusion }) {
             ))}
           </div>
           <button
-            onClick={() => setOpen(false)}
-            className="mt-2 text-[10px] text-neutral-400 hover:text-neutral-600"
+            onClick={(e) => {
+              e.stopPropagation();
+              setOpen(false);
+            }}
+            className="nodrag mt-2 text-[10px] text-neutral-400 hover:text-neutral-600"
           >
             close
           </button>
@@ -112,10 +120,11 @@ function ParamsStrip({
               step={value >= 1 ? 1 : 0.05}
               defaultValue={value}
               disabled={!forkable}
+              onClick={(e) => e.stopPropagation()}
               onMouseUp={(e) =>
                 onForkParam(block.id, key, Number(e.currentTarget.value))
               }
-              className="h-1 flex-1 accent-indigo-600 disabled:opacity-40"
+              className="nodrag h-1 flex-1 accent-indigo-600 disabled:opacity-40"
             />
             <span className="w-8 text-right font-medium">{value}</span>
           </label>
@@ -133,8 +142,18 @@ function ParamsStrip({
   );
 }
 
+function collapsedSummary(block: Block): string {
+  if (block.state === "concluded") {
+    const n = block.conclusions.length;
+    return `${n} conclusion${n === 1 ? "" : "s"} · click to expand`;
+  }
+  if (block.state === "spawning") return block.mission;
+  if (block.logs.length > 0) return block.logs[block.logs.length - 1];
+  return block.state;
+}
+
 function AgentBlockNodeImpl({ data }: NodeProps<AgentBlockNodeType>) {
-  const { block, highlighted, forkable, onForkParam } = data;
+  const { block, highlighted, forkable, onForkParam, expanded } = data;
   const isSynthesis = block.layer > 1;
 
   const border =
@@ -165,7 +184,13 @@ function AgentBlockNodeImpl({ data }: NodeProps<AgentBlockNodeType>) {
         <StateIndicator state={block.state} />
       </div>
 
-      {block.state !== "concluded" && block.logs.length > 0 && (
+      {!expanded && (
+        <p className="mt-1 truncate text-[11px] text-neutral-400">
+          {collapsedSummary(block)}
+        </p>
+      )}
+
+      {expanded && block.state !== "concluded" && block.logs.length > 0 && (
         <div className="mt-2 space-y-0.5">
           {block.logs.slice(-3).map((line, i) => (
             <p
@@ -178,13 +203,13 @@ function AgentBlockNodeImpl({ data }: NodeProps<AgentBlockNodeType>) {
         </div>
       )}
 
-      {block.state === "spawning" && block.logs.length === 0 && (
+      {expanded && block.state === "spawning" && block.logs.length === 0 && (
         <p className="mt-2 truncate text-[11px] italic text-neutral-400">
           {block.mission}
         </p>
       )}
 
-      {block.conclusions.length > 0 && (
+      {expanded && block.conclusions.length > 0 && (
         <div className="mt-2 flex flex-col gap-1">
           {block.conclusions.map((c) => (
             <ConclusionChip key={c.id} conclusion={c} />
@@ -192,7 +217,7 @@ function AgentBlockNodeImpl({ data }: NodeProps<AgentBlockNodeType>) {
         </div>
       )}
 
-      {block.state === "concluded" && (
+      {expanded && block.state === "concluded" && (
         <ParamsStrip
           block={block}
           forkable={forkable}

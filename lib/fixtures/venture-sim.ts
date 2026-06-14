@@ -7,6 +7,7 @@ import type {
   CohortSimOutput,
   EntanglerOutput,
   ExecutorOutput,
+  InspirationKit,
   PlannerV2Output,
   Persona,
   QueryOutput,
@@ -142,6 +143,10 @@ export const mockPlannerV2Output: PlannerV2Output = {
       { name: "Mumbai", country: "India", lat: 19.076, lng: 72.8777 },
       { name: "Delhi NCR", country: "India", lat: 28.6139, lng: 77.209 },
       { name: "Bangalore", country: "India", lat: 12.9716, lng: 77.5946 },
+      // tier-2 / tier-3 — the non-metro India most programs ignore
+      { name: "Jaipur", country: "India", lat: 26.9124, lng: 75.7873 },
+      { name: "Indore", country: "India", lat: 22.7196, lng: 75.8577 },
+      { name: "Surat", country: "India", lat: 21.1702, lng: 72.8311 },
       { name: "Dubai", country: "UAE", lat: 25.2048, lng: 55.2708 },
       { name: "London", country: "UK", lat: 51.5074, lng: -0.1278 },
     ],
@@ -156,6 +161,14 @@ export const mockPlannerV2Output: PlannerV2Output = {
       { locality: "Delhi NCR", segment: "luxury", role: "consumer", weightPct: 3 },
       { locality: "Bangalore", segment: "middle", role: "consumer", weightPct: 7 },
       { locality: "Bangalore", segment: "affluent", role: "consumer", weightPct: 6 },
+      // tier-2 / tier-3 consumers — budget/middle-skewed, lower premium intent
+      { locality: "Jaipur", segment: "middle", role: "consumer", weightPct: 5 },
+      { locality: "Jaipur", segment: "budget", role: "consumer", weightPct: 4 },
+      { locality: "Jaipur", segment: "affluent", role: "consumer", weightPct: 2 },
+      { locality: "Indore", segment: "budget", role: "consumer", weightPct: 4 },
+      { locality: "Indore", segment: "middle", role: "consumer", weightPct: 3 },
+      { locality: "Surat", segment: "middle", role: "consumer", weightPct: 4 },
+      { locality: "Surat", segment: "budget", role: "consumer", weightPct: 3 },
       { locality: "Dubai", segment: "affluent", role: "consumer", weightPct: 6 },
       { locality: "Dubai", segment: "luxury", role: "consumer", weightPct: 4 },
       { locality: "London", segment: "affluent", role: "consumer", weightPct: 5 },
@@ -1516,6 +1529,112 @@ export const mockBrandKit: BrandKit = {
       title: "Reach out to 3 Dubai decor pages",
       detail: "Seed the export corridor before the month-9 Dubai launch.",
       priority: "later",
+    },
+  ],
+};
+
+// Owner Dashboard › Inspiration fixture (Jodhpur teak brand). Mock mode skips
+// link verification, so these render directly. YouTube ids are well-known
+// stable videos purely so the embeds display offline.
+export const mockInspiration: InspirationKit = {
+  videoExamples: [
+    {
+      id: "craft-storytelling-furniture",
+      title: "How a heritage furniture brand tells its craft story",
+      channel: "Brand Films",
+      youtubeId: "aqz-KE-bpKQ",
+      searchQuery: "heritage furniture brand craft story film",
+      url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      verified: true,
+      whyRelevant:
+        "Shows the maker-led narrative arc that sells premium provenance over price.",
+      takeaway:
+        "Open on the hands and the wood grain in the first 2 seconds — lead with craft, not the product shot.",
+    },
+    {
+      id: "founder-story-format",
+      title: "Founder story: building a premium home brand",
+      channel: "Startup Stories",
+      youtubeId: "ScMzIvxBSi4",
+      searchQuery: "founder story premium home furniture brand",
+      url: "https://www.youtube.com/watch?v=ScMzIvxBSi4",
+      verified: true,
+      whyRelevant:
+        "A founder-led trust format that works for big-ticket, considered purchases.",
+      takeaway:
+        "Keep it under 90s, one clear 'why we exist' line, end on the hero piece in a real home.",
+    },
+    {
+      id: "room-makeover-reel",
+      title: "Room makeover featuring one statement piece",
+      channel: "Interior Tours",
+      youtubeId: "9bZkp7q19f0",
+      searchQuery: "room makeover statement furniture piece",
+      url: "https://www.youtube.com/watch?v=9bZkp7q19f0",
+      verified: true,
+      whyRelevant:
+        "Demonstrates the styled-in-a-real-home format that drives furniture consideration.",
+      takeaway:
+        "Anchor the whole video on a single hero table; show before/after with the piece as the turn.",
+    },
+  ],
+  placementExamples: [
+    {
+      id: "hero-shot",
+      pattern: "Hero shot",
+      account: "House of Things",
+      accountUrl: "https://www.instagram.com/houseofthings/",
+      platform: "Instagram",
+      recipe:
+        "Single piece, clean backdrop, natural light from one side, grain texture sharp. No clutter.",
+      whyItWorks:
+        "Frames the product as an object of desire and justifies the price.",
+    },
+    {
+      id: "in-context-lifestyle",
+      pattern: "In-context lifestyle",
+      account: "Gulmohar Lane",
+      accountUrl: "https://www.instagram.com/gulmoharlane/",
+      platform: "Instagram",
+      recipe:
+        "Style the piece in a lived-in room with plants, books, soft textiles; shoot at eye level.",
+      whyItWorks:
+        "Lets the buyer picture it in their own home, which closes considered purchases.",
+    },
+    {
+      id: "maker-flat-lay",
+      pattern: "Process / maker flat-lay",
+      account: "Jaipur Rugs",
+      accountUrl: "https://www.instagram.com/jaipurrugs/",
+      platform: "Instagram",
+      recipe:
+        "Top-down of tools, raw teak, and the half-finished joint; warm tones, hands in frame.",
+      whyItWorks:
+        "Proves the craft and the lineage — the core premium differentiator.",
+    },
+  ],
+  successStories: [
+    {
+      id: "pepperfry-content-commerce",
+      brand: "Pepperfry",
+      platform: "Instagram / YouTube",
+      summary:
+        "Indian furniture marketplace that leaned on styled room content and studios to drive online furniture confidence.",
+      theMove:
+        "Pair shoppable styled-room content online with offline 'Studio' touchpoints to de-risk big-ticket buys.",
+      result: "Became one of India's largest online furniture brands.",
+      sourceUrl: "https://en.wikipedia.org/wiki/Pepperfry",
+    },
+    {
+      id: "jaipur-rugs-artisan-story",
+      brand: "Jaipur Rugs",
+      platform: "Instagram",
+      summary:
+        "Built a global premium audience by foregrounding individual artisans and craft heritage.",
+      theMove:
+        "Name and feature the maker in every story; sell provenance, not discounts.",
+      result: "Global premium positioning and a recognizable craft-led brand.",
+      sourceUrl: "https://en.wikipedia.org/wiki/Jaipur_Rugs",
     },
   ],
 };
