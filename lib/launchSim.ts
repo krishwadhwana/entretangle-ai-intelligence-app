@@ -546,6 +546,62 @@ export function simulateLaunch(
   const grossProfit = netRevenue - totalCogs;
   const deadstockUnits = Math.max(0, inventory);
   const deadstockValue = deadstockUnits * inputs.costPrice;
+  const summary = {
+    totalImpressions: count(sum((s) => s.impressions)),
+    totalReached: count(totalReached),
+    totalScrolledPast: count(totalScrolledPast),
+    totalOrders: count(totalOrders),
+    newOrders: count(totalNewOrders),
+    repeatOrders: count(totalRepeatOrders),
+    returningCustomerSharePct:
+      totalOrders > 0 ? round((totalRepeatOrders / totalOrders) * 100, 1) : 0,
+    unitsSold: count(unitsSold),
+    stockoutUnits: count(stockoutUnits),
+    refunds: count(refundsLanded),
+    refundRatePct:
+      unitsSold > 0 ? round((refundsGenerated / unitsSold) * 100, 1) : 0,
+    grossRevenue: money(grossRevenue),
+    netRevenue: money(netRevenue),
+    totalAdSpend: money(totalAdSpend),
+    adSpendPerConversion:
+      totalOrders > 0 ? money(totalAdSpend / totalOrders) : 0,
+    blendedCac: totalNewOrders > 0 ? money(totalAdSpend / totalNewOrders) : 0,
+    totalCogs: money(totalCogs),
+    totalShipping: money(totalShipping),
+    totalPaymentFees: money(totalPaymentFees),
+    totalRefundCost: money(totalRefundCost),
+    totalFixedCosts: money(totalFixedCosts),
+    grossProfit: money(grossProfit),
+    netProfit: money(netProfit),
+    grossMarginPct:
+      netRevenue > 0 ? round((grossProfit / netRevenue) * 100, 1) : 0,
+    netMarginPct:
+      netRevenue > 0 ? round((netProfit / netRevenue) * 100, 1) : 0,
+    deadstockUnits: count(deadstockUnits),
+    deadstockValue: money(deadstockValue),
+    peakCapitalNeeded: money(Math.max(0, -minCash)),
+    breakEvenStep,
+    breakEvenLabel:
+      breakEvenStep === null
+        ? null
+        : stepLabel(inputs.granularity, breakEvenStep),
+  };
+  const breakdowns = {
+    byChannel: byChannel.list(),
+    bySegment: bySegment.list(true) as {
+      name: string;
+      orders: number;
+      revenue: number;
+      refunds: number;
+    }[],
+    byLocality: byLocality.list(),
+    byAgeBand: byAge.list(),
+    byGender: byGender.list(),
+    newVsReturning: {
+      newCustomers: count(newCustomers),
+      returningOrders: count(returningOrders),
+    },
+  };
 
   return {
     seed,
@@ -553,63 +609,94 @@ export function simulateLaunch(
     scaleFactor: round(scaleFactor, 4),
     personaCount: N,
     timeline,
-    summary: {
-      totalImpressions: count(sum((s) => s.impressions)),
-      totalReached: count(totalReached),
-      totalScrolledPast: count(totalScrolledPast),
-      totalOrders: count(totalOrders),
-      newOrders: count(totalNewOrders),
-      repeatOrders: count(totalRepeatOrders),
-      returningCustomerSharePct:
-        totalOrders > 0 ? round((totalRepeatOrders / totalOrders) * 100, 1) : 0,
-      unitsSold: count(unitsSold),
-      stockoutUnits: count(stockoutUnits),
-      refunds: count(refundsLanded),
-      refundRatePct:
-        unitsSold > 0 ? round((refundsGenerated / unitsSold) * 100, 1) : 0,
-      grossRevenue: money(grossRevenue),
-      netRevenue: money(netRevenue),
-      totalAdSpend: money(totalAdSpend),
-      adSpendPerConversion:
-        totalOrders > 0 ? money(totalAdSpend / totalOrders) : 0,
-      blendedCac: totalNewOrders > 0 ? money(totalAdSpend / totalNewOrders) : 0,
-      totalCogs: money(totalCogs),
-      totalShipping: money(totalShipping),
-      totalPaymentFees: money(totalPaymentFees),
-      totalRefundCost: money(totalRefundCost),
-      totalFixedCosts: money(totalFixedCosts),
-      grossProfit: money(grossProfit),
-      netProfit: money(netProfit),
-      grossMarginPct:
-        netRevenue > 0 ? round((grossProfit / netRevenue) * 100, 1) : 0,
-      netMarginPct:
-        netRevenue > 0 ? round((netProfit / netRevenue) * 100, 1) : 0,
-      deadstockUnits: count(deadstockUnits),
-      deadstockValue: money(deadstockValue),
-      peakCapitalNeeded: money(Math.max(0, -minCash)),
-      breakEvenStep,
-      breakEvenLabel:
-        breakEvenStep === null
-          ? null
-          : stepLabel(inputs.granularity, breakEvenStep),
-    },
-    breakdowns: {
-      byChannel: byChannel.list(),
-      bySegment: bySegment.list(true) as {
-        name: string;
-        orders: number;
-        revenue: number;
-        refunds: number;
-      }[],
-      byLocality: byLocality.list(),
-      byAgeBand: byAge.list(),
-      byGender: byGender.list(),
-      newVsReturning: {
-        newCustomers: count(newCustomers),
-        returningOrders: count(returningOrders),
-      },
-    },
+    diagnostics: buildDiagnostics(inputs, summary, breakdowns),
+    summary,
+    breakdowns,
   };
+}
+
+function buildDiagnostics(
+  inputs: LaunchSimInputs,
+  summary: LaunchSimResult["summary"],
+  breakdowns: LaunchSimResult["breakdowns"]
+): LaunchSimResult["diagnostics"] {
+  const topChannel = breakdowns.byChannel[0];
+  const topSegment = breakdowns.bySegment[0];
+  const topLocality = breakdowns.byLocality[0];
+  const drivers: string[] = [];
+  const risks: string[] = [];
+  const nextMoves: string[] = [];
+
+  const horizon =
+    inputs.granularity === "month"
+      ? `${inputs.horizon} months`
+      : `${inputs.horizon} days`;
+  const headline =
+    summary.totalOrders > 0
+      ? `${horizon} produces ${fmtCount(summary.totalOrders)} orders and ${fmtMoney(summary.netProfit)} net profit at ${fmtMoney(inputs.salePrice)} sale price.`
+      : `${horizon} produces no orders because the scenario does not put enough qualified buyers into the funnel.`;
+
+  if (summary.totalImpressions <= 0 && summary.totalReached <= 0) {
+    drivers.push("No paid or organic acquisition is active, so the audience never enters consideration.");
+    nextMoves.push("Add launch spend, organic reach, or a channel with existing demand before judging price fit.");
+  } else {
+    drivers.push(
+      `${fmtCount(summary.totalReached)} people are reached from ${fmtCount(summary.totalImpressions)} impressions.`
+    );
+  }
+  if (topChannel && topChannel.orders > 0) {
+    drivers.push(`${topChannel.name} is the strongest purchase path with ${fmtCount(topChannel.orders)} orders.`);
+  }
+  if (topSegment && topSegment.orders > 0) {
+    drivers.push(`${topSegment.name} buyers carry the result with ${fmtCount(topSegment.orders)} orders.`);
+  }
+  if (topLocality && topLocality.orders > 0) {
+    drivers.push(`${topLocality.name} is the leading market with ${fmtCount(topLocality.orders)} orders.`);
+  }
+  if (summary.returningCustomerSharePct > 25) {
+    drivers.push(`${summary.returningCustomerSharePct}% of orders come from repeat buyers, so retention is doing meaningful work.`);
+  }
+
+  if (summary.netProfit < 0) {
+    risks.push(`Fixed costs and launch spend do not pay back within this horizon; peak capital need is ${fmtMoney(summary.peakCapitalNeeded)}.`);
+  }
+  if (summary.stockoutUnits > summary.unitsSold * 0.1) {
+    risks.push(`${fmtCount(summary.stockoutUnits)} units of demand are lost to stockouts, so inventory is constraining upside.`);
+    nextMoves.push("Raise opening inventory or shorten reorder lead time, then rerun.");
+  }
+  if (summary.deadstockValue > summary.grossRevenue * 0.2 && summary.deadstockUnits > 0) {
+    risks.push(`${fmtMoney(summary.deadstockValue)} remains tied up in deadstock, which is high relative to sales.`);
+    nextMoves.push("Lower opening inventory or run a smaller first batch before scaling spend.");
+  }
+  if (summary.refundRatePct > 15) {
+    risks.push(`${summary.refundRatePct}% refund rate is a margin leak, likely tied to fit, delivery, or expectation mismatch.`);
+    nextMoves.push("Test better sizing guidance, return policy, and product-page proof before increasing spend.");
+  }
+  if (summary.blendedCac > 0 && summary.blendedCac > inputs.salePrice * 0.4) {
+    risks.push(`CAC is ${fmtMoney(summary.blendedCac)}, heavy for a ${fmtMoney(inputs.salePrice)} product.`);
+    nextMoves.push("Shift budget toward the channels and segments with the lowest CAC before increasing total spend.");
+  }
+  if (summary.totalOrders > 0 && summary.breakEvenLabel == null) {
+    nextMoves.push("Raise margin, reduce fixed costs, or shorten payback before treating this as launch-ready.");
+  }
+  if (nextMoves.length === 0 && summary.netProfit >= 0) {
+    nextMoves.push("Rerun with higher price and lower inventory to test whether profit survives tighter assumptions.");
+  }
+
+  return {
+    headline,
+    drivers: drivers.slice(0, 4),
+    risks: risks.slice(0, 4),
+    nextMoves: nextMoves.slice(0, 4),
+  };
+}
+
+function fmtCount(n: number): string {
+  return count(n).toLocaleString("en-IN");
+}
+
+function fmtMoney(n: number): string {
+  return money(n).toLocaleString("en-IN");
 }
 
 function stepLabel(g: "day" | "month", t: number): string {

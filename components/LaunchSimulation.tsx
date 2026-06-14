@@ -404,6 +404,8 @@ function Results({
 
   return (
     <div className="space-y-5">
+      <Readout diagnostics={result.diagnostics} />
+
       {/* Headline stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Stat
@@ -565,6 +567,52 @@ function Results({
 }
 
 // --- sub-components --------------------------------------------------------
+
+function Readout({
+  diagnostics,
+}: {
+  diagnostics: {
+    headline: string;
+    drivers: string[];
+    risks: string[];
+    nextMoves: string[];
+  };
+}) {
+  return (
+    <section className="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4">
+      <h3 className="text-xs font-semibold text-neutral-800">Simulation readout</h3>
+      <p className="mt-1 text-[12px] leading-relaxed text-neutral-700">
+        {diagnostics.headline}
+      </p>
+      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+        <ReadoutList title="Drivers" items={diagnostics.drivers} />
+        <ReadoutList title="Risks" items={diagnostics.risks} />
+        <ReadoutList title="Next moves" items={diagnostics.nextMoves} />
+      </div>
+    </section>
+  );
+}
+
+function ReadoutList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <div>
+      <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-500">
+        {title}
+      </p>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-neutral-400">No major signal.</p>
+      ) : (
+        <ul className="space-y-1">
+          {items.map((item, i) => (
+            <li key={i} className="text-[11px] leading-snug text-neutral-600">
+              {item}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
 
 function Stat({
   label,

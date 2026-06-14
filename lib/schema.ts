@@ -1175,6 +1175,12 @@ export const LaunchSimResultSchema = z.object({
   scaleFactor: z.number(), // real prospects each sampled persona represents
   personaCount: z.number(),
   timeline: z.array(LaunchSimStepSchema),
+  diagnostics: z.object({
+    headline: z.string(),
+    drivers: z.array(z.string()).default([]),
+    risks: z.array(z.string()).default([]),
+    nextMoves: z.array(z.string()).default([]),
+  }),
   summary: z.object({
     totalImpressions: z.number(),
     totalReached: z.number(),
