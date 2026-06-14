@@ -45,6 +45,9 @@ export type LaunchContext = {
   // Derived reach ceiling source (financials' reachable prospects/month). Used
   // only to default reachablePool when the founder didn't set one.
   reachableProspectsPerMonth?: number | null;
+  // Optional financial-model CAC. When present, paid first-time orders are
+  // bounded by ad spend ÷ CAC so CPM reach cannot imply impossible acquisition.
+  blendedCac?: number | null;
 };
 
 // --- deterministic PRNG ----------------------------------------------------
@@ -273,6 +276,8 @@ export function simulateLaunch(
   const returnShipping = inputs.returnShippingPerOrder ?? inputs.shippingPerOrder;
   const decisionSpeed =
     inputs.decisionSpeed ?? (inputs.granularity === "day" ? 0.1 : 0.5);
+  const blendedCac =
+    ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
 
   const funded = new Set(inputs.adPlatforms.map((p) => p.toLowerCase()));
   const homeCountry = modal(personas.map((p) => p.country));
@@ -354,8 +359,9 @@ export function simulateLaunch(
     let stepRepeatOrders = 0;
     // Desired (pre-inventory) orders, kept per-persona so we can apply the fill
     // rate and attribute refunds/breakdowns proportionally.
-    const desired: { idx: number; first: number; repeat: number }[] = [];
+    const desired: { idx: number; first: number; repeat: number; firstFrac: number }[] = [];
     let demand = 0;
+    let repeatDemand = 0;
 
     for (let k = 0; k < N; k++) {
       const { buyProb, attract, repeatHazard } = pre[k];
@@ -382,8 +388,26 @@ export function simulateLaunch(
       stepNewlyReached += newlyAware * mi;
       stepNewOrders += first;
       stepRepeatOrders += repeat;
-      desired.push({ idx: k, first, repeat });
+      desired.push({ idx: k, first, repeat, firstFrac: firstBuyers });
       demand += first + repeat;
+      repeatDemand += repeat;
+    }
+
+    // If the financial model has a CAC, paid first-time acquisition cannot
+    // exceed the number of new customers this step's ad budget can buy.
+    if (blendedCac && adSpend > 0 && stepNewOrders > 0) {
+      const paidNewCustomerCap = adSpend / blendedCac;
+      const firstScale = Math.min(1, paidNewCustomerCap / stepNewOrders);
+      if (firstScale < 1) {
+        for (const d of desired) {
+          const unconverted = d.firstFrac * (1 - firstScale);
+          active[d.idx] = Math.max(0, active[d.idx] - unconverted);
+          considering[d.idx] += unconverted;
+          d.first *= firstScale;
+        }
+        stepNewOrders *= firstScale;
+        demand = stepNewOrders + repeatDemand;
+      }
     }
 
     // Fulfilment capped by inventory.

@@ -83,6 +83,7 @@ export async function GET(
     model?.priceTiers.find((t) => t.label) ?? model?.priceTiers[0] ?? null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
+  const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const defaults = {
     currency: model?.currency ?? currency,
     suggestedCostPrice: model
@@ -90,7 +91,7 @@ export async function GET(
       : null,
     suggestedSalePrice: baseTier?.price.value ?? null,
     suggestedAdSpendPerMonth: suggestAdSpendPerMonth(
-      model?.unitEconomics.blendedCac.value ?? null,
+      blendedCac,
       reachableProspectsPerMonth,
       model?.breakEven.fixedCostsPerMonth.value ?? null,
       baseTier?.price.value ?? null
@@ -111,7 +112,10 @@ export async function GET(
       inputs,
       result:
         personas.length > 0
-          ? simulateLaunch(personas, inputs, { reachableProspectsPerMonth })
+          ? simulateLaunch(personas, inputs, {
+              reachableProspectsPerMonth,
+              blendedCac,
+            })
           : (r.result as unknown as LaunchSimRecord["result"]),
       createdAt: r.createdAt.toISOString(),
     };
@@ -150,10 +154,12 @@ export async function POST(
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
+  const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
 
   try {
     const result = simulateLaunch(personas, body.data.inputs, {
       reachableProspectsPerMonth,
+      blendedCac,
     });
 
     const row = await prisma.launchSimulation.create({

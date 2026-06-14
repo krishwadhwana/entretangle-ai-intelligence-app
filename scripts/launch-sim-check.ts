@@ -94,6 +94,18 @@ assert(
   "more ad spend reaches at least as many people"
 );
 
+// Financial-model CAC should bound paid first-time acquisition. CPM can create
+// awareness, but purchases cannot exceed the customers the media budget can buy.
+const cacBounded = simulateLaunch(
+  personas,
+  baseInputs,
+  { reachableProspectsPerMonth: 8000, blendedCac: 5000 }
+);
+assert(
+  cacBounded.summary.newOrders <= baseInputs.adSpendPerMonth * 3 / 5000 + 1,
+  "paid new orders are bounded by ad spend ÷ CAC"
+);
+
 // Price sensitivity: a higher sale price should not increase orders.
 const pricier = simulateLaunch(
   personas,
