@@ -29,6 +29,7 @@ export function ProjectSelector({
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [open, setOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   async function refresh() {
@@ -42,7 +43,36 @@ export function ProjectSelector({
 
   useEffect(() => {
     void refresh();
+    setLocalSelectedId(selectedParam);
   }, [pathname, selectedParam]);
+
+  useEffect(() => {
+    function onProjectSelected(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (id) setLocalSelectedId(id);
+    }
+    function onProjectCreated(event: Event) {
+      const id = (event as CustomEvent<{ project?: { id?: string } }>).detail
+        ?.project?.id;
+      if (id) setLocalSelectedId(id);
+      void refresh();
+    }
+    function onProjectDeleted(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      setProjects((prev) => prev.filter((p) => p.id !== id));
+      if (localSelectedId === id) setLocalSelectedId(null);
+      void refresh();
+    }
+    window.addEventListener("et:project-selected", onProjectSelected);
+    window.addEventListener("et:project-created", onProjectCreated);
+    window.addEventListener("et:project-deleted", onProjectDeleted);
+    return () => {
+      window.removeEventListener("et:project-selected", onProjectSelected);
+      window.removeEventListener("et:project-created", onProjectCreated);
+      window.removeEventListener("et:project-deleted", onProjectDeleted);
+    };
+  }, [localSelectedId]);
 
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -58,6 +88,7 @@ export function ProjectSelector({
   // own fallback) the most recently updated one — mirror that here.
   const current =
     projects.find((p) => p.id === selectedProjectId) ??
+    projects.find((p) => p.id === localSelectedId) ??
     projects.find((p) => p.id === selectedParam) ??
     (pathname === "/" ? projects[0] : undefined);
 
@@ -75,7 +106,15 @@ export function ProjectSelector({
       if (!res.ok) return;
       const { project } = await res.json();
       setOpen(false);
-      router.push(`/?project=${project.id}`);
+      if (pathname === "/") {
+        setLocalSelectedId(project.id);
+        window.dispatchEvent(
+          new CustomEvent("et:project-created", { detail: { project } })
+        );
+        void refresh();
+      } else {
+        router.push(`/?project=${project.id}`);
+      }
     } finally {
       setBusy(false);
     }
@@ -99,9 +138,14 @@ export function ProjectSelector({
       )
     )
       return;
-    await fetch(`/api/projects/${p.id}`, { method: "DELETE" });
+    const res = await fetch(`/api/projects/${p.id}`, { method: "DELETE" });
+    if (!res.ok) return;
     setOpen(false);
-    if (selectedParam === p.id || pathname === "/") {
+    if (pathname === "/") {
+      window.dispatchEvent(
+        new CustomEvent("et:project-deleted", { detail: { id: p.id } })
+      );
+    } else if (selectedParam === p.id) {
       router.push("/");
     }
     void refresh();
@@ -140,7 +184,16 @@ export function ProjectSelector({
                 <button
                   onClick={() => {
                     setOpen(false);
-                    router.push(`/?project=${p.id}`);
+                    if (pathname === "/") {
+                      setLocalSelectedId(p.id);
+                      window.dispatchEvent(
+                        new CustomEvent("et:switch-project", {
+                          detail: { id: p.id },
+                        })
+                      );
+                    } else {
+                      router.push(`/?project=${p.id}`);
+                    }
                   }}
                   className="flex-1 truncate px-1 py-1 text-left text-xs text-neutral-700"
                   title={p.name}
@@ -183,9 +236,36 @@ export function ProjectSelector({
 
 export default function AppHeader() {
   const pathname = usePathname();
+  const router = useRouter();
+  const [creating, setCreating] = useState(false);
 
   if (pathname.startsWith("/runs/")) {
     return null;
+  }
+
+  async function createProject() {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const name = window.prompt("Name the new project:", "Untitled venture");
+      if (name === null) return;
+      const res = await fetch("/api/projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim() || "Untitled venture" }),
+      });
+      if (!res.ok) return;
+      const { project } = await res.json();
+      if (pathname === "/") {
+        window.dispatchEvent(
+          new CustomEvent("et:project-created", { detail: { project } })
+        );
+      } else {
+        router.push(`/?project=${project.id}`);
+      }
+    } finally {
+      setCreating(false);
+    }
   }
 
   return (
@@ -193,7 +273,18 @@ export default function AppHeader() {
       <a href="/" className="text-sm font-semibold tracking-tight">
         EntreTangle
       </a>
-      <ProjectSelector />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void createProject()}
+          disabled={creating}
+          className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+        >
+          <Plus className="h-3.5 w-3.5" />
+          New
+        </button>
+        <ProjectSelector />
+      </div>
     </header>
   );
 }

@@ -186,6 +186,13 @@ function runRowToRecord(row: {
   };
 }
 
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
+  "complete",
+  "failed",
+  "capped",
+  "cancelled",
+]);
+
 /**
  * Merge live Run rows into the saved project snapshots so the home page can
  * show queued/planning/running runs before the final snapshot is appended.
@@ -222,7 +229,9 @@ async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> 
       existing
         ? {
             ...existing,
-            status: live.status,
+            status: TERMINAL_RUN_STATUSES.has(existing.status)
+              ? existing.status
+              : live.status,
             params: { ...existing.params, ...live.params },
             results: {
               ...existing.results,
@@ -537,6 +546,15 @@ export async function getLatestProjectLean(): Promise<ProjectFull | null> {
 export async function getProjectLean(id: string): Promise<ProjectFull | null> {
   const p = await getProject(id);
   return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
+}
+
+export async function listProjectPreviews(): Promise<ProjectFull[]> {
+  const rows = await prisma.project.findMany({
+    orderBy: { updatedAt: "desc" },
+  });
+  const projects = rows.map(toFull);
+  const withRuns = await Promise.all(projects.map(withLiveRunSummaries));
+  return withRuns.map(stripPersonas);
 }
 
 // ---------------------------------------------------------------------------

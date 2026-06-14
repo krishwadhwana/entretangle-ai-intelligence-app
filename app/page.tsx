@@ -5,10 +5,14 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
+  BarChart3,
   Check,
   CheckCircle2,
+  ClipboardList,
   CornerDownLeft,
+  Database,
   FileText,
+  FolderOpen,
   Loader2,
   Play,
   Trash2,
@@ -50,9 +54,18 @@ function estimateRunCost(agents: number): number {
 type ProjectData = {
   id: string;
   name: string;
+  createdAt: string;
+  updatedAt: string;
   interviewTranscript: InterviewTranscript;
   ventureProfile: ClientProfile | null;
   simulationRuns: SimulationRunRecord[];
+};
+
+type ProjectSummary = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type DocSummary = {
@@ -70,6 +83,9 @@ function IntakePageInner() {
   const projectParam = searchParams.get("project");
 
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [projectName, setProjectName] = useState("Untitled venture");
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [projectPreviews, setProjectPreviews] = useState<ProjectData[]>([]);
   const [loading, setLoading] = useState(true);
   const [messages, setMessages] = useState<ChatMessage[]>([GREETING]);
   const [pending, setPending] = useState<PendingQuestion | null>(null);
@@ -98,17 +114,94 @@ function IntakePageInner() {
   const [agentCount, setAgentCount] = useState(6000); // audience size for this run
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  // Load & fully restore the selected project — or the most recently updated
-  // one — or create the first project so saves have a home from message #1.
+  function toProjectSummary(p: ProjectData): ProjectSummary {
+    return {
+      id: p.id,
+      name: p.name,
+      createdAt: p.createdAt,
+      updatedAt: p.updatedAt,
+    };
+  }
+
+  function setProjectUrl(id: string) {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.searchParams.set("project", id);
+    window.history.pushState(null, "", `${url.pathname}${url.search}`);
+    window.dispatchEvent(
+      new CustomEvent("et:project-selected", { detail: { id } })
+    );
+  }
+
+  function applyProject(proj: ProjectData, updateUrl = false) {
+    const t = proj.interviewTranscript;
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_PROJECT_KEY, proj.id);
+      if (updateUrl) setProjectUrl(proj.id);
+    }
+    setProjectId(proj.id);
+    setProjectName(proj.name);
+    setMessages(t.messages.length > 0 ? t.messages : [GREETING]);
+    setPending(t.pending);
+    setAnsweredQuestions(t.answeredQuestions ?? []);
+    setDone(t.done);
+    setBrief(t.brief);
+    setProfile(proj.ventureProfile);
+    setSimRuns(proj.simulationRuns ?? []);
+    setDocuments([]);
+    setSelected(new Set());
+    setOtherText("");
+    setInput("");
+    setFocusQuestion("");
+    setAdditionalContext("");
+    setMode("full");
+    void loadDocuments(proj.id);
+  }
+
+  function currentProjectSnapshot(): ProjectData | null {
+    if (!projectId) return null;
+    const base = projectPreviews.find((p) => p.id === projectId);
+    return {
+      id: projectId,
+      name: projectName,
+      createdAt: base?.createdAt ?? new Date().toISOString(),
+      updatedAt: base?.updatedAt ?? new Date().toISOString(),
+      interviewTranscript: {
+        messages,
+        pending,
+        answeredQuestions,
+        done,
+        brief,
+      },
+      ventureProfile: profile,
+      simulationRuns: simRuns,
+    };
+  }
+
+  // Preload lightweight project previews so sidebar switching is instant and
+  // does not re-enter the whole page loading state.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        let proj: ProjectData | null = null;
+        const res = await fetch("/api/projects?previews=1");
+        if (!res.ok) throw new Error(`Failed to load projects (${res.status})`);
+        let previews = ((await res.json()).projects ?? []) as ProjectData[];
+        if (previews.length === 0) {
+          const createRes = await fetch("/api/projects", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: "Untitled venture" }),
+          });
+          if (!createRes.ok)
+            throw new Error(`Project creation failed (${createRes.status})`);
+          previews = [(await createRes.json()).project as ProjectData];
+        }
+        if (cancelled) return;
         // Resolution order: explicit ?project= → the last project this browser
-        // was working on (localStorage pin) → most-recently-updated → create.
+        // was working on (localStorage pin) → most-recently-updated.
         // The localStorage pin makes a reload deterministic: it restores the
         // SAME project (and its in-progress questionnaire) regardless of which
         // other project was updated most recently by a background run.
@@ -117,44 +210,12 @@ function IntakePageInner() {
           (typeof window !== "undefined"
             ? window.localStorage.getItem(ACTIVE_PROJECT_KEY)
             : null);
-        if (pinnedId) {
-          const res = await fetch(`/api/projects/${pinnedId}`);
-          // 404 (deleted) → fall through; other errors too, but a transient
-          // error must NOT silently create a new project below.
-          if (res.ok) proj = (await res.json()).project;
-        }
-        if (!proj) {
-          const res = await fetch("/api/projects?latest=1");
-          if (!res.ok) throw new Error(`Failed to load project (${res.status})`);
-          proj = (await res.json()).project; // null only when no projects exist
-        }
-        if (!proj) {
-          // Genuinely no projects yet — create the first.
-          const res = await fetch("/api/projects", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: "Untitled venture" }),
-          });
-          if (!res.ok) throw new Error(`Project creation failed (${res.status})`);
-          proj = (await res.json()).project;
-        }
-        if (cancelled || !proj) return;
-        const t = proj.interviewTranscript;
-        if (typeof window !== "undefined") {
-          window.localStorage.setItem(ACTIVE_PROJECT_KEY, proj.id);
-        }
-        setProjectId(proj.id);
-        setMessages(t.messages.length > 0 ? t.messages : [GREETING]);
-        setPending(t.pending);
-        setAnsweredQuestions(t.answeredQuestions ?? []);
-        setDone(t.done);
-        setBrief(t.brief);
-        setProfile(proj.ventureProfile);
-        setSimRuns(proj.simulationRuns ?? []);
-        setSelected(new Set());
-        setOtherText("");
-        setInput("");
-        void loadDocuments(proj.id);
+        const proj =
+          previews.find((p) => p.id === pinnedId) ??
+          previews[0];
+        setProjectPreviews(previews);
+        setProjects(previews.map(toProjectSummary));
+        applyProject(proj, !projectParam);
       } catch (err) {
         if (!cancelled)
           setError(err instanceof Error ? err.message : "Failed to load project");
@@ -165,23 +226,100 @@ function IntakePageInner() {
     return () => {
       cancelled = true;
     };
-  }, [projectParam]);
+  }, []);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, busy, pending, loading]);
+    function onPopState() {
+      const id = new URL(window.location.href).searchParams.get("project");
+      const proj =
+        projectPreviews.find((p) => p.id === id) ?? projectPreviews[0];
+      if (proj) applyProject(proj);
+    }
+    function onSwitchProject(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (id) switchProject(id);
+    }
+    function onProjectCreated(event: Event) {
+      const proj = (event as CustomEvent<{ project?: ProjectData }>).detail
+        ?.project;
+      if (!proj) return;
+      const snapshot = currentProjectSnapshot();
+      const nextPreviews = [
+        proj,
+        ...projectPreviews.map((p) =>
+          snapshot && p.id === snapshot.id ? snapshot : p
+        ),
+      ];
+      setProjectPreviews(nextPreviews);
+      setProjects(nextPreviews.map(toProjectSummary));
+      applyProject(proj, true);
+    }
+    async function onProjectDeleted(event: Event) {
+      const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+      if (!id) return;
+      let nextPreviews = projectPreviews.filter((p) => p.id !== id);
+      if (nextPreviews.length === 0) {
+        const res = await fetch("/api/projects", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: "Untitled venture" }),
+        });
+        if (!res.ok) {
+          setError(`Project creation failed (${res.status})`);
+          return;
+        }
+        nextPreviews = [(await res.json()).project as ProjectData];
+      }
+      setProjectPreviews(nextPreviews);
+      setProjects(nextPreviews.map(toProjectSummary));
+      if (projectId === id) {
+        applyProject(nextPreviews[0], true);
+      }
+    }
+    window.addEventListener("popstate", onPopState);
+    window.addEventListener("et:switch-project", onSwitchProject);
+    window.addEventListener("et:project-created", onProjectCreated);
+    window.addEventListener("et:project-deleted", onProjectDeleted);
+    return () => {
+      window.removeEventListener("popstate", onPopState);
+      window.removeEventListener("et:switch-project", onSwitchProject);
+      window.removeEventListener("et:project-created", onProjectCreated);
+      window.removeEventListener("et:project-deleted", onProjectDeleted);
+    };
+  }, [projectPreviews, projectId, projectName, messages, pending, answeredQuestions, done, brief, profile, simRuns]);
 
   // Auto-save the transcript. Fire-and-forget on purpose: a failed save must
   // not block the conversation, and the next save carries the full state.
   const persistTranscript = useCallback(
-    (id: string, transcript: InterviewTranscript) =>
-      fetch(`/api/projects/${id}`, {
+    (id: string, transcript: InterviewTranscript) => {
+      setProjectPreviews((prev) =>
+        prev.map((p) =>
+          p.id === id ? { ...p, interviewTranscript: transcript } : p
+        )
+      );
+      return fetch(`/api/projects/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ interviewTranscript: transcript }),
-      }).catch(() => undefined),
+      }).catch(() => undefined);
+    },
     []
   );
+
+  function switchProject(id: string) {
+    const target = projectPreviews.find((p) => p.id === id);
+    if (!target || target.id === projectId) return;
+    const snapshot = currentProjectSnapshot();
+    if (snapshot) {
+      setProjectPreviews((prev) =>
+        prev.map((p) => (p.id === snapshot.id ? snapshot : p))
+      );
+    }
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ACTIVE_PROJECT_KEY, id);
+    }
+    applyProject(target, true);
+  }
 
   async function submitAnswer(content: string) {
     if (submittingRef.current || !content.trim() || busy || launching || !projectId)
@@ -256,6 +394,23 @@ function IntakePageInner() {
       setDone(true);
       setBrief(result.brief);
       setProfile(result.profile);
+      setProjectPreviews((prev) =>
+        prev.map((p) =>
+          p.id === projectId
+            ? {
+                ...p,
+                interviewTranscript: {
+                  messages: closing,
+                  pending: null,
+                  answeredQuestions: nextAnswered,
+                  done: true,
+                  brief: result.brief,
+                },
+                ventureProfile: result.profile,
+              }
+            : p
+        )
+      );
       await Promise.all([
         persistTranscript(projectId, {
           messages: closing,
@@ -497,7 +652,7 @@ function IntakePageInner() {
 
   if (loading) {
     return (
-      <main className="mx-auto flex h-full max-w-2xl flex-col items-center justify-center px-6">
+      <main className="flex h-full items-center justify-center bg-neutral-50 px-6">
         <div className="flex items-center gap-2 text-sm text-neutral-400">
           <Loader2 className="h-4 w-4 animate-spin" /> restoring project…
         </div>
@@ -505,207 +660,374 @@ function IntakePageInner() {
     );
   }
 
-  return (
-    <main className="mx-auto flex h-full max-w-2xl flex-col px-6 py-8">
-      <h1 className="text-2xl font-semibold tracking-tight">EntreTangle</h1>
-      <p className="mt-1 text-sm text-neutral-500">
-        A short structured interview, then research desks + a simulated
-        audience of thousands work your venture live.
-      </p>
+  const sortedRuns = [...simRuns].reverse();
+  const completedRuns = simRuns.filter(
+    (r) => r.status === "complete" || r.status === "capped"
+  ).length;
+  const latestRun = sortedRuns[0];
+  const userAnswers = messages.filter((m) => m.role === "user").slice(-4);
+  const setupStep = done ? "Profile complete" : pending ? "Setup questions" : "Project brief";
+  const profileChips = profile
+    ? [
+        profile.product,
+        profile.category,
+        profile.priceBand,
+        ...(profile.geography ?? []),
+        profile.targetAudience,
+        profile.funding?.capitalAvailable
+          ? `capital: ${profile.funding.capitalAvailable}`
+          : null,
+        profile.funding?.runwayMonths
+          ? `runway: ${profile.funding.runwayMonths} months`
+          : null,
+      ].filter(Boolean)
+    : [];
 
-      {/* Earlier runs stay reachable even while the questionnaire is shown as
-          in-progress (done=false). Without this, switching to a project whose
-          transcript isn't marked done leaves its simulations with no entry
-          point — the done-only history block below never renders. */}
-      {!done && simRuns.length > 0 && (
-        <div className="mt-4 rounded-xl border border-indigo-200 bg-indigo-50/60 p-3">
-          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-indigo-500">
-            Simulation runs for this venture
-          </p>
-          <ul className="space-y-1">
-            {[...simRuns].reverse().map((r) => (
-              <li key={r.runId}>
-                <a
-                  href={`/runs/${r.runId}`}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-indigo-200 bg-white px-3 py-2 text-xs hover:border-indigo-400 hover:bg-indigo-50"
-                >
-                  <span className="truncate text-neutral-700">
-                    {r.params?.focusQuestion
-                      ? `“${r.params.focusQuestion}”`
-                      : new Date(r.timestamp).toLocaleString()}
-                  </span>
-                  <span
-                    className={`shrink-0 font-medium ${
-                      r.status === "complete"
-                        ? "text-emerald-600"
-                        : r.status === "failed"
-                          ? "text-red-500"
-                          : "text-amber-600"
-                    }`}
-                  >
-                    {r.status}
-                  </span>
-                </a>
-              </li>
-            ))}
-          </ul>
-        </div>
-      )}
-
-      <div className="mt-6 flex-1 space-y-3 overflow-y-auto pb-4">
-        {messages.map((m, i) => (
-          <div
-            key={i}
-            className={`max-w-[85%] rounded-xl border px-4 py-2.5 text-sm leading-relaxed ${
-              m.role === "assistant"
-                ? "border-neutral-200 bg-neutral-50 text-neutral-800"
-                : "ml-auto border-indigo-200 bg-indigo-50 text-neutral-900"
-            }`}
-          >
-            {m.content}
+  if (!done) {
+    return (
+      <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
+        <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
+          <div className="border-b border-neutral-200 px-4 py-3">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Projects
+            </p>
           </div>
-        ))}
+          <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
+            {projects.map((p) => {
+              const active = p.id === projectId;
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => switchProject(p.id)}
+                  className={`mb-1 flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition ${
+                    active
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-700 hover:bg-neutral-100"
+                  }`}
+                >
+                  <FolderOpen
+                    className={`mt-0.5 h-4 w-4 shrink-0 ${
+                      active ? "text-white" : "text-neutral-400"
+                    }`}
+                  />
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-xs font-medium">
+                      {p.name}
+                    </span>
+                    <span
+                      className={`mt-0.5 block truncate text-[10px] ${
+                        active ? "text-neutral-300" : "text-neutral-400"
+                      }`}
+                    >
+                      Updated {new Date(p.updatedAt).toLocaleDateString()}
+                    </span>
+                  </span>
+                </button>
+              );
+            })}
+          </nav>
+        </aside>
 
-        {/* Clickable options for the current question (Cursor-style) */}
-        {pending && pending.options.length > 0 && !busy && !launching && !done && (
-          <div className="max-w-[85%]">
-            <div className="mb-1.5 flex items-center justify-between gap-2">
-              {canGoBack ? (
+        <section className="min-h-0 overflow-y-auto px-4 py-10">
+          <div className="mx-auto w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
+            <div className="mb-4 flex items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                  Project setup
+                </p>
+                <h1 className="mt-1 text-xl font-semibold tracking-tight">
+                  {projectName}
+                </h1>
+              </div>
+              {canGoBack && (
                 <button
                   onClick={goBack}
-                  className="flex items-center gap-1 text-[11px] font-medium text-neutral-500 hover:text-indigo-600"
+                  className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
                 >
                   <ArrowLeft className="h-3 w-3" /> Back
                 </button>
-              ) : (
-                <span />
-              )}
-              {pending.multiSelect && (
-                <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
-                  You can select multiple responses
-                </span>
               )}
             </div>
-            <div className="flex flex-wrap gap-2">
-              {pending.options.map((opt) => {
-                const isSel = selected.has(opt);
-                return (
-                  <button
-                    key={opt}
-                    onClick={(e) => {
-                      clickOption(opt);
-                      // blur so a subsequent Enter submits instead of
-                      // re-toggling this focused chip
-                      (e.currentTarget as HTMLButtonElement).blur();
+
+            <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-4">
+              <h2 className="text-base font-semibold leading-snug text-neutral-900">
+                {pending?.question ?? GREETING.content}
+              </h2>
+
+              {pending && pending.options.length > 0 && !busy && !launching && (
+                <div className="mt-4 space-y-3">
+                  {pending.multiSelect && (
+                    <span className="inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                      Select multiple
+                    </span>
+                  )}
+                  <div className="grid gap-2">
+                    {pending.options.map((opt) => {
+                      const isSel = selected.has(opt);
+                      return (
+                        <button
+                          key={opt}
+                          onClick={(e) => {
+                            clickOption(opt);
+                            (e.currentTarget as HTMLButtonElement).blur();
+                          }}
+                          className={`flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${
+                            isSel
+                              ? "border-indigo-600 bg-indigo-600 text-white"
+                              : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50"
+                          }`}
+                        >
+                          {pending.multiSelect && (
+                            <span
+                              className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? "border-white bg-white/20" : "border-neutral-300"}`}
+                            >
+                              {isSel && <Check className="h-3 w-3" />}
+                            </span>
+                          )}
+                          <span className="min-w-0 break-words">{opt}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <input
+                    value={otherText}
+                    onChange={(e) => setOtherText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        e.preventDefault();
+                        submitInline();
+                      }
                     }}
-                    className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors ${
-                      isSel
-                        ? "border-indigo-600 bg-indigo-600 text-white"
-                        : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50"
+                    placeholder="Other response"
+                    className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                  />
+                  {(pending.multiSelect || otherReady) && (
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={submitInline}
+                        disabled={!canContinue}
+                        className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+                      >
+                        Continue <CornerDownLeft className="h-3 w-3" />
+                      </button>
+                      {pending.multiSelect && (
+                        <span className="text-[10px] text-neutral-400">
+                          {selected.size + (otherReady ? 1 : 0)} selected
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {!(pending && pending.options.length > 0) && (
+                <form onSubmit={send} className="mt-4">
+                  <div className="flex items-center gap-2 rounded-lg border border-neutral-300 bg-white px-3 py-2.5 focus-within:border-indigo-500">
+                    <input
+                      value={input}
+                      onChange={(e) => setInput(e.target.value)}
+                      placeholder={
+                        messages.length === 1
+                          ? "I want to launch a teak furniture brand from Jodhpur..."
+                          : "Type your answer..."
+                      }
+                      disabled={busy || launching}
+                      className="min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
+                      autoFocus
+                    />
+                    <button
+                      type="submit"
+                      disabled={!input.trim() || busy || launching}
+                      className="text-neutral-400 hover:text-indigo-600 disabled:opacity-40"
+                    >
+                      <CornerDownLeft className="h-4 w-4" />
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+
+            {(busy || launching) && (
+              <div className="mt-3 flex items-center gap-2 text-xs text-neutral-400">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                {launching ? "launching run..." : "thinking..."}
+              </div>
+            )}
+            {error && (
+              <p className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {error}
+              </p>
+            )}
+            <div ref={bottomRef} />
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
+      <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
+        <div className="border-b border-neutral-200 px-4 py-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+            Projects
+          </p>
+        </div>
+        <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
+          {projects.map((p) => {
+            const active = p.id === projectId;
+            return (
+              <button
+                key={p.id}
+                onClick={() => switchProject(p.id)}
+                className={`mb-1 flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition ${
+                  active
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-700 hover:bg-neutral-100"
+                }`}
+              >
+                <FolderOpen
+                  className={`mt-0.5 h-4 w-4 shrink-0 ${
+                    active ? "text-white" : "text-neutral-400"
+                  }`}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {p.name}
+                  </span>
+                  <span
+                    className={`mt-0.5 block truncate text-[10px] ${
+                      active ? "text-neutral-300" : "text-neutral-400"
                     }`}
                   >
-                    {pending.multiSelect && (
-                      <span
-                        className={`flex h-3.5 w-3.5 items-center justify-center rounded border ${isSel ? "border-white bg-white/20" : "border-neutral-300"}`}
-                      >
-                        {isSel && <Check className="h-2.5 w-2.5" />}
-                      </span>
-                    )}
-                    {opt}
-                  </button>
-                );
-              })}
+                    Updated {new Date(p.updatedAt).toLocaleDateString()}
+                  </span>
+                </span>
+              </button>
+            );
+          })}
+        </nav>
+      </aside>
+
+      <section className="min-h-0 overflow-y-auto">
+        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-5 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="space-y-5">
+            <header className="border-b border-neutral-200 pb-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    Active project
+                  </p>
+                  <h2 className="break-words text-2xl font-semibold tracking-tight">
+                    {projectName}
+                  </h2>
+                  <p className="mt-1 max-w-2xl text-sm text-neutral-500">
+                    {profile?.product ??
+                      brief ??
+                      "Set up the venture profile, then run research and audience simulations from this workspace."}
+                  </p>
+                </div>
+                {latestRun && (
+                  <a
+                    href={`/runs/${latestRun.runId}`}
+                    className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700"
+                  >
+                    Open latest run <ArrowRight className="h-3.5 w-3.5" />
+                  </a>
+                )}
+              </div>
+            </header>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+                  <ClipboardList className="h-4 w-4" />
+                </div>
+                <p className="text-xs font-medium text-neutral-500">Profile</p>
+                <p className="mt-1 text-lg font-semibold">{setupStep}</p>
+              </div>
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                  <BarChart3 className="h-4 w-4" />
+                </div>
+                <p className="text-xs font-medium text-neutral-500">Runs</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {completedRuns} complete / {simRuns.length} total
+                </p>
+              </div>
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                  <Database className="h-4 w-4" />
+                </div>
+                <p className="text-xs font-medium text-neutral-500">Data</p>
+                <p className="mt-1 text-lg font-semibold">
+                  {documents.length} uploaded
+                </p>
+              </div>
             </div>
 
-            {/* Other — a free-text box below all the option boxes */}
-            <input
-              value={otherText}
-              onChange={(e) => setOtherText(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  submitInline();
-                }
-              }}
-              placeholder="Other response"
-              className="mt-2 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
-            />
-
-            {/* Explicit submit — always for multi-select; for single-select
-                only once an "Other response" is being typed */}
-            {(pending.multiSelect || otherReady) && (
-              <div className="mt-2 flex items-center gap-2">
-                <button
-                  onClick={submitInline}
-                  disabled={!canContinue}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
-                >
-                  Continue <CornerDownLeft className="h-3 w-3" />
-                </button>
-                {pending.multiSelect && (
-                  <span className="text-[10px] text-neutral-400">
-                    {selected.size + (otherReady ? 1 : 0)} selected
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold">Venture profile</h3>
+                {!done && (
+                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                    Setup in progress
                   </span>
                 )}
               </div>
-            )}
+              <div className="rounded-lg border border-neutral-200 bg-white p-4">
+                {profileChips.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 text-xs">
+                    {profileChips.map((chip, i) => (
+                      <span
+                        key={i}
+                        className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-neutral-700"
+                      >
+                        {chip}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-neutral-500">
+                    Complete the setup steps to turn this into a structured
+                    venture profile.
+                  </p>
+                )}
+                {userAnswers.length > 0 && !done && (
+                  <div className="mt-4 border-t border-neutral-100 pt-3">
+                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                      Captured so far
+                    </p>
+                    <div className="space-y-1.5">
+                      {userAnswers.map((m, i) => (
+                        <p
+                          key={i}
+                          className="line-clamp-2 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600"
+                        >
+                          {m.content}
+                        </p>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </section>
 
-            <p className="mt-1.5 text-[10px] text-neutral-400">
-              {pending.multiSelect
-                ? "Pick all that apply (or type an Other response), then Continue — or press ⏎."
-                : "Click one — or type an Other response below."}
-            </p>
-          </div>
-        )}
-
-        {/* Interview finished: venture profile + simulation history */}
-        {done && profile && !launching && (
-          <div className="max-w-[95%] space-y-3 rounded-xl border border-neutral-200 bg-white p-4">
-            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Venture profile
-            </p>
-            <div className="flex flex-wrap gap-1.5 text-xs">
-              {[
-                profile.product,
-                profile.category,
-                profile.priceBand,
-                ...(profile.geography ?? []),
-                profile.targetAudience,
-                profile.funding?.capitalAvailable
-                  ? `capital: ${profile.funding.capitalAvailable}`
-                  : null,
-                profile.funding?.runwayMonths
-                  ? `runway: ${profile.funding.runwayMonths} months`
-                  : null,
-              ]
-                .filter(Boolean)
-                .map((chip, i) => (
-                  <span
-                    key={i}
-                    className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-neutral-700"
-                  >
-                    {chip}
-                  </span>
-                ))}
-            </div>
-            {simRuns.length > 0 && (
-              <div>
-                <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Simulation runs
-                </p>
-                <ul className="space-y-1.5">
-                  {[...simRuns].reverse().map((r) => {
+            <section className="space-y-3">
+              <h3 className="text-sm font-semibold">Simulation runs</h3>
+              {sortedRuns.length > 0 ? (
+                <ul className="space-y-2">
+                  {sortedRuns.map((r) => {
                     const isComplete = r.status === "complete";
                     const isFailed = r.status === "failed";
                     return (
                       <li key={r.runId}>
                         <a
                           href={`/runs/${r.runId}`}
-                          className="group flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2.5 transition hover:border-indigo-400 hover:bg-indigo-50/40 hover:shadow-sm"
+                          className="group flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40"
                         >
-                          {/* Status icon */}
                           <span
-                            className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
                               isComplete
                                 ? "bg-emerald-50 text-emerald-600"
                                 : isFailed
@@ -722,51 +1044,43 @@ function IntakePageInner() {
                               <Loader2 className="h-4 w-4 animate-spin" />
                             )}
                           </span>
-
-                          {/* Title + metadata */}
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-xs font-medium text-neutral-800">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm font-medium text-neutral-800">
                               {r.params?.focusQuestion
-                                ? `“${r.params.focusQuestion}”`
+                                ? r.params.focusQuestion
                                 : "Full simulation"}
-                              {r.params?.mode === "scoped" && (
-                                <span className="ml-1.5 rounded bg-neutral-100 px-1.5 py-0.5 text-[10px] font-normal text-neutral-500">
-                                  scoped
-                                </span>
-                              )}
-                            </p>
-                            <p className="mt-0.5 truncate text-[10px] text-neutral-400">
+                            </span>
+                            <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
                               {new Date(r.timestamp).toLocaleString()} ·{" "}
                               {r.results.blocks.length} desks ·{" "}
                               {r.results.audienceAggregate?.totalPersonas ?? 0}{" "}
                               personas · ${r.results.costUsd.toFixed(2)}
-                            </p>
-                          </div>
-
-                          {/* View CTA */}
-                          <span className="flex shrink-0 items-center gap-1 text-[11px] font-medium text-neutral-400 transition group-hover:text-indigo-600">
-                            <span className="hidden sm:inline">View</span>
-                            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+                              {r.params?.mode === "scoped" ? " · lighter" : ""}
+                            </span>
                           </span>
+                          <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-600" />
                         </a>
                       </li>
                     );
                   })}
                 </ul>
-              </div>
-            )}
+              ) : (
+                <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-sm text-neutral-500">
+                  No simulations yet. Finish setup to launch the first run.
+                </div>
+              )}
+            </section>
 
-            {/* Founder data (RAG): upload real data to ground the simulation */}
-            <div className="space-y-2 rounded-lg border border-neutral-200 p-3">
-              <div className="flex items-center justify-between">
-                <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                  Your data {documents.length > 0 && `(${documents.length})`}
-                </p>
-                <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 px-2.5 py-1 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
+            <section className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-semibold">
+                  Project data {documents.length > 0 && `(${documents.length})`}
+                </h3>
+                <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
                   {uploading ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Upload className="h-3 w-3" />
+                    <Upload className="h-3.5 w-3.5" />
                   )}
                   Upload
                   <input
@@ -782,200 +1096,292 @@ function IntakePageInner() {
                   />
                 </label>
               </div>
-              <p className="text-[10px] text-neutral-400">
-                Upload real data (sales, surveys, competitor lists, pricing) as
-                .txt / .md / .csv. Research desks and the audience read the most
-                relevant parts as ground truth.
-              </p>
-              {documents.length > 0 && (
-                <ul className="space-y-1">
-                  {documents.map((d) => (
-                    <li
-                      key={d.id}
-                      className="flex items-center justify-between rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs"
-                    >
-                      <span className="flex min-w-0 items-center gap-1.5 text-neutral-700">
-                        <FileText className="h-3 w-3 shrink-0 text-neutral-400" />
-                        <span className="truncate" title={d.name}>
-                          {d.name}
-                        </span>
-                        <span className="shrink-0 text-[10px] text-neutral-400">
-                          {d.chunkCount} chunks
-                        </span>
-                      </span>
-                      <button
-                        onClick={() => void deleteDocument(d.id)}
-                        className="shrink-0 rounded p-1 text-neutral-300 hover:text-red-500"
-                        title="Remove"
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                {documents.length > 0 ? (
+                  <ul className="space-y-1">
+                    {documents.map((d) => (
+                      <li
+                        key={d.id}
+                        className="flex items-center justify-between rounded-lg border border-neutral-200 px-2.5 py-2 text-xs"
                       >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+                        <span className="flex min-w-0 items-center gap-1.5 text-neutral-700">
+                          <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                          <span className="truncate" title={d.name}>
+                            {d.name}
+                          </span>
+                          <span className="shrink-0 text-[10px] text-neutral-400">
+                            {d.chunkCount} chunks
+                          </span>
+                        </span>
+                        <button
+                          onClick={() => void deleteDocument(d.id)}
+                          className="shrink-0 rounded p-1 text-neutral-300 hover:text-red-500"
+                          title="Remove"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-sm text-neutral-500">
+                    Upload sales notes, survey results, pricing, or competitor
+                    lists to ground future research.
+                  </p>
+                )}
+              </div>
+            </section>
+          </div>
 
-            {/* Follow-up composer: add information + a question, run again */}
-            <div className="space-y-2 rounded-lg border border-dashed border-neutral-300 p-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                {simRuns.length > 0 ? "Run a follow-up simulation" : "Run a simulation"}
-              </p>
-              <input
-                value={focusQuestion}
-                onChange={(e) => setFocusQuestion(e.target.value)}
-                placeholder="Question to explore — e.g. “Will Gulf export pricing hold up vs. local players?”"
-                disabled={launching}
-                className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
-              />
-              <textarea
-                value={additionalContext}
-                onChange={(e) => setAdditionalContext(e.target.value)}
-                placeholder="New information since the last run (optional) — e.g. “Secured a Jodhpur manufacturing partner and ₹50L more capital.”"
-                disabled={launching}
-                rows={2}
-                className="w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
-              />
+          <aside className="space-y-4 xl:sticky xl:top-5 xl:self-start">
+            {!done && (
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <div className="mb-3 flex items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                      Setup
+                    </p>
+                    <h3 className="mt-1 text-base font-semibold">
+                      {pending?.question ?? GREETING.content}
+                    </h3>
+                  </div>
+                  {canGoBack && (
+                    <button
+                      onClick={goBack}
+                      className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[11px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
+                    >
+                      <ArrowLeft className="h-3 w-3" /> Back
+                    </button>
+                  )}
+                </div>
 
-              {/* Audience size: slider 0–10,000 + custom number, with a live
-                  cost estimate. Only applies to full runs. */}
-              <div className="space-y-1.5 rounded-lg bg-neutral-50 p-2.5">
-                <div className="flex items-center justify-between">
-                  <label className="text-[11px] font-medium text-neutral-600">
-                    Audience size
-                    {mode === "scoped" && (
-                      <span className="ml-1 text-neutral-400">
-                        (reuses last run — N/A)
+                {pending && pending.options.length > 0 && !busy && !launching && (
+                  <div className="space-y-3">
+                    {pending.multiSelect && (
+                      <span className="inline-flex rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-medium text-indigo-700">
+                        Select multiple
                       </span>
                     )}
-                  </label>
-                  <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
-                    ~${estimateRunCost(agentCount).toFixed(2)} est.
-                  </span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <input
-                    type="range"
-                    min={0}
-                    max={MAX_AGENTS}
-                    step={100}
-                    value={agentCount}
-                    onChange={(e) => setAgentCount(Number(e.target.value))}
-                    disabled={launching || mode === "scoped"}
-                    className="flex-1 accent-indigo-600 disabled:opacity-40"
-                  />
-                  <input
-                    type="number"
-                    min={0}
-                    max={MAX_AGENTS}
-                    step={100}
-                    value={agentCount}
-                    onChange={(e) =>
-                      setAgentCount(
-                        Math.max(
-                          0,
-                          Math.min(MAX_AGENTS, Math.round(Number(e.target.value) || 0))
-                        )
-                      )
-                    }
-                    disabled={launching || mode === "scoped"}
-                    className="w-20 rounded-lg border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-indigo-500 disabled:opacity-40"
-                  />
-                  <span className="text-[11px] text-neutral-500">agents</span>
-                </div>
-                <div className="flex justify-between text-[10px] text-neutral-400">
-                  <span>0 · research only (~${estimateRunCost(0).toFixed(2)})</span>
-                  <span>
-                    {MAX_AGENTS.toLocaleString()} · ~$
-                    {estimateRunCost(MAX_AGENTS).toFixed(2)}
-                  </span>
-                </div>
-              </div>
+                    <div className="grid gap-2">
+                      {pending.options.map((opt) => {
+                        const isSel = selected.has(opt);
+                        return (
+                          <button
+                            key={opt}
+                            onClick={(e) => {
+                              clickOption(opt);
+                              (e.currentTarget as HTMLButtonElement).blur();
+                            }}
+                            className={`flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors ${
+                              isSel
+                                ? "border-indigo-600 bg-indigo-600 text-white"
+                                : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50"
+                            }`}
+                          >
+                            {pending.multiSelect && (
+                              <span
+                                className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? "border-white bg-white/20" : "border-neutral-300"}`}
+                              >
+                                {isSel && <Check className="h-3 w-3" />}
+                              </span>
+                            )}
+                            <span className="min-w-0 break-words">{opt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      value={otherText}
+                      onChange={(e) => setOtherText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          submitInline();
+                        }
+                      }}
+                      placeholder="Other response"
+                      className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+                    />
+                    {(pending.multiSelect || otherReady) && (
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={submitInline}
+                          disabled={!canContinue}
+                          className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+                        >
+                          Continue <CornerDownLeft className="h-3 w-3" />
+                        </button>
+                        {pending.multiSelect && (
+                          <span className="text-[10px] text-neutral-400">
+                            {selected.size + (otherReady ? 1 : 0)} selected
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
 
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="flex overflow-hidden rounded-lg border border-neutral-300 text-[11px] font-medium">
-                  <button
-                    type="button"
-                    onClick={() => setMode("full")}
-                    className={`px-2.5 py-1.5 ${mode === "full" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
-                    title="Full simulation: fresh research desks + a newly simulated audience of thousands."
-                  >
-                    Full
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setMode("scoped")}
-                    disabled={!latestAudienceRunId}
-                    className={`px-2.5 py-1.5 disabled:opacity-40 ${mode === "scoped" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
-                    title={
-                      latestAudienceRunId
-                        ? "Lighter: re-run research desks toward your question and reuse the latest completed audience. Much cheaper."
-                        : "Available after a completed simulation with an audience."
-                    }
-                  >
-                    Lighter
-                  </button>
+                {!done && !(pending && pending.options.length > 0) && (
+                  <form onSubmit={send}>
+                    <div className="flex items-center gap-2 rounded-lg border border-neutral-300 px-3 py-2.5 focus-within:border-indigo-500">
+                      <input
+                        value={input}
+                        onChange={(e) => setInput(e.target.value)}
+                        placeholder={
+                          messages.length === 1
+                            ? "I want to launch a teak furniture brand from Jodhpur..."
+                            : "Type your answer..."
+                        }
+                        disabled={busy || launching}
+                        className="min-w-0 flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
+                        autoFocus
+                      />
+                      <button
+                        type="submit"
+                        disabled={!input.trim() || busy || launching}
+                        className="text-neutral-400 hover:text-indigo-600 disabled:opacity-40"
+                      >
+                        <CornerDownLeft className="h-4 w-4" />
+                      </button>
+                    </div>
+                  </form>
+                )}
+
+                {(busy || launching) && (
+                  <div className="mt-3 flex items-center gap-2 text-xs text-neutral-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {launching ? "launching run..." : "thinking..."}
+                  </div>
+                )}
+              </section>
+            )}
+
+            {done && profile && !launching && (
+              <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                    {simRuns.length > 0
+                      ? "Run a follow-up simulation"
+                      : "Run a simulation"}
+                  </p>
+                  <h3 className="mt-1 text-base font-semibold">
+                    Explore the next decision
+                  </h3>
                 </div>
-                <button
-                  onClick={() => void launchNewRun()}
+                <input
+                  value={focusQuestion}
+                  onChange={(e) => setFocusQuestion(e.target.value)}
+                  placeholder="Question to explore"
                   disabled={launching}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  <Play className="h-3 w-3" />
-                  {mode === "scoped"
-                    ? "Run lighter simulation"
-                    : agentCount === 0
-                      ? "Run research only"
-                      : `Run ${agentCount.toLocaleString()} agents · ~$${estimateRunCost(agentCount).toFixed(2)}`}
-                </button>
-              </div>
-              <p className="text-[10px] text-neutral-400">
-                {mode === "scoped"
-                  ? "Lighter: re-runs research desks on your question and reuses the latest completed audience — cheaper, faster."
-                  : "Full: fresh research desks and a newly simulated audience of thousands (can reach the cost cap)."}
+                  className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
+                />
+                <textarea
+                  value={additionalContext}
+                  onChange={(e) => setAdditionalContext(e.target.value)}
+                  placeholder="New information since the last run (optional)"
+                  disabled={launching}
+                  rows={3}
+                  className="w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
+                />
+
+                <div className="space-y-1.5 rounded-lg bg-neutral-50 p-2.5">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-[11px] font-medium text-neutral-600">
+                      Audience size
+                    </label>
+                    <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                      ~${estimateRunCost(agentCount).toFixed(2)} est.
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="range"
+                      min={0}
+                      max={MAX_AGENTS}
+                      step={100}
+                      value={agentCount}
+                      onChange={(e) => setAgentCount(Number(e.target.value))}
+                      disabled={launching || mode === "scoped"}
+                      className="min-w-0 flex-1 accent-indigo-600 disabled:opacity-40"
+                    />
+                    <input
+                      type="number"
+                      min={0}
+                      max={MAX_AGENTS}
+                      step={100}
+                      value={agentCount}
+                      onChange={(e) =>
+                        setAgentCount(
+                          Math.max(
+                            0,
+                            Math.min(
+                              MAX_AGENTS,
+                              Math.round(Number(e.target.value) || 0)
+                            )
+                          )
+                        )
+                      }
+                      disabled={launching || mode === "scoped"}
+                      className="w-20 rounded-lg border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-indigo-500 disabled:opacity-40"
+                    />
+                  </div>
+                </div>
+
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex overflow-hidden rounded-lg border border-neutral-300 text-[11px] font-medium">
+                    <button
+                      type="button"
+                      onClick={() => setMode("full")}
+                      className={`px-2.5 py-1.5 ${mode === "full" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
+                      title="Full simulation: fresh research desks + a newly simulated audience."
+                    >
+                      Full
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setMode("scoped")}
+                      disabled={!latestAudienceRunId}
+                      className={`px-2.5 py-1.5 disabled:opacity-40 ${mode === "scoped" ? "bg-neutral-900 text-white" : "text-neutral-600 hover:bg-neutral-50"}`}
+                      title={
+                        latestAudienceRunId
+                          ? "Re-run research toward your question and reuse the latest completed audience."
+                          : "Available after a completed simulation with an audience."
+                      }
+                    >
+                      Lighter
+                    </button>
+                  </div>
+                  <button
+                    onClick={() => void launchNewRun()}
+                    disabled={launching}
+                    className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                  >
+                    <Play className="h-3 w-3" />
+                    {mode === "scoped"
+                      ? "Run lighter"
+                      : agentCount === 0
+                        ? "Run research"
+                        : `Run ${agentCount.toLocaleString()} agents`}
+                  </button>
+                </div>
+                {launching && (
+                  <div className="flex items-center gap-2 text-xs text-neutral-400">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    launching run...
+                  </div>
+                )}
+              </section>
+            )}
+
+            {error && (
+              <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+                {error}
               </p>
-            </div>
-          </div>
-        )}
-
-        {(busy || launching) && (
-          <div className="flex items-center gap-2 text-xs text-neutral-400">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            {launching ? "launching run…" : "thinking…"}
-          </div>
-        )}
-        {error && <p className="text-sm text-red-600">{error}</p>}
-        <div ref={bottomRef} />
-      </div>
-
-      {/* Free-text bar — only for the opening question or any question that
-          has no clickable options. Questions WITH options take their custom
-          input via the inline “Other” field above. */}
-      {!done && !(pending && pending.options.length > 0) && (
-        <form onSubmit={send} className="pb-2">
-          <div className="flex items-center gap-2 rounded-xl border border-neutral-300 px-4 py-3 focus-within:border-indigo-500">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder={
-                messages.length === 1
-                  ? "I want to launch a teak furniture brand from Jodhpur…"
-                  : "Type your answer…"
-              }
-              disabled={busy || launching}
-              className="flex-1 bg-transparent text-sm outline-none disabled:opacity-50"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={!input.trim() || busy || launching}
-              className="text-neutral-400 hover:text-indigo-600 disabled:opacity-40"
-            >
-              <CornerDownLeft className="h-4 w-4" />
-            </button>
-          </div>
-        </form>
-      )}
+            )}
+            <div ref={bottomRef} />
+          </aside>
+        </div>
+      </section>
     </main>
   );
 }

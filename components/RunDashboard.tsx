@@ -137,7 +137,8 @@ export default function RunDashboard({
   siblingRuns,
 }: Props) {
   const router = useRouter();
-  const { state, patchState, replay, replaying } = useRunEvents(runId);
+  const { state, patchState, replay, replaying, hydrated } =
+    useRunEvents(runId);
   const [view, setView] = useState<
     | "geo"
     | "network"
@@ -408,6 +409,34 @@ export default function RunDashboard({
   const selectedCohort = selectedCohortId
     ? state.cohorts[selectedCohortId]
     : null;
+
+  if (!hydrated) {
+    return (
+      <div className="flex h-full flex-col">
+        <header className="flex items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
+          <a href="/" className="text-sm font-semibold tracking-tight">
+            EntreTangle
+          </a>
+          <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
+          <p
+            className="max-w-md flex-1 truncate text-xs text-neutral-500"
+            title={brief}
+          >
+            {brief}
+          </p>
+          {siblingRuns.length > 1 && (
+            <RunSwitcher runId={runId} siblings={siblingRuns} />
+          )}
+        </header>
+        <main className="flex flex-1 items-center justify-center bg-neutral-50">
+          <div className="flex items-center gap-2 text-sm text-neutral-500">
+            <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+            Loading simulation…
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">

@@ -3,6 +3,7 @@ import { z } from "zod";
 import {
   createProject,
   getLatestProjectLean,
+  listProjectPreviews,
   listProjects,
 } from "@/lib/store";
 
@@ -13,6 +14,9 @@ export const dynamic = "force-dynamic";
 //   persona arrays stripped — the list UI only needs counts; full agent
 //   output stays saved in the DB).
 export async function GET(req: NextRequest) {
+  if (req.nextUrl.searchParams.get("previews")) {
+    return NextResponse.json({ projects: await listProjectPreviews() });
+  }
   if (req.nextUrl.searchParams.get("latest")) {
     return NextResponse.json({ project: await getLatestProjectLean() });
   }

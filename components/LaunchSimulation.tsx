@@ -92,6 +92,7 @@ export default function LaunchSimulation({
   const [defaults, setDefaults] = useState<Defaults | null>(null);
   const [scenarios, setScenarios] = useState<LaunchSimRecord[]>([]);
   const [active, setActive] = useState<LaunchSimRecord | null>(null);
+  const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -104,9 +105,11 @@ export default function LaunchSimulation({
   useEffect(() => {
     let alive = true;
     (async () => {
+      setLoading(true);
+      setError(null);
       try {
         const res = await fetch(`/api/runs/${runId}/launch-sim`);
-        if (!res.ok) return;
+        if (!res.ok) throw new Error(`failed to load (${res.status})`);
         const data = (await res.json()) as {
           scenarios: LaunchSimRecord[];
           defaults: Defaults;
@@ -129,8 +132,11 @@ export default function LaunchSimulation({
           setInputs(data.scenarios[0].inputs);
           setName(nextName(data.scenarios));
         }
-      } catch {
-        /* ignore */
+      } catch (e) {
+        if (alive)
+          setError(e instanceof Error ? e.message : "Failed to load defaults");
+      } finally {
+        if (alive) setLoading(false);
       }
     })();
     return () => {
@@ -196,6 +202,15 @@ export default function LaunchSimulation({
           </p>
         </div>
 
+        {loading ? (
+          <section className="flex min-h-56 items-center justify-center rounded-xl border border-neutral-200 bg-white">
+            <div className="flex items-center gap-2 text-sm text-neutral-500">
+              <Loader2 className="h-4 w-4 animate-spin text-indigo-600" />
+              Loading launch simulation…
+            </div>
+          </section>
+        ) : (
+          <>
         {/* Saved scenarios */}
         {scenarios.length > 0 && (
           <div className="flex flex-wrap items-center gap-2">
@@ -467,6 +482,8 @@ export default function LaunchSimulation({
         </section>
 
         {active && <Results record={active} fmt={fmt} />}
+          </>
+        )}
       </div>
     </div>
   );

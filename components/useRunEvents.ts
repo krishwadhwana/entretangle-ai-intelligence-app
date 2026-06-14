@@ -287,17 +287,21 @@ export function useRunEvents(runId: string): {
   patchState: (patch: Partial<CanvasState>) => void;
   replay: () => void;
   replaying: boolean;
+  hydrated: boolean;
 } {
   const [state, dispatch] = useReducer(dispatchReducer, initialCanvasState);
   // Every event ever received, in seq order — fuels client-side replay.
   const eventLog = useRef<RunEvent[]>([]);
   const [replaying, setReplaying] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
   const replayTimers = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   useEffect(() => {
+    let cancelled = false;
     eventLog.current = [];
+    setHydrated(false);
     dispatch({ kind: "reset" });
-    const source = new EventSource(`/api/runs/${runId}/events`);
+    let source: EventSource | null = null;
 
     const onEvent = (msg: MessageEvent) => {
       try {
@@ -311,10 +315,82 @@ export function useRunEvents(runId: string): {
         // malformed frame — ignore
       }
     };
-    // EventSource dispatches by `event:` name, so register every type.
-    for (const t of EVENT_TYPES) source.addEventListener(t, onEvent);
 
-    return () => source.close();
+    (async () => {
+      try {
+        const res = await fetch(`/api/runs/${runId}`);
+        if (res.ok) {
+          const data = (await res.json()) as {
+            run: {
+              status: RunStatus;
+              tokensUsed: number;
+              costUsd: number;
+            };
+            blocks: Block[];
+            edges: Edge[];
+            cohorts: CohortWithPersonas[];
+            aggregate: AudienceAggregate | null;
+            finalReport: FinalReport | null;
+            phaseLabel: string | null;
+            latestEvent: { seq: number; ts: number } | null;
+          };
+          if (!cancelled) {
+            const blocks: Record<string, Block> = {};
+            for (const block of data.blocks) blocks[block.id] = block;
+            const cohorts: Record<string, CohortWithPersonas> = {};
+            for (const cohort of data.cohorts) cohorts[cohort.id] = cohort;
+            dispatch({
+              kind: "patch",
+              patch: {
+                status: data.run.status,
+                phaseLabel:
+                  data.phaseLabel ??
+                  (data.run.status === "complete" || data.run.status === "capped"
+                    ? "World model ready"
+                    : data.run.status === "failed"
+                      ? "Run failed"
+                      : data.run.status === "cancelled"
+                        ? "Run cancelled"
+                        : "Loading run…"),
+                blocks,
+                blockOrder: data.blocks.map((b) => b.id),
+                edges: data.edges,
+                cohorts,
+                cohortOrder: data.cohorts.map((c) => c.id),
+                aggregate: data.aggregate,
+                tokensUsed: data.run.tokensUsed,
+                costUsd: data.run.costUsd,
+                worldModel:
+                  data.blocks.length > 0
+                    ? {
+                        blockCount: data.blocks.length,
+                        conclusionCount: data.blocks.reduce(
+                          (sum, block) => sum + block.conclusions.length,
+                          0
+                        ),
+                      }
+                    : null,
+                finalReport: data.finalReport,
+                lastSeq: data.latestEvent?.seq ?? 0,
+                lastEventTs: data.latestEvent?.ts ?? 0,
+              },
+            });
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setHydrated(true);
+          source = new EventSource(`/api/runs/${runId}/events`);
+          // EventSource dispatches by `event:` name, so register every type.
+          for (const t of EVENT_TYPES) source.addEventListener(t, onEvent);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      source?.close();
+    };
   }, [runId]);
 
   // Re-reduces the captured event log with original inter-event delays
@@ -350,5 +426,5 @@ export function useRunEvents(runId: string): {
     dispatch({ kind: "patch", patch });
   }, []);
 
-  return { state, patchState, replay, replaying };
+  return { state, patchState, replay, replaying, hydrated };
 }
