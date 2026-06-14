@@ -76,14 +76,21 @@ export async function GET(
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
   const baseTier =
     model?.priceTiers.find((t) => t.label) ?? model?.priceTiers[0] ?? null;
+  const reachableProspectsPerMonth =
+    model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const defaults = {
     currency: model?.currency ?? currency,
     suggestedCostPrice: model
       ? model.costStructure.reduce((s, c) => s + c.amount.value, 0)
       : null,
     suggestedSalePrice: baseTier?.price.value ?? null,
-    reachableProspectsPerMonth:
-      model?.marketSizing.reachableProspectsPerMonth.value ?? null,
+    suggestedAdSpendPerMonth: suggestAdSpendPerMonth(
+      model?.unitEconomics.blendedCac.value ?? null,
+      reachableProspectsPerMonth,
+      model?.breakEven.fixedCostsPerMonth.value ?? null,
+      baseTier?.price.value ?? null
+    ),
+    reachableProspectsPerMonth,
     fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
   };
 
@@ -192,4 +199,33 @@ function dominantCurrency(codes: string[]): string | null {
   let bestN = 0;
   for (const [c, n] of counts) if (n > bestN) ((best = c), (bestN = n));
   return best;
+}
+
+function suggestAdSpendPerMonth(
+  blendedCac: number | null,
+  reachableProspectsPerMonth: number | null,
+  fixedCostsPerMonth: number | null,
+  salePrice: number | null
+): number | null {
+  const candidates: number[] = [];
+  if (
+    blendedCac != null &&
+    blendedCac > 0 &&
+    reachableProspectsPerMonth != null &&
+    reachableProspectsPerMonth > 0
+  ) {
+    const targetCustomers = Math.min(
+      250,
+      Math.max(20, reachableProspectsPerMonth * 0.01)
+    );
+    candidates.push(blendedCac * targetCustomers);
+  }
+  if (fixedCostsPerMonth != null && fixedCostsPerMonth > 0) {
+    candidates.push(fixedCostsPerMonth * 0.15);
+  }
+  if (salePrice != null && salePrice > 0) {
+    candidates.push(salePrice * 20);
+  }
+  const suggested = candidates.find((n) => Number.isFinite(n) && n > 0);
+  return suggested == null ? null : Math.round(suggested);
 }

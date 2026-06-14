@@ -373,18 +373,19 @@ export async function saveFinancials(
   id: string,
   section: FinancialsSection
 ): Promise<FinancialsSection> {
+  const parsed = FinancialsSectionSchema.parse(section);
   const updated = await prisma.$executeRaw`
     UPDATE projects
     SET owner_dashboard = jsonb_set(
           COALESCE(owner_dashboard, '{}'::jsonb),
           '{financials}',
-          ${JSON.stringify(section)}::jsonb,
+          ${JSON.stringify(parsed)}::jsonb,
           true
         ),
         updated_at = now() AT TIME ZONE 'utc'
     WHERE id = ${id}`;
   if (updated === 0) throw new Error("project not found");
-  return section;
+  return parsed;
 }
 
 /**

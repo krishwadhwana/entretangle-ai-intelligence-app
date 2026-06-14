@@ -140,12 +140,25 @@ export function resolveLaunchInputs(
     i.returnShippingPerOrder ?? i.shippingPerOrder;
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
-  // founder didn't pin a MOQ. Uses a quick steady-state demand estimate.
+  // founder didn't pin a MOQ. Size it from first-month reachable demand, not
+  // the whole pool, so a zero-acquisition scenario does not buy deadstock.
   let initialInventoryUnits = i.initialInventoryUnits;
   if (initialInventoryUnits == null) {
     const meanBuy = meanBuyProb(personas, i.salePrice);
-    const estMonthlyOrders = reachablePool * meanBuy * 0.2;
-    initialInventoryUnits = Math.max(10, Math.ceil(estMonthlyOrders * 1.5));
+    const paidImpressions =
+      i.cpm > 0 && i.adSpendPerMonth > 0
+        ? (i.adSpendPerMonth / i.cpm) * 1000
+        : 0;
+    const paidReach = paidImpressions / Math.max(i.frequencyCap, 1);
+    const organicReach =
+      i.granularity === "day"
+        ? i.organicReachPerStep * 30
+        : i.organicReachPerStep;
+    const firstMonthReach = Math.min(reachablePool, paidReach + organicReach);
+    const decisionCoverage = 1 - Math.pow(1 - decisionSpeed, stepsPerMonth);
+    const estMonthlyOrders = firstMonthReach * meanBuy * decisionCoverage;
+    initialInventoryUnits =
+      estMonthlyOrders > 0 ? Math.max(10, Math.ceil(estMonthlyOrders * 1.5)) : 0;
   }
 
   return {

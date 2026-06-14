@@ -124,6 +124,37 @@ assert(
 );
 console.log("Data maturity after overrides:", edited.dataMaturityPct + "%");
 
+// --- aggregate fallback: launch/financial demand must not collapse to zero
+// when persona rows are missing but the audience aggregate is present.
+console.log("\n— demand fallback: aggregate-only audience still converts —\n");
+const aggregateOnly = computeFinancials(
+  inputs,
+  {
+    personas: [],
+    aggregate: {
+      totalPersonas: 100,
+      totalCohorts: 3,
+      bySegment: {
+        budget: { n: 40, meanIntent: 0.5, wtpP50: 60000 },
+        middle: { n: 40, meanIntent: 0.6, wtpP50: 110000 },
+        affluent: { n: 20, meanIntent: 0.7, wtpP50: 200000 },
+      },
+      byLocality: {},
+      byRole: {},
+      channelShare: [],
+      platformShare: [],
+      platformMatrix: {},
+      topObjections: [],
+    },
+  },
+  { capitalAvailable: 4000000, source: "founder_entered" }
+);
+const aggregateCore = aggregateOnly.priceTiers.find((t) => t.label === "Core")!;
+assert(
+  aggregateCore.estUnitsPerMonth.value > 0,
+  "Aggregate-only demand produces positive Core units (not a zero-order launch)"
+);
+
 // --- persistence regression: non-computable metrics must survive the JSONB
 // round-trip (Infinity/NaN → JSON null → must re-parse, not wipe the section).
 console.log("\n— persistence: no-CAC / zero-fixed-cost model round-trips —\n");

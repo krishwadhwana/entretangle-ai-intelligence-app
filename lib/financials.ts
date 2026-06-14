@@ -68,7 +68,7 @@ const computed = (
 ): FinNum => num(value, unit, { source: "computed", basis, confidence });
 
 function round(n: number): number {
-  if (!isFinite(n)) return n;
+  if (!Number.isFinite(n)) return 0;
   const abs = Math.abs(n);
   // Keep cents for small numbers, whole units for money figures.
   const dp = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
@@ -77,27 +77,58 @@ function round(n: number): number {
 
 // --- conversion curve from the simulated audience --------------------------
 
+function cleanPersonaPoints(demand: DemandSource): PersonaPoint[] {
+  return (demand.personas ?? []).filter(
+    (p) =>
+      Number.isFinite(p.wtp) &&
+      p.wtp > 0 &&
+      Number.isFinite(p.intent) &&
+      p.intent > 0
+  );
+}
+
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+// A deterministic soft affordability curve around the group's median WTP. This
+// keeps sparse or cliff-edge samples from turning a plausible launch into
+// exactly zero orders simply because every sampled WTP landed just below price.
+function softAffordability(price: number, wtpP50: number): number {
+  if (!Number.isFinite(price) || price <= 0) return 0;
+  if (!Number.isFinite(wtpP50) || wtpP50 <= 0) return 0;
+  const slope = Math.max(wtpP50 * 0.35, 1);
+  return clamp01(1 / (1 + Math.exp((price - wtpP50) / slope)));
+}
+
+function aggregateConversionAtPrice(p: number, demand: DemandSource): number {
+  const agg = demand.aggregate;
+  if (!agg || agg.totalPersonas <= 0) return 0;
+  let weighted = 0;
+  let n = 0;
+  for (const seg of Object.values(agg.bySegment)) {
+    if (!Number.isFinite(seg.n) || seg.n <= 0) continue;
+    weighted += seg.n * clamp01(seg.meanIntent) * softAffordability(p, seg.wtpP50);
+    n += seg.n;
+  }
+  return n > 0 ? clamp01(weighted / n) : 0;
+}
+
 // Expected buyers per prospect at retail price `p`: the mean over simulated
 // personas of (purchase intent × can-afford-it). Returns a rate in [0, 1].
 function conversionAtPrice(p: number, demand: DemandSource): number {
-  const ps = demand.personas;
-  if (ps && ps.length > 0) {
+  const ps = cleanPersonaPoints(demand);
+  if (ps.length > 0) {
     let acc = 0;
-    for (const x of ps) acc += x.intent * (x.wtp >= p ? 1 : 0);
-    return acc / ps.length;
+    for (const x of ps) acc += clamp01(x.intent) * (x.wtp >= p ? 1 : 0);
+    const exact = acc / ps.length;
+    if (exact > 0) return clamp01(exact);
   }
-  // Fallback: per-segment P50 wtp + meanIntent (coarser — a step at P50).
-  const agg = demand.aggregate;
-  if (agg && agg.totalPersonas > 0) {
-    let weighted = 0;
-    let n = 0;
-    for (const seg of Object.values(agg.bySegment)) {
-      const buys = seg.wtpP50 >= p ? 1 : 0;
-      weighted += seg.n * seg.meanIntent * buys;
-      n += seg.n;
-    }
-    return n > 0 ? weighted / n : 0;
-  }
+  // Fallback: per-segment P50 wtp + meanIntent. This also smooths the exact
+  // persona curve when the sample produces an all-or-nothing cliff.
+  const fromAggregate = aggregateConversionAtPrice(p, demand);
+  if (fromAggregate > 0) return fromAggregate;
   return 0;
 }
 

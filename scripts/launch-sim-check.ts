@@ -137,6 +137,28 @@ assert(cumOk, "cumulative net profit equals the running sum of step profits");
 
 assert(s.deadstockUnits >= 0 && s.stockoutUnits >= 0, "deadstock and stockouts are non-negative");
 
+// Zero acquisition should not auto-buy a large opening inventory. The scenario
+// may still lose fixed costs, but it should not manufacture huge deadstock from
+// a demand estimate that no reachable buyer can enter.
+const noAcquisition = simulateLaunch(
+  personas,
+  {
+    ...baseInputs,
+    adSpendPerMonth: 0,
+    organicReachPerStep: 0,
+    initialInventoryUnits: null,
+  },
+  { reachableProspectsPerMonth: 8000 }
+);
+assert(
+  noAcquisition.resolvedInputs.initialInventoryUnits === 0,
+  "zero-acquisition scenarios do not auto-purchase launch inventory"
+);
+assert(
+  noAcquisition.summary.deadstockUnits === 0,
+  "zero-acquisition scenarios do not create deadstock by default"
+);
+
 console.log(
   `\nScenario: ${s.totalOrders.toFixed(0)} orders · ${(s.netProfit).toLocaleString()} net profit · ` +
     `${s.refundRatePct}% refunds · break-even ${a.summary.breakEvenLabel ?? "never"} · ` +

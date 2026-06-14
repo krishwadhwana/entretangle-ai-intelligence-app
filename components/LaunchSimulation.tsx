@@ -39,6 +39,7 @@ type Defaults = {
   currency: string;
   suggestedCostPrice: number | null;
   suggestedSalePrice: number | null;
+  suggestedAdSpendPerMonth: number | null;
   reachableProspectsPerMonth: number | null;
   fixedCostsPerMonth: number | null;
 };
@@ -111,6 +112,8 @@ export default function LaunchSimulation({
           currency: data.defaults.currency ?? cur.currency,
           costPrice: cur.costPrice || data.defaults.suggestedCostPrice || 0,
           salePrice: cur.salePrice || data.defaults.suggestedSalePrice || 0,
+          adSpendPerMonth:
+            cur.adSpendPerMonth || data.defaults.suggestedAdSpendPerMonth || 0,
           fixedCostsPerMonth:
             cur.fixedCostsPerMonth || data.defaults.fixedCostsPerMonth || 0,
         }));
