@@ -251,17 +251,20 @@ export default function LaunchSimulation({
         <section className="rounded-xl border border-neutral-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <NumField
-              label={`Cost price (${currency}/unit)`}
+              label="Cost price"
+              unit={`${currency}/unit`}
               value={inputs.costPrice}
               onChange={(v) => set("costPrice", v)}
             />
             <NumField
-              label={`Sale price (${currency}/unit)`}
+              label="Sale price"
+              unit={`${currency}/unit`}
               value={inputs.salePrice}
               onChange={(v) => set("salePrice", v)}
             />
             <NumField
-              label={`Ad spend (${currency}/month)`}
+              label="Ad spend"
+              unit={`${currency}/month`}
               value={inputs.adSpendPerMonth}
               onChange={(v) => set("adSpendPerMonth", v)}
             />
@@ -292,7 +295,8 @@ export default function LaunchSimulation({
               </div>
             </div>
             <NumField
-              label={`Horizon (${inputs.granularity}s)`}
+              label="Horizon"
+              unit={inputs.granularity === "day" ? "days" : "months"}
               value={inputs.horizon}
               onChange={(v) => set("horizon", Math.round(v))}
               small
@@ -317,6 +321,7 @@ export default function LaunchSimulation({
               >
                 <NumField
                   label="Reachable pool"
+                  unit="people"
                   help="Unique prospects available over the scenario. Use 0 to auto-size from the financial model."
                   value={inputs.reachablePool ?? 0}
                   onChange={(v) => set("reachablePool", v || null)}
@@ -324,13 +329,15 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="CPM"
-                  help="Estimated cost per 1,000 paid impressions."
+                  unit={`${currency}/1k`}
+                  help="Estimated currency cost per 1,000 paid impressions."
                   value={inputs.cpm}
                   onChange={(v) => set("cpm", v)}
                   small
                 />
                 <NumField
                   label="Frequency cap"
+                  unit="impr./person"
                   help="Impressions needed before one person is likely to notice the launch."
                   value={inputs.frequencyCap}
                   onChange={(v) => set("frequencyCap", v)}
@@ -338,6 +345,7 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Organic reach/step"
+                  unit="people/step"
                   help="Non-paid people reached per day or month."
                   value={inputs.organicReachPerStep}
                   onChange={(v) => set("organicReachPerStep", v)}
@@ -351,14 +359,16 @@ export default function LaunchSimulation({
               >
                 <NumField
                   label="Targeting quality"
-                  help="0 = broad delivery, 1 = strongly aimed at high-intent personas."
-                  value={inputs.targetingQuality}
-                  onChange={(v) => set("targetingQuality", clamp01(v))}
-                  step={0.05}
+                  unit="%"
+                  help="0% = broad delivery, 100% = strongly aimed at high-intent personas."
+                  value={inputs.targetingQuality * 100}
+                  onChange={(v) => set("targetingQuality", pctToRatio(v))}
+                  step={5}
                   small
                 />
                 <NumField
                   label="Virality k"
+                  unit="people/buyer"
                   help="Extra awareness created by recent buyers through referrals or sharing."
                   value={inputs.viralityK}
                   onChange={(v) => set("viralityK", v)}
@@ -367,10 +377,11 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Abandon rate"
-                  help="Share of considerers who lose interest each step before buying."
-                  value={inputs.abandonRate}
-                  onChange={(v) => set("abandonRate", clamp01(v))}
-                  step={0.01}
+                  unit="%"
+                  help="Percent of considerers who lose interest each step before buying."
+                  value={inputs.abandonRate * 100}
+                  onChange={(v) => set("abandonRate", pctToRatio(v))}
+                  step={1}
                   small
                 />
               </AdvancedGroup>
@@ -381,21 +392,24 @@ export default function LaunchSimulation({
               >
                 <NumField
                   label="Shipping/order"
+                  unit={`${currency}/order`}
                   help="Outbound fulfillment cost per shipped order."
                   value={inputs.shippingPerOrder}
                   onChange={(v) => set("shippingPerOrder", v)}
                   small
                 />
                 <NumField
-                  label="Payment fee %"
-                  help="Payment gateway or marketplace fee as a fraction of revenue."
-                  value={inputs.paymentFeePct}
-                  onChange={(v) => set("paymentFeePct", clamp01(v))}
-                  step={0.005}
+                  label="Payment fee"
+                  unit="%"
+                  help="Payment gateway or marketplace fee as a percent of revenue."
+                  value={inputs.paymentFeePct * 100}
+                  onChange={(v) => set("paymentFeePct", pctToRatio(v))}
+                  step={0.5}
                   small
                 />
                 <NumField
-                  label="Fixed costs/month"
+                  label="Fixed costs"
+                  unit={`${currency}/month`}
                   help="Monthly overhead burned regardless of sales."
                   value={inputs.fixedCostsPerMonth}
                   onChange={(v) => set("fixedCostsPerMonth", v)}
@@ -403,6 +417,7 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Initial inventory"
+                  unit="units"
                   help="Opening units available. Use 0 to let the simulator auto-size it."
                   value={inputs.initialInventoryUnits ?? 0}
                   onChange={(v) =>
@@ -412,6 +427,7 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Reorder lead"
+                  unit="days"
                   help="Days between placing replenishment and receiving sellable inventory."
                   value={inputs.reorderLeadTimeDays}
                   onChange={(v) => set("reorderLeadTimeDays", Math.round(v))}
@@ -425,6 +441,7 @@ export default function LaunchSimulation({
               >
                 <NumField
                   label="Return window"
+                  unit="days"
                   help="Days after purchase when refunds land in cash and inventory."
                   value={inputs.returnWindowDays}
                   onChange={(v) => set("returnWindowDays", Math.round(v))}
@@ -432,6 +449,7 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Refund rate ×"
+                  unit="multiplier"
                   help="Multiplier on persona-level refund risk from objections and channel."
                   value={inputs.refundRateMult}
                   onChange={(v) => set("refundRateMult", v)}
@@ -440,14 +458,16 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Resellable returns"
-                  help="Fraction of returned units that can be sold again."
-                  value={inputs.resellablePct}
-                  onChange={(v) => set("resellablePct", clamp01(v))}
-                  step={0.05}
+                  unit="%"
+                  help="Percent of returned units that can be sold again."
+                  value={inputs.resellablePct * 100}
+                  onChange={(v) => set("resellablePct", pctToRatio(v))}
+                  step={5}
                   small
                 />
                 <NumField
                   label="Repeat rate ×"
+                  unit="multiplier"
                   help="Multiplier on segment-level repeat purchase behavior."
                   value={inputs.repeatRateMult}
                   onChange={(v) => set("repeatRateMult", v)}
@@ -1002,6 +1022,7 @@ function AdvancedGroup({
 
 function NumField({
   label,
+  unit,
   help,
   value,
   onChange,
@@ -1009,6 +1030,7 @@ function NumField({
   small,
 }: {
   label: string;
+  unit?: string;
   help?: string;
   value: number;
   onChange: (v: number) => void;
@@ -1020,15 +1042,22 @@ function NumField({
       <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
         {label}
       </label>
-      <input
-        type="number"
-        value={Number.isFinite(value) ? value : 0}
-        step={step}
-        onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
-        className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
-          small ? "py-1 text-xs" : "py-1.5 text-sm"
-        }`}
-      />
+      <div className="relative">
+        <input
+          type="number"
+          value={Number.isFinite(value) ? value : 0}
+          step={step}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
+            unit ? "pr-24" : ""
+          } ${small ? "py-1 text-xs" : "py-1.5 text-sm"}`}
+        />
+        {unit && (
+          <span className="pointer-events-none absolute inset-y-0 right-2 flex max-w-20 items-center truncate text-[10px] font-medium text-neutral-400">
+            {unit}
+          </span>
+        )}
+      </div>
       {help && (
         <p className="mt-1 text-[10px] leading-snug text-neutral-400">
           {help}
@@ -1070,6 +1099,7 @@ function makeFormatters(currency: string): Formatters {
 }
 
 const clamp01 = (v: number) => (v < 0 ? 0 : v > 1 ? 1 : v);
+const pctToRatio = (v: number) => clamp01(v / 100);
 
 function nextName(scenarios: LaunchSimRecord[]): string {
   return `Scenario ${scenarios.length + 1}`;
