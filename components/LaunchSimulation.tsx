@@ -322,7 +322,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Reachable pool"
                   unit="people"
-                  help="Unique prospects available over the scenario. Use 0 to auto-size from the financial model."
+                  help="Unique prospects available over the scenario. Use 0 to auto-size. Small test: 5k-25k; niche launch: 50k-250k; broad market: 1M+."
                   value={inputs.reachablePool ?? 0}
                   onChange={(v) => set("reachablePool", v || null)}
                   small
@@ -330,7 +330,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="CPM"
                   unit={`${currency}/1k`}
-                  help="Estimated currency cost per 1,000 paid impressions."
+                  help={`Cost per 1,000 paid impressions. Cheap reach: ${currency}100-250; premium/niche: ${currency}500-1,500+.`}
                   value={inputs.cpm}
                   onChange={(v) => set("cpm", v)}
                   small
@@ -338,7 +338,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Frequency cap"
                   unit="impr./person"
-                  help="Impressions needed before one person is likely to notice the launch."
+                  help="Impressions needed before notice. 1-2 = light touch; 3-5 = normal launch; 6+ = heavy retargeting."
                   value={inputs.frequencyCap}
                   onChange={(v) => set("frequencyCap", v)}
                   small
@@ -346,7 +346,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Organic reach/step"
                   unit="people/step"
-                  help="Non-paid people reached per day or month."
+                  help="Non-paid people reached per day or month. 0 = no organic channel; 100-1k = early audience; 10k+ = strong owned/creator reach."
                   value={inputs.organicReachPerStep}
                   onChange={(v) => set("organicReachPerStep", v)}
                   small
@@ -360,7 +360,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Targeting quality"
                   unit="%"
-                  help="0% = broad delivery, 100% = strongly aimed at high-intent personas."
+                  help="0% = broad delivery; 50% = decent targeting; 80%+ = tightly aimed at high-intent personas."
                   value={inputs.targetingQuality * 100}
                   onChange={(v) => set("targetingQuality", pctToRatio(v))}
                   step={5}
@@ -369,7 +369,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Virality k"
                   unit="people/buyer"
-                  help="Extra awareness created by recent buyers through referrals or sharing."
+                  help="Extra people reached per buyer. 0.00 = no word of mouth; 0.05-0.20 = modest sharing; 0.50+ = unusually viral."
                   value={inputs.viralityK}
                   onChange={(v) => set("viralityK", v)}
                   step={0.05}
@@ -378,7 +378,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Abandon rate"
                   unit="%"
-                  help="Percent of considerers who lose interest each step before buying."
+                  help="Percent of considerers who lose interest each step. 2-5% = sticky demand; 10-20% = weak urgency or unclear offer."
                   value={inputs.abandonRate * 100}
                   onChange={(v) => set("abandonRate", pctToRatio(v))}
                   step={1}
@@ -401,7 +401,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Payment fee"
                   unit="%"
-                  help="Payment gateway or marketplace fee as a percent of revenue."
+                  help="Payment gateway or marketplace fee. Cards/direct checkout: 1.5-3%; marketplaces can be 8-25%."
                   value={inputs.paymentFeePct * 100}
                   onChange={(v) => set("paymentFeePct", pctToRatio(v))}
                   step={0.5}
@@ -410,7 +410,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Fixed costs"
                   unit={`${currency}/month`}
-                  help="Monthly overhead burned regardless of sales."
+                  help="Monthly overhead before variable costs: tools, retainers, salaries, rent, storage, and production admin."
                   value={inputs.fixedCostsPerMonth}
                   onChange={(v) => set("fixedCostsPerMonth", v)}
                   small
@@ -418,7 +418,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Initial inventory"
                   unit="units"
-                  help="Opening units available. Use 0 to let the simulator auto-size it."
+                  help="Opening sellable units. Use 0 to auto-size from expected first wave demand."
                   value={inputs.initialInventoryUnits ?? 0}
                   onChange={(v) =>
                     set("initialInventoryUnits", v ? Math.round(v) : null)
@@ -450,7 +450,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Refund rate ×"
                   unit="multiplier"
-                  help="Multiplier on persona-level refund risk from objections and channel."
+                  help="Scales persona refund risk. 1.0 = model baseline; 0.5 = half as many refunds; 2.0 = twice as many."
                   value={inputs.refundRateMult}
                   onChange={(v) => set("refundRateMult", v)}
                   step={0.1}
@@ -459,7 +459,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Resellable returns"
                   unit="%"
-                  help="Percent of returned units that can be sold again."
+                  help="Returned units that can be sold again. Apparel often 50-80%; custom or damaged goods can be much lower."
                   value={inputs.resellablePct * 100}
                   onChange={(v) => set("resellablePct", pctToRatio(v))}
                   step={5}
@@ -468,7 +468,7 @@ export default function LaunchSimulation({
                 <NumField
                   label="Repeat rate ×"
                   unit="multiplier"
-                  help="Multiplier on segment-level repeat purchase behavior."
+                  help="Scales repeat purchase behavior. 1.0 = segment baseline; 0.5 = weak retention; 2.0 = strong repeat demand."
                   value={inputs.repeatRateMult}
                   onChange={(v) => set("repeatRateMult", v)}
                   step={0.1}
