@@ -104,6 +104,8 @@ type Msg = OpenAI.Chat.ChatCompletionMessageParam;
 // reasoning effort low so blocks stay inside BLOCK_TIMEOUT_MS.
 const COMPLETION_BUDGET = 8000;
 const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per batch
+const FINANCIALS_WEB_TIMEOUT_MS = 12_000;
+const FINANCIALS_FALLBACK_TIMEOUT_MS = 30_000;
 
 function baseParams(
   model: string = config.model
@@ -403,7 +405,8 @@ export async function callCohortSim(
   profile: ClientProfile,
   currency: string,
   n: number,
-  batchIndex = 0
+  batchIndex = 0,
+  focus?: RunFocus
 ): Promise<CohortSimOutput> {
   if (config.mockMode) {
     return CohortSimOutputSchema.parse(
@@ -417,7 +420,7 @@ export async function callCohortSim(
       : "";
   const out = await callJson({
     runId,
-    system: cohortSimSystem(cohort, profile, currency, n),
+    system: cohortSimSystem(cohort, profile, currency, n, focus),
     user: `Simulate ${n} personas now.${batchNote} Output JSON only.`,
     schema: CohortSimOutputSchema,
     model: config.miniModel,
@@ -434,14 +437,15 @@ export async function callAudienceSynth(
   runId: string,
   profile: ClientProfile,
   aggregate: AudienceAggregate,
-  groundTruth?: string
+  groundTruth?: string,
+  focus?: RunFocus
 ): Promise<ExecutorOutput> {
   if (config.mockMode) {
     return ExecutorOutputSchema.parse(mockAudienceSynth(aggregate));
   }
   return callJson({
     runId,
-    system: audienceSynthSystem(profile, aggregate, groundTruth),
+    system: audienceSynthSystem(profile, aggregate, groundTruth, focus),
     user: "Begin. Output JSON only.",
     schema: ExecutorOutputSchema,
   });
@@ -1045,14 +1049,51 @@ async function fetchOk(url: string, timeoutMs = 6000): Promise<boolean> {
   }
 }
 
+// A YouTube video EXISTS iff its thumbnail resolves. This beats oEmbed, which
+// returns 401 for real videos that merely disable embedding (label/brand
+// videos often do) — those are still perfectly watchable via a link, so oEmbed
+// would wrongly drop them. The thumbnail is served regardless of embed policy
+// and 404s only for genuinely non-existent ids.
+async function youtubeExists(id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`https://img.youtube.com/vi/${id}/hqdefault.jpg`, {
+      signal: AbortSignal.timeout(6000),
+    });
+    return res.status === 200;
+  } catch {
+    return false;
+  }
+}
+
+// Enrich a verified video with oEmbed's real title/channel when available, so
+// those fields are never the model's guess. Returns null on network error
+// (caller already confirmed existence, so we just keep the model's text).
+async function youtubeMeta(
+  id: string
+): Promise<{ title?: string; channel?: string } | null> {
+  try {
+    const res = await fetch(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(
+        `https://www.youtube.com/watch?v=${id}`
+      )}`,
+      { signal: AbortSignal.timeout(6000) }
+    );
+    if (!res.ok) return null; // 401 (embedding disabled) etc. — keep model text
+    const data = (await res.json()) as { title?: string; author_name?: string };
+    return { title: data.title, channel: data.author_name };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Trust gate for the Inspiration swipe file (verified-only). Drops anything we
  * can't confirm is live:
- *  - videos: must be YouTube with a real 11-char id that resolves via oEmbed
- *    (and we adopt oEmbed's real title/channel so they're never fabricated);
- *  - success stories: must have a sourceUrl that fetches < 400;
+ *  - videos: real 11-char YouTube id whose thumbnail resolves (existence),
+ *    title/channel enriched from oEmbed when reachable;
+ *  - success stories: a sourceUrl that fetches < 400;
  *  - placement accountUrl: kept if present (IG/TikTok can't be reliably checked
- *    without auth), nulled only when obviously empty.
+ *    without auth).
  * Runs all checks concurrently. Mock mode skips this (fixtures are pre-clean).
  */
 export async function verifyInspiration(
@@ -1060,27 +1101,29 @@ export async function verifyInspiration(
 ): Promise<InspirationKit> {
   if (config.mockMode) return kit;
 
+  const searchUrl = (v: InspirationKit["videoExamples"][number]) =>
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(
+      v.searchQuery || `${v.title} ${v.channel}`.trim()
+    )}`;
+
   const videos = await Promise.all(
     kit.videoExamples.map(async (v) => {
-      if (!YT_ID_RE.test(v.youtubeId)) return null;
-      try {
-        const res = await fetch(
-          `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(
-            `https://www.youtube.com/watch?v=${v.youtubeId}`
-          )}`,
-          { signal: AbortSignal.timeout(6000) }
-        );
-        if (!res.ok) return null;
-        const data = (await res.json()) as { title?: string; author_name?: string };
+      // Drop only an item with nothing to act on (no id AND no searchable text).
+      if (!v.youtubeId && !v.searchQuery && !v.title) return null;
+      // Verified specific video — the thumbnail (not oEmbed) proves existence.
+      if (YT_ID_RE.test(v.youtubeId) && (await youtubeExists(v.youtubeId))) {
+        const meta = await youtubeMeta(v.youtubeId);
         return {
           ...v,
+          verified: true,
           url: `https://www.youtube.com/watch?v=${v.youtubeId}`,
-          title: data.title || v.title,
-          channel: data.author_name || v.channel,
+          title: meta?.title || v.title,
+          channel: meta?.channel || v.channel,
         };
-      } catch {
-        return null;
       }
+      // Fallback: a working YouTube search link (verified-only chose this over
+      // showing a fabricated specific id).
+      return { ...v, verified: false, youtubeId: "", url: searchUrl(v) };
     })
   );
 
@@ -1091,9 +1134,13 @@ export async function verifyInspiration(
   );
 
   return {
-    videoExamples: videos.filter((v): v is InspirationKit["videoExamples"][number] => v !== null),
+    videoExamples: videos.filter(
+      (v): v is InspirationKit["videoExamples"][number] => v !== null
+    ),
     placementExamples: kit.placementExamples,
-    successStories: stories.filter((s): s is InspirationKit["successStories"][number] => s !== null),
+    successStories: stories.filter(
+      (s): s is InspirationKit["successStories"][number] => s !== null
+    ),
   };
 }
 
@@ -1153,20 +1200,23 @@ export async function callFinancialInputs(
   )}`;
 
   try {
-    const response = await client().responses.create({
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content:
-            "Search the web to sanity-check market size and prices, then output JSON only.",
-        },
-      ],
-      max_output_tokens: 16000,
-      reasoning: { effort: "low" },
-    });
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content:
+              "Search the web to sanity-check market size and prices, then output JSON only.",
+          },
+        ],
+        max_output_tokens: 16000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: FINANCIALS_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
     const searchCalls = Array.isArray(response.output)
       ? response.output.filter((o: { type?: string }) =>
           String(o.type ?? "").startsWith("web_search")
@@ -1196,6 +1246,9 @@ export async function callFinancialInputs(
       user: financialsUser(profile, conclusions, aggregate, currency),
       schema: FinancialInputsSchema,
       maxCompletionTokens: 16000,
+      maxAttempts: 1,
+      requestTimeoutMs: FINANCIALS_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
     });
   }
 }

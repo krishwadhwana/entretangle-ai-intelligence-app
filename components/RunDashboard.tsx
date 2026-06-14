@@ -10,9 +10,12 @@ import {
   Users,
   Layers,
   ChevronDown,
+  GitBranchPlus,
   Loader2,
   Play,
+  Rocket,
   Square,
+  X,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
 import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
@@ -20,6 +23,7 @@ import NetworkView from "./NetworkView";
 import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
+import LaunchSimulation from "./LaunchSimulation";
 import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
 
@@ -135,13 +139,31 @@ export default function RunDashboard({
   const router = useRouter();
   const { state, patchState, replay, replaying } = useRunEvents(runId);
   const [view, setView] = useState<
-    "geo" | "network" | "insights" | "playbook" | "owner" | "domain" | "conclusion"
+    | "geo"
+    | "network"
+    | "insights"
+    | "playbook"
+    | "owner"
+    | "launch"
+    | "domain"
+    | "conclusion"
   >("geo");
   const [activePanel, setActivePanel] = useState<
     "conclusion" | Domain | null
   >(null);
   const [reportBusy, setReportBusy] = useState(false);
+  const [audienceBranchOpen, setAudienceBranchOpen] = useState(false);
+  const [audienceBranchInfo, setAudienceBranchInfo] = useState("");
+  const [audienceBranchBusy, setAudienceBranchBusy] = useState(false);
+  const [audienceBranchError, setAudienceBranchError] = useState<string | null>(
+    null
+  );
   const [selectedCohortId, setSelectedCohortId] = useState<string | null>(null);
+  // Win-back deep link: open a cohort's drawer focused on one persona's chat.
+  const [chatTarget, setChatTarget] = useState<{
+    cohortId: string;
+    personaId: string;
+  } | null>(null);
   const [highlightedBlocks, setHighlightedBlocks] = useState<Set<string>>(
     new Set()
   );
@@ -184,6 +206,11 @@ export default function RunDashboard({
       pct,
     };
   }, [state.status, state.blocks, cohorts]);
+
+  const canBranchAudience =
+    !progress.inProgress && !replaying && personaCount > 0;
+  // Launch Simulation unlocks once the audience has finished simulating.
+  const canLaunch = !progress.inProgress && !replaying && personaCount > 0;
 
   const onQuery = useCallback(
     async (
@@ -258,7 +285,15 @@ export default function RunDashboard({
   );
 
   const selectMainView = useCallback(
-    (nextView: "geo" | "network" | "insights" | "playbook" | "owner") => {
+    (
+      nextView:
+        | "geo"
+        | "network"
+        | "insights"
+        | "playbook"
+        | "owner"
+        | "launch"
+    ) => {
       setActivePanel(null);
       setView(nextView);
     },
@@ -290,6 +325,28 @@ export default function RunDashboard({
       setReportBusy(false);
     }
   }, [patchState, reportBusy, runId]);
+
+  const onCreateAudienceBranch = useCallback(async () => {
+    const information = audienceBranchInfo.trim();
+    if (!information || audienceBranchBusy) return;
+    setAudienceBranchBusy(true);
+    setAudienceBranchError(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/audience-branch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ information }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error ?? `branch failed (${res.status})`);
+      }
+      router.push(`/runs/${data.runId}`);
+    } catch (e) {
+      setAudienceBranchError(e instanceof Error ? e.message : "Branch failed");
+      setAudienceBranchBusy(false);
+    }
+  }, [audienceBranchBusy, audienceBranchInfo, router, runId]);
 
   // --- "Continue run" (resume) ----------------------------------------------
   // A run is resumable if it ended capped/failed, OR it claims to be "running"
@@ -371,6 +428,37 @@ export default function RunDashboard({
         {siblingRuns.length > 1 && (
           <RunSwitcher runId={runId} siblings={siblingRuns} />
         )}
+        <button
+          onClick={() => {
+            setAudienceBranchError(null);
+            setAudienceBranchOpen(true);
+          }}
+          disabled={!canBranchAudience}
+          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 disabled:opacity-40"
+          title={
+            canBranchAudience
+              ? "Create an audience-variant branch"
+              : "Available after an audience has simulated"
+          }
+        >
+          <GitBranchPlus className="h-3 w-3" /> Audience branch
+        </button>
+        <button
+          onClick={() => selectMainView("launch")}
+          disabled={!canLaunch}
+          className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+            view === "launch"
+              ? "bg-indigo-600 text-white"
+              : "border border-indigo-300 text-indigo-700 hover:border-indigo-500"
+          } disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-transparent disabled:text-neutral-400 disabled:opacity-60`}
+          title={
+            canLaunch
+              ? "Simulate the product launch over this audience"
+              : "Available after the audience has finished simulating"
+          }
+        >
+          <Rocket className="h-3 w-3" /> Launch Simulation
+        </button>
         <span
           className="flex items-center gap-1 text-[11px] text-neutral-500"
           title="simulated personas"
@@ -461,6 +549,77 @@ export default function RunDashboard({
         </div>
       )}
 
+      {audienceBranchOpen && (
+        <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/30 px-4">
+          <div className="w-full max-w-xl rounded-lg border border-neutral-200 bg-white shadow-xl">
+            <div className="flex items-center justify-between border-b border-neutral-100 px-4 py-3">
+              <div>
+                <h2 className="text-sm font-semibold text-neutral-900">
+                  Audience branch
+                </h2>
+                <p className="mt-0.5 text-[11px] text-neutral-500">
+                  Add one branch-only audience fact.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAudienceBranchOpen(false)}
+                className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="space-y-3 px-4 py-4">
+              <label className="block text-xs font-medium text-neutral-700">
+                New audience information
+              </label>
+              <textarea
+                value={audienceBranchInfo}
+                onChange={(e) => setAudienceBranchInfo(e.target.value)}
+                maxLength={4000}
+                rows={6}
+                className="min-h-32 w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm leading-relaxed text-neutral-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+                placeholder="Example: this audience has already seen a trusted creator review the product."
+              />
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[11px] text-neutral-400">
+                  {audienceBranchInfo.length.toLocaleString()}/4,000
+                </p>
+                {audienceBranchError && (
+                  <p className="text-[11px] text-red-600">
+                    {audienceBranchError}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 border-t border-neutral-100 px-4 py-3">
+              <button
+                type="button"
+                onClick={() => setAudienceBranchOpen(false)}
+                disabled={audienceBranchBusy}
+                className="flex items-center gap-1 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-neutral-400 disabled:opacity-50"
+              >
+                <X className="h-3.5 w-3.5" /> Cancel
+              </button>
+              <button
+                type="button"
+                onClick={onCreateAudienceBranch}
+                disabled={!audienceBranchInfo.trim() || audienceBranchBusy}
+                className="flex items-center gap-1 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+              >
+                {audienceBranchBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <GitBranchPlus className="h-3.5 w-3.5" />
+                )}
+                {audienceBranchBusy ? "Starting..." : "Run branch"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <PanelStrip
         state={state}
         activePanel={activePanel}
@@ -504,6 +663,10 @@ export default function RunDashboard({
             maxCostUsd={maxCostUsd}
             maxTokens={maxTokens}
             onSelectCohort={setSelectedCohortId}
+            onChatPersona={(cohortId, personaId) => {
+              setSelectedCohortId(cohortId);
+              setChatTarget({ cohortId, personaId });
+            }}
           />
         ) : view === "playbook" ? (
           <PlaybookView state={state} onQuery={onQuery} />
@@ -513,6 +676,8 @@ export default function RunDashboard({
             projectId={projectId}
             state={state}
           />
+        ) : view === "launch" ? (
+          <LaunchSimulation runId={runId} projectId={projectId} />
         ) : (
           <NetworkView
             state={state}
@@ -529,7 +694,15 @@ export default function RunDashboard({
           <CohortDrawer
             runId={runId}
             cohort={selectedCohort}
-            onClose={() => setSelectedCohortId(null)}
+            onClose={() => {
+              setSelectedCohortId(null);
+              setChatTarget(null);
+            }}
+            initialChatPersonaId={
+              chatTarget?.cohortId === selectedCohortId
+                ? chatTarget.personaId
+                : undefined
+            }
           />
         )}
       </div>

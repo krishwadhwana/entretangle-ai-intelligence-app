@@ -13,6 +13,7 @@ import type {
   Persona,
   PlannerV2Output,
 } from "./schema";
+import type { RunFocus } from "./prompts";
 
 // ---------------------------------------------------------------------------
 // Audience simulation engine (SPEC-V2 §1C, §1D).
@@ -306,7 +307,8 @@ async function simulateCohort(
   emitter: RunEmitter,
   cohortId: string,
   profile: ClientProfile,
-  currency: string
+  currency: string,
+  focus?: RunFocus
 ): Promise<boolean> {
   const cohort = await prisma.cohort.findUniqueOrThrow({
     where: { id: cohortId },
@@ -342,7 +344,8 @@ async function simulateCohort(
           profile,
           currency,
           n,
-          attemptIndex
+          attemptIndex,
+          focus
         );
       } catch (e) {
         console.log(
@@ -430,7 +433,8 @@ export async function simulateAllCohorts(
   emitter: RunEmitter,
   cohortIds: string[],
   profile: ClientProfile,
-  currency: string
+  currency: string,
+  focus?: RunFocus
 ): Promise<number> {
   const concurrency = Math.max(1, config.audienceConcurrency);
   let done = 0;
@@ -454,7 +458,13 @@ export async function simulateAllCohorts(
       if (i >= cohortIds.length) return;
       // simulateCohort never throws (it catches + marks the cohort failed), so
       // one bad cohort can't kill its worker — the worker just grabs the next.
-      const ok = await simulateCohort(emitter, cohortIds[i], profile, currency);
+      const ok = await simulateCohort(
+        emitter,
+        cohortIds[i],
+        profile,
+        currency,
+        focus
+      );
       if (ok) done += 1;
       // Live spend tracking after each cohort.
       await emitter.emit({

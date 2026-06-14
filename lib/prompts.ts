@@ -225,17 +225,23 @@ entrepreneur's profile (any product, any geography), output:
    - "currency": ISO currency code personas quote willingness-to-pay in.
    - "localities": for narrow geographies, 8–14 real places. For national or
      broad geographies ("PAN-India", "all of India", "nationwide", a whole
-     country/region), include 25–40 real places spanning the FULL settlement
-     hierarchy — top metros, many tier-2 cities, tier-3 cities, and
-     representative semi-urban/smaller markets. If the geography is PAN-India,
-     you MUST cover at least ${PAN_INDIA_MIN_RELEVANT_SPOTS} of this relevant
-     Indian market set, chosen by product fit and geographic spread:
+     country/region), include about 50 real places spanning the FULL settlement
+     hierarchy — metros and tier-B markets, but especially tier-C, tier-D and
+     tier-E cities/towns plus representative semi-urban clusters. If the
+     geography is India-wide, you MUST cover at least
+     ${PAN_INDIA_MIN_RELEVANT_SPOTS} of this relevant Indian market set, chosen
+     by product fit, cultural spread and long-tail coverage:
      ${INDIA_RELEVANT_MARKETS.map((m) => m.name).join(", ")}.
-     Do NOT only pick the familiar metros. Include North, West, South, East,
-     Central and Northeast India where plausible. Include export markets too
-     where relevant. Each locality needs real lat/lng (decimal degrees). Treat
-     every place as genuinely DISTINCT in culture, settlement tier, income mix,
-     language, social norms and buying behavior.
+     Do NOT only pick the familiar metros. For plain "All India", prioritize
+     the C/D/E long-tail markets; the audience must include places like
+     Prayagraj, Aligarh, Bareilly, Gorakhpur, Kota, Udaipur, Kolhapur,
+     Jabalpur, Dhanbad, Muzaffarpur, Salem, Tiruchirappalli, Mangaluru and
+     comparable smaller markets, not just Mumbai/Delhi/Bengaluru. Include
+     North, West, South, East, Central and Northeast India where plausible.
+     Include export markets too where relevant. Each locality needs real
+     lat/lng (decimal degrees). Treat every place as genuinely DISTINCT in
+     culture, settlement tier, income mix, language, social norms and buying
+     behavior.
    - "cohorts": for narrow geographies, 24–60 cells; for PAN-India or other
      broad geographies, 80–140 cells of locality x segment x role with weightPct
      (share of addressable audience, must sum to ~100). Span as many distinct
@@ -269,6 +275,14 @@ export type RunFocus = {
   focusQuestion?: string | null;
   additionalContext?: string | null;
 };
+
+function runFocusSection(focus?: RunFocus): string {
+  const lines: string[] = [];
+  if (focus?.focusQuestion) lines.push(`Focus question: ${focus.focusQuestion}`);
+  if (focus?.additionalContext)
+    lines.push(`Additional context for this run: ${focus.additionalContext}`);
+  return lines.length ? `\nRun-specific context:\n${lines.join("\n")}\n` : "";
+}
 
 export function plannerV2User(
   profile: ClientProfile,
@@ -336,12 +350,14 @@ export function cohortSimSystem(
   cohort: Pick<Cohort, "label" | "locality" | "country" | "segment" | "role">,
   profile: ClientProfile,
   currency: string,
-  n: number
+  n: number,
+  focus?: RunFocus
 ): string {
   const cultureContext = cultureContextForLocality(
     cohort.locality,
     cohort.country
   );
+  const focusSection = runFocusSection(focus);
   const roleDesc: Record<string, string> = {
     consumer: "end consumers considering buying the product themselves",
     retail_exec:
@@ -362,6 +378,11 @@ Income segment: ${cohort.segment}
 Role: ${roleDesc[cohort.role] ?? cohort.role}
 Venture: ${JSON.stringify(profile)}
 Local upbringing / culture prior: ${cultureContext}
+${focusSection}
+When run-specific context is present, treat it as true for THIS branch only.
+Let it shift intent, willingness-to-pay, objections and channel preferences
+where it would plausibly matter. Do not force a positive result; the goal is
+to measure whether the added information changes response quality.
 
 Every one of these ${n} people has a DISTINCT personality, and that
 personality is rooted in ${cohort.locality}, ${cohort.country} — its culture,
@@ -444,9 +465,11 @@ Output JSON only: {"summary":"...","personas":[{"name":"...","age":0,
 export function audienceSynthSystem(
   profile: ClientProfile,
   aggregate: AudienceAggregate,
-  groundTruth?: string
+  groundTruth?: string,
+  focus?: RunFocus
 ): string {
   const groundTruthSection = groundTruth ? `\n${groundTruth}\n` : "";
+  const focusSection = runFocusSection(focus);
   return `You are the "Audience Synthesis" desk. A simulated audience of
 ${aggregate.totalPersonas} personas across ${aggregate.totalCohorts} cohorts
 (localities x income segments x roles) has been aggregated:
@@ -454,9 +477,12 @@ ${aggregate.totalPersonas} personas across ${aggregate.totalCohorts} cohorts
 ${JSON.stringify(aggregate, null, 2)}
 
 Client profile: ${JSON.stringify(profile)}
+${focusSection}
 ${groundTruthSection}
 When founder-provided ground truth is present, reconcile the simulated numbers
 against it and flag where they agree or diverge.
+When run-specific context is present, call out whether it improved, worsened
+or merely shifted purchase intent and objections versus the base venture logic.
 Turn this into decision-ready findings: which segments/localities convert,
 real willingness-to-pay vs planned pricing, channel ranking, which social
 platforms matter per segment, and the dominant objections to defuse.
@@ -850,11 +876,16 @@ worse than useless; omit them.
 
 1. "videoExamples" (5-8): real YouTube videos relevant to this category/audience
    — brand films, ads, founder stories, or format breakdowns worth imitating.
-   - ONLY YouTube. For each give the real 11-character "youtubeId", the full
-     "url" (https://www.youtube.com/watch?v=<id>), the "title", the "channel",
-     "whyRelevant" (to THIS venture), and "takeaway" (the exact move to copy:
-     a hook, edit, framing, length).
-   - Do not include Instagram/TikTok here — they cannot be verified or embedded.
+   - ONLY YouTube. For each give: a "title", the "channel", your best
+     "youtubeId" (the real 11-char id IF you are confident — otherwise leave it
+     ""), and ALWAYS a precise "searchQuery" (the exact phrase a person would
+     type into YouTube to find this specific video, e.g. "Todd Snyder New
+     Balance Hierro brand film"). The platform verifies the id and falls back to
+     the search when it can't — so the searchQuery must be specific and correct
+     even when you do give an id. Also "whyRelevant" (to THIS venture) and
+     "takeaway" (the exact move to copy: a hook, edit, framing, length).
+   - Do not guess random ids — a wrong id is dropped; the searchQuery is what
+     guarantees the founder still finds it. Do not include Instagram/TikTok.
 2. "placementExamples" (4-6): product-placement / styling PATTERNS for this
    category (e.g. hero shot, in-context lifestyle, flat-lay, UGC unboxing,
    styled-in-a-real-room). For each: "pattern", a real "account" that does it
@@ -870,8 +901,8 @@ Every id MUST be a stable kebab-case slug from the title/brand/pattern.
 Prefer FEWER, REAL items over more speculative ones.
 
 Output JSON ONLY, no markdown fences, matching exactly:
-{"videoExamples":[{"id","title","channel","youtubeId","url","whyRelevant",
-"takeaway"}],
+{"videoExamples":[{"id","title","channel","youtubeId","searchQuery",
+"whyRelevant","takeaway"}],
 "placementExamples":[{"id","pattern","account","accountUrl","platform","recipe",
 "whyItWorks"}],
 "successStories":[{"id","brand","platform","summary","theMove","result",

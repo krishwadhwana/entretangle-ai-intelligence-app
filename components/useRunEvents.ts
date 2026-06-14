@@ -195,6 +195,36 @@ export function canvasReducer(
         cohorts: { ...next.cohorts, [c.id]: { ...c, state: "failed" } },
       };
     }
+    case "persona_updated": {
+      const c = next.cohorts[event.cohortId];
+      if (!c) return next;
+      const personas = c.personas.map((p) =>
+        p.id === event.personaId
+          ? {
+              ...p,
+              intent: event.intent,
+              intentOriginal: event.intentOriginal,
+              objection: event.objection,
+              voteChangedAt: event.voteChangedAt,
+            }
+          : p
+      );
+      // Keep the cohort's cached mean intent consistent with the moved vote so
+      // the drawer stat doesn't drift (InsightsView re-derives from personas).
+      const stats =
+        c.stats && personas.length > 0
+          ? {
+              ...c.stats,
+              meanIntent:
+                personas.reduce((sum, p) => sum + p.intent, 0) /
+                personas.length,
+            }
+          : c.stats;
+      return {
+        ...next,
+        cohorts: { ...next.cohorts, [c.id]: { ...c, personas, stats } },
+      };
+    }
     case "audience_aggregated":
       return { ...next, aggregate: event.aggregate };
     case "conclusion_query":

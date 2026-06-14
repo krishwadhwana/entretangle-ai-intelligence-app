@@ -4,11 +4,14 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { GripVertical, Loader2, MessageCircle, Send, Users, X } from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
 import { SEGMENT_COLORS } from "./segments";
+import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 
 type Props = {
   runId: string;
   cohort: CohortWithPersonas;
   onClose: () => void;
+  /** When set, auto-open the chat targeting this persona (win-back deep link). */
+  initialChatPersonaId?: string;
 };
 
 type ChatMode = "customer" | "group";
@@ -162,8 +165,14 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
 }
 
 /** Right-side drawer: cohort stats + individual persona cards (SPEC-V2 §5). */
-export default function CohortDrawer({ runId, cohort, onClose }: Props) {
+export default function CohortDrawer({
+  runId,
+  cohort,
+  onClose,
+  initialChatPersonaId,
+}: Props) {
   const [shown, setShown] = useState(12);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => {
     if (typeof window === "undefined") return DRAWER_DEFAULT_WIDTH;
     const saved = Number(window.localStorage.getItem("cohortDrawerWidth"));
@@ -210,6 +219,27 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
       setSelectedPersonaId(cohort.personas[0].id);
     }
   }, [cohort.personas, selectedPersonaId]);
+
+  // Win-back deep link: open the chat focused on a specific persona (e.g. from
+  // the Insights "Win back rejectors" panel). Runs after the cohort-reset
+  // effect above so it wins on first open.
+  useEffect(() => {
+    if (!initialChatPersonaId) return;
+    if (!cohort.personas.some((p) => p.id === initialChatPersonaId)) return;
+    setChatOpen(true);
+    setChatMode("customer");
+    setSelectedPersonaId(initialChatPersonaId);
+    setChatError(null);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, [cohort.id, initialChatPersonaId, cohort.personas]);
+
+  const startWinBack = (personaId: string) => {
+    setChatOpen(true);
+    setChatMode("customer");
+    setSelectedPersonaId(personaId);
+    setChatError(null);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
 
   useEffect(() => {
     const onMove = (event: MouseEvent) => {
@@ -266,17 +296,29 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
     setChatError(null);
     setChatLoading(true);
     try {
-      const res = await fetch(`/api/runs/${runId}/audience-chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          mode: chatMode,
-          cohortId: cohort.id,
-          personaId: chatMode === "customer" ? selectedPersona?.id : null,
-          question,
-          history,
-        }),
-      });
+      // Customer (1:1) chats go to the win-back endpoint, which persists any
+      // vote change and emits an event; group chats stay on the audience route.
+      const customer = chatMode === "customer" && selectedPersona;
+      const res = await fetch(
+        customer
+          ? `/api/runs/${runId}/persona/${selectedPersona.id}/chat`
+          : `/api/runs/${runId}/audience-chat`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(
+            customer
+              ? { question, history }
+              : {
+                  mode: chatMode,
+                  cohortId: cohort.id,
+                  personaId: null,
+                  question,
+                  history,
+                }
+          ),
+        }
+      );
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? `chat failed (${res.status})`);
       const result = data as AudienceChatResponse;
@@ -348,7 +390,7 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
         {cohort.summary && (
           <p className="mb-3 rounded-lg bg-neutral-50 p-2.5 text-xs leading-relaxed text-neutral-600">
             {cohort.summary}
@@ -544,11 +586,30 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
                       {p.lifeStage ? ` · ${p.lifeStage}` : ""}
                     </span>
                   </p>
-                  <span
-                    className={`shrink-0 text-[11px] font-medium ${p.intent >= 0.4 ? "text-emerald-600" : p.intent >= 0.2 ? "text-amber-600" : "text-neutral-400"}`}
-                  >
-                    intent {Math.round(p.intent * 100)}%
-                  </span>
+                  <div className="flex shrink-0 flex-col items-end gap-0.5">
+                    <span className="flex items-center gap-1">
+                      <span
+                        className="rounded-full px-1.5 py-0.5 text-[9px] font-semibold text-white"
+                        style={{
+                          background:
+                            SENTIMENT_META[classifySentiment(p.intent)].color,
+                        }}
+                      >
+                        {SENTIMENT_META[classifySentiment(p.intent)].label}
+                      </span>
+                      <span
+                        className={`text-[11px] font-medium ${p.intent >= 0.4 ? "text-emerald-600" : p.intent >= 0.2 ? "text-amber-600" : "text-neutral-400"}`}
+                      >
+                        {Math.round(p.intent * 100)}%
+                      </span>
+                    </span>
+                    {typeof p.intentOriginal === "number" &&
+                      p.intentOriginal !== p.intent && (
+                        <span className="text-[9px] text-neutral-400">
+                          was {Math.round(p.intentOriginal * 100)}%
+                        </span>
+                      )}
+                  </div>
                 </div>
 
                 {p.personality && (
@@ -615,6 +676,15 @@ export default function CohortDrawer({ runId, cohort, onClose }: Props) {
                 <p className="mt-1 text-[11px] leading-snug text-red-400">
                   ⚠ {p.objection}
                 </p>
+                {isRejector(p.intent) && (
+                  <button
+                    type="button"
+                    onClick={() => startWinBack(p.id)}
+                    className="mt-2 flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                  >
+                    <MessageCircle className="h-3 w-3" /> Win back
+                  </button>
+                )}
               </li>
             ))}
           </ul>

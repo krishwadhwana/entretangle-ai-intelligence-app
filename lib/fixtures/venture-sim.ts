@@ -1543,7 +1543,9 @@ export const mockInspiration: InspirationKit = {
       title: "How a heritage furniture brand tells its craft story",
       channel: "Brand Films",
       youtubeId: "aqz-KE-bpKQ",
+      searchQuery: "heritage furniture brand craft story film",
       url: "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      verified: true,
       whyRelevant:
         "Shows the maker-led narrative arc that sells premium provenance over price.",
       takeaway:
@@ -1554,7 +1556,9 @@ export const mockInspiration: InspirationKit = {
       title: "Founder story: building a premium home brand",
       channel: "Startup Stories",
       youtubeId: "ScMzIvxBSi4",
+      searchQuery: "founder story premium home furniture brand",
       url: "https://www.youtube.com/watch?v=ScMzIvxBSi4",
+      verified: true,
       whyRelevant:
         "A founder-led trust format that works for big-ticket, considered purchases.",
       takeaway:
@@ -1565,7 +1569,9 @@ export const mockInspiration: InspirationKit = {
       title: "Room makeover featuring one statement piece",
       channel: "Interior Tours",
       youtubeId: "9bZkp7q19f0",
+      searchQuery: "room makeover statement furniture piece",
       url: "https://www.youtube.com/watch?v=9bZkp7q19f0",
+      verified: true,
       whyRelevant:
         "Demonstrates the styled-in-a-real-home format that drives furniture consideration.",
       takeaway:

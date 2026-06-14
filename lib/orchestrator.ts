@@ -610,7 +610,7 @@ export async function executeRun(runId: string): Promise<void> {
       runDesks(),
       scoped
         ? Promise.resolve(0)
-        : simulateAllCohorts(emitter, cohortIds, profile, currency),
+        : simulateAllCohorts(emitter, cohortIds, profile, currency, focus),
     ]);
     const cohortsDone = scoped ? copiedCohorts : simulatedCohorts;
     if (!anyDeskConcluded && cohortsDone === 0) {
@@ -649,7 +649,7 @@ export async function executeRun(runId: string): Promise<void> {
           )
         : "";
       await executeBlock(emitter, audienceBlockId, profile, [], () =>
-        callAudienceSynth(runId, profile, agg, audienceGroundTruth)
+        callAudienceSynth(runId, profile, agg, audienceGroundTruth, focus)
       );
     }
 
@@ -705,6 +705,10 @@ export async function resumeRun(runId: string): Promise<void> {
   try {
     const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
     const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
+    const focus = {
+      focusQuestion: run.focusQuestion,
+      additionalContext: run.additionalContext,
+    };
     profileForSnapshot = profile;
     await throwIfRunCancelled(runId);
 
@@ -745,7 +749,13 @@ export async function resumeRun(runId: string): Promise<void> {
 
     if (unfinishedIds.length > 0) {
       await throwIfRunCancelled(runId);
-      await simulateAllCohorts(emitter, unfinishedIds, profile, currency);
+      await simulateAllCohorts(
+        emitter,
+        unfinishedIds,
+        profile,
+        currency,
+        focus
+      );
     }
 
     // Aggregate + audience synthesis (only if not already present) + converge.
@@ -773,7 +783,7 @@ export async function resumeRun(runId: string): Promise<void> {
         params: {},
       });
       await executeBlock(emitter, audienceBlockId, profile, [], () =>
-        callAudienceSynth(runId, profile, agg)
+        callAudienceSynth(runId, profile, agg, undefined, focus)
       );
     }
 

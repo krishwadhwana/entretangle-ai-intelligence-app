@@ -365,17 +365,26 @@ export async function saveOwnerChecks(
 
 /**
  * Persist the Financials section (computed model + the assumptions it was
- * computed from + which inputs the founder overrode). Read-modify-write the
- * owner_dashboard column so the sibling brandSocial section is untouched.
+ * computed from + which inputs the founder overrode). Update only the
+ * owner_dashboard.financials key so sibling owner-dashboard sections stay
+ * untouched without a slow read-modify-write round trip.
  */
 export async function saveFinancials(
   id: string,
   section: FinancialsSection
 ): Promise<FinancialsSection> {
-  const owner = await readOwnerDashboard(id);
-  owner.financials = section;
-  await writeOwnerDashboard(id, owner);
-  return owner.financials;
+  const updated = await prisma.$executeRaw`
+    UPDATE projects
+    SET owner_dashboard = jsonb_set(
+          COALESCE(owner_dashboard, '{}'::jsonb),
+          '{financials}',
+          ${JSON.stringify(section)}::jsonb,
+          true
+        ),
+        updated_at = now() AT TIME ZONE 'utc'
+    WHERE id = ${id}`;
+  if (updated === 0) throw new Error("project not found");
+  return section;
 }
 
 /**
