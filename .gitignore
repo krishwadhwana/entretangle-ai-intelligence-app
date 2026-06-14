@@ -21,3 +21,6 @@ dist
 node_modules
 out
 .vercel
+
+# TypeScript incremental build cache (collides with Nixpacks cache mount)
+tsconfig.tsbuildinfo
