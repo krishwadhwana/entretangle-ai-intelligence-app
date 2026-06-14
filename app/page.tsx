@@ -51,6 +51,35 @@ function estimateRunCost(agents: number): number {
   return BASE_RESEARCH_COST + Math.max(0, agents) * COST_PER_AGENT;
 }
 
+function runStatusPresentation(status: SimulationRunRecord["status"]) {
+  if (status === "complete" || status === "capped") {
+    return {
+      label: status === "capped" ? "Capped" : "Complete",
+      icon: "complete" as const,
+      tone: "bg-emerald-50 text-emerald-600",
+    };
+  }
+  if (status === "failed") {
+    return {
+      label: "Failed",
+      icon: "failed" as const,
+      tone: "bg-red-50 text-red-500",
+    };
+  }
+  if (status === "cancelled" || status === "cancelling") {
+    return {
+      label: status === "cancelling" ? "Cancelling" : "Cancelled",
+      icon: "cancelled" as const,
+      tone: "bg-neutral-100 text-neutral-500",
+    };
+  }
+  return {
+    label: status === "planning" ? "Planning" : "Running",
+    icon: "loading" as const,
+    tone: "bg-amber-50 text-amber-600",
+  };
+}
+
 type ProjectData = {
   id: string;
   name: string;
@@ -1018,8 +1047,7 @@ function IntakePageInner() {
               {sortedRuns.length > 0 ? (
                 <ul className="space-y-2">
                   {sortedRuns.map((r) => {
-                    const isComplete = r.status === "complete";
-                    const isFailed = r.status === "failed";
+                    const status = runStatusPresentation(r.status);
                     return (
                       <li key={r.runId}>
                         <a
@@ -1027,18 +1055,13 @@ function IntakePageInner() {
                           className="group flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40"
                         >
                           <span
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${
-                              isComplete
-                                ? "bg-emerald-50 text-emerald-600"
-                                : isFailed
-                                  ? "bg-red-50 text-red-500"
-                                  : "bg-amber-50 text-amber-600"
-                            }`}
-                            title={r.status}
+                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
+                            title={status.label}
                           >
-                            {isComplete ? (
+                            {status.icon === "complete" ? (
                               <CheckCircle2 className="h-4 w-4" />
-                            ) : isFailed ? (
+                            ) : status.icon === "failed" ||
+                              status.icon === "cancelled" ? (
                               <XCircle className="h-4 w-4" />
                             ) : (
                               <Loader2 className="h-4 w-4 animate-spin" />
@@ -1052,6 +1075,7 @@ function IntakePageInner() {
                             </span>
                             <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
                               {new Date(r.timestamp).toLocaleString()} ·{" "}
+                              {status.label} ·{" "}
                               {r.results.blocks.length} desks ·{" "}
                               {r.results.audienceAggregate?.totalPersonas ?? 0}{" "}
                               personas · ${r.results.costUsd.toFixed(2)}

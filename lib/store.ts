@@ -186,12 +186,39 @@ function runRowToRecord(row: {
   };
 }
 
+type LiveRunJobSummary = {
+  status: string;
+  cancelRequested: boolean;
+  updatedAt: Date;
+};
+
 const TERMINAL_RUN_STATUSES = new Set<RunStatus>([
   "complete",
   "failed",
   "capped",
   "cancelled",
 ]);
+
+function displayStatusForLiveRun(row: {
+  status: string;
+  jobs?: LiveRunJobSummary[];
+}): RunStatus {
+  if (row.status !== "cancelling") return row.status as RunStatus;
+
+  const activeCancelJobs =
+    row.jobs?.filter(
+      (job) =>
+        job.cancelRequested &&
+        (job.status === "queued" || job.status === "running")
+    ) ?? [];
+  if (activeCancelJobs.length === 0) return "cancelled";
+
+  const newestUpdate = Math.max(
+    ...activeCancelJobs.map((job) => job.updatedAt.getTime())
+  );
+  const staleAfterMs = Math.max(config.cohortTimeoutMs * 2, 5 * 60_000);
+  return Date.now() - newestUpdate > staleAfterMs ? "cancelled" : "cancelling";
+}
 
 /**
  * Merge live Run rows into the saved project snapshots so the home page can
@@ -213,6 +240,13 @@ async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> 
       tokensUsed: true,
       costUsd: true,
       createdAt: true,
+      jobs: {
+        select: {
+          status: true,
+          cancelRequested: true,
+          updatedAt: true,
+        },
+      },
     },
   });
   if (rows.length === 0) return project;
@@ -223,7 +257,10 @@ async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> 
   }
   for (const row of rows) {
     const existing = byRunId.get(row.id);
-    const live = runRowToRecord(row);
+    const live = {
+      ...runRowToRecord(row),
+      status: displayStatusForLiveRun(row),
+    };
     byRunId.set(
       row.id,
       existing
