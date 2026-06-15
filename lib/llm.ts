@@ -4,6 +4,9 @@ import { config } from "./config";
 import { recordUsage, type ModelTier } from "./usage";
 import {
   PlannerV2OutputSchema,
+  VenturePlanningContextSchema,
+  ResearchPlannerOutputSchema,
+  AudiencePlannerOutputSchema,
   ExecutorOutputSchema,
   EntanglerOutputSchema,
   QueryOutputSchema,
@@ -41,8 +44,12 @@ import {
   type AudienceAggregate,
 } from "./schema";
 import {
-  PLANNER_V2_SYSTEM,
-  plannerV2User,
+  VENTURE_CONTEXT_SYSTEM,
+  RESEARCH_PLANNER_SYSTEM,
+  AUDIENCE_PLANNER_SYSTEM,
+  ventureContextUser,
+  researchPlannerUser,
+  audiencePlannerUser,
   type RunFocus,
   deskSystem,
   cohortSimSystem,
@@ -206,7 +213,13 @@ async function callJson<T>(opts: {
 // events, persistence and UI paths stay identical to real mode.
 // ---------------------------------------------------------------------------
 
-/** v2 planner: research desks + the audience cohort matrix. */
+/**
+ * v2 planning compatibility wrapper. Internally split into:
+ * 1. shared venture context,
+ * 2. research desks,
+ * 3. audience cohort matrix.
+ * Callers still receive the historical combined shape.
+ */
 export async function callPlannerV2(
   runId: string,
   profile: ClientProfile,
@@ -214,12 +227,32 @@ export async function callPlannerV2(
   groundTruth?: string
 ): Promise<PlannerV2Output> {
   if (config.mockMode) return PlannerV2OutputSchema.parse(mockPlannerV2Output);
-  return callJson({
+  const context = await callJson({
     runId,
-    system: PLANNER_V2_SYSTEM,
-    user: plannerV2User(profile, focus, groundTruth),
-    schema: PlannerV2OutputSchema,
-    maxCompletionTokens: 20000,
+    system: VENTURE_CONTEXT_SYSTEM,
+    user: ventureContextUser(profile, focus, groundTruth),
+    schema: VenturePlanningContextSchema,
+    maxCompletionTokens: 6000,
+  });
+  const [research, audience] = await Promise.all([
+    callJson({
+      runId,
+      system: RESEARCH_PLANNER_SYSTEM,
+      user: researchPlannerUser(profile, context, focus, groundTruth),
+      schema: ResearchPlannerOutputSchema,
+      maxCompletionTokens: 14000,
+    }),
+    callJson({
+      runId,
+      system: AUDIENCE_PLANNER_SYSTEM,
+      user: audiencePlannerUser(profile, context, focus, groundTruth),
+      schema: AudiencePlannerOutputSchema,
+      maxCompletionTokens: 18000,
+    }),
+  ]);
+  return PlannerV2OutputSchema.parse({
+    desks: research.desks,
+    cohortPlan: audience.cohortPlan,
   });
 }
 
@@ -657,13 +690,56 @@ export async function callEntangler(
 }
 
 // Intake interview (Shot 8). No run exists yet, so usage is not metered
-// against a run. Mock mode walks a fixed 4-question script.
+// against a run. Mock mode walks a fixed product-first script.
 export async function callIntake(
   messages: ChatMessage[]
 ): Promise<IntakeOutput> {
   if (config.mockMode) {
     const answers = messages.filter((m) => m.role === "user");
     const script: { question: string; options: string[]; multiSelect: boolean }[] = [
+      {
+        question: "Which product range are you launching first?",
+        options: [
+          "Men's ready-to-wear",
+          "Occasion/fusion wear",
+          "Jackets and overshirts",
+          "Full capsule collection",
+        ],
+        multiSelect: true,
+      },
+      {
+        question: "What should the visual style feel like?",
+        options: [
+          "Minimal quiet luxury",
+          "Bold fashion-forward",
+          "Heritage craft",
+          "Indo-western fusion",
+          "Streetwear edge",
+        ],
+        multiSelect: true,
+      },
+      {
+        question: "What occasions should customers buy this for?",
+        options: [
+          "Work and dinners",
+          "Weddings and parties",
+          "Travel and resort",
+          "Festive family events",
+          "Everyday premium basics",
+        ],
+        multiSelect: true,
+      },
+      {
+        question: "Which product cues matter most?",
+        options: [
+          "Sharp fit",
+          "Relaxed comfort",
+          "Premium fabrics",
+          "Statement details",
+          "Easy alterations",
+        ],
+        multiSelect: true,
+      },
       {
         question:
           "How much capital do you have available, and how long does it need to last?",
@@ -704,7 +780,17 @@ export async function callIntake(
     if (answers.length <= script.length) {
       return { done: false, ...script[answers.length - 1] };
     }
-    const [brief, capital, experience, scale, restrictions] = answers.map(
+    const [
+      brief,
+      productRange,
+      style,
+      occasions,
+      productCues,
+      capital,
+      experience,
+      scale,
+      restrictions,
+    ] = answers.map(
       (m) => m.content
     );
     const capitalLakh = parseFloat(capital.replace(/[^\d.]/g, ""));
@@ -727,6 +813,17 @@ export async function callIntake(
         priceBand: "premium",
         geography: scale.split(",").map((s) => s.trim()).filter(Boolean),
         targetAudience: "affluent urban consumers",
+        productDetails: {
+          styleKeywords: style.split(",").map((s) => s.trim()).filter(Boolean),
+          aestheticReferences: [],
+          heroProducts: productRange
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+          occasions: occasions.split(",").map((s) => s.trim()).filter(Boolean),
+          materialsAndFit: productCues,
+          differentiation: style,
+        },
         funding: {
           capitalAvailable: capital.split(",")[0]?.trim() || null,
           runwayMonths: runwayMatch ? parseInt(runwayMatch[1], 10) : null,
@@ -735,7 +832,12 @@ export async function callIntake(
     };
   }
 
-  const questionsAsked = messages.filter((m) => m.role === "assistant").length;
+  // The client starts with a static assistant greeting; cap the number of real
+  // intake questions, not the greeting plus questions.
+  const questionsAsked = Math.max(
+    0,
+    messages.filter((m) => m.role === "assistant").length - 1
+  );
   let lastError = "";
   for (let attempt = 0; attempt < 2; attempt++) {
     const response = await client().chat.completions.create({
@@ -745,8 +847,8 @@ export async function callIntake(
           role: "system",
           content:
             INTAKE_SYSTEM +
-            (questionsAsked >= 8
-              ? "\nYou have asked 8 questions. You MUST output done:true now."
+            (questionsAsked >= 10
+              ? "\nYou have asked 10 questions. You MUST output done:true now."
               : "") +
             (attempt > 0
               ? `\nYour previous output failed validation:\n${lastError}`

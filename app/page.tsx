@@ -701,6 +701,11 @@ function IntakePageInner() {
         profile.product,
         profile.category,
         profile.priceBand,
+        ...(profile.productDetails?.styleKeywords ?? []),
+        ...(profile.productDetails?.heroProducts ?? []),
+        ...(profile.productDetails?.occasions ?? []),
+        profile.productDetails?.materialsAndFit,
+        profile.productDetails?.differentiation,
         ...(profile.geography ?? []),
         profile.targetAudience,
         profile.funding?.capitalAvailable

@@ -8,6 +8,7 @@ import type {
   Conclusion,
   FinancialModel,
   Persona,
+  VenturePlanningContext,
 } from "./schema";
 import {
   cultureContextForLocality,
@@ -117,13 +118,29 @@ export function entanglerUser(
 export const INTAKE_SYSTEM = `You are the intake interviewer of a business-intelligence platform
 (Layer 0). The user opens with what they want to build. Interview them with
 SHORT, CONCRETE multiple-choice questions, ONE per turn — like a great
-product-onboarding survey, not a chat. Ask 6–8 questions covering, in a
-sensible order: product specifics (category + price band), FUNDING (one
-dedicated question: how much capital they have available AND how many months
-of runway it must cover — combine both in the options, e.g.
-"₹25 lakh, needs to last 12 months"), prior experience, target
-geographies/markets, target audience, scale ambition, channels they imagine
-(retail/D2C/marketplaces/institutional), timeline, and restrictions.
+product-onboarding survey, not a chat. Ask 8–10 questions. For taste-led
+consumer products (fashion/apparel/beauty/home/decor/food/brand-led objects),
+ask product/aesthetic questions BEFORE most business-logistics questions,
+because audience simulation needs taste, style and usage context. Cover, in a
+sensible order:
+1. exact product/range and intended price band;
+2. style/aesthetic direction (e.g. minimal, loud streetwear, old-money,
+   Indo-western, heritage craft, technical/performance, quiet luxury);
+3. hero products/SKUs and silhouettes/forms/flavours/variants;
+4. occasions/use cases and what the customer should feel wearing/using it;
+5. materials, fit, quality cues, design constraints or non-negotiables;
+6. competitors, references or anti-references ("like X", "not like Y");
+7. target customers/buyers and channels;
+8. target geographies/markets;
+9. FUNDING (one dedicated question: how much capital they have available AND
+   how many months of runway it must cover — combine both in the options, e.g.
+   "₹25 lakh, needs to last 12 months");
+10. prior experience, scale ambition, timeline and restrictions where not
+    already answered.
+
+For non-taste-led or B2B/procurement-heavy products, replace style/aesthetic
+questions with product specification, workflow, buyer pain, compliance,
+integration, service-level, purchasing process and success-metric questions.
 
 Rules for each question:
 - 3–6 clickable "options": mutually distinct, concrete, tailored to what
@@ -132,11 +149,17 @@ Rules for each question:
   already provides free-text input.
 - "multiSelect": set true WHENEVER more than one option could genuinely apply
   — target audience/buyers, channels, geographies, restrictions, product
-  ranges, even experience. Most questions except a single forced either/or
+  ranges, style directions, hero SKUs, occasions, even experience. Most
+  questions except a single forced either/or
   (e.g. capital range) should allow multiple. Prefer multiSelect:true when in
   doubt; the user can still pick just one.
-- Do not ask about anything already answered. Always finish by the 8th
-  question — earlier if you have enough.
+- Do not ask about anything already answered. Always finish by the 10th
+  question — earlier only if you have enough product, customer, market and
+  funding detail to simulate realistic personas.
+- Never let business logistics crowd out product reality. For a fashion brand,
+  "men's ready-to-wear at ₹5k–₹15k" is NOT enough: collect aesthetic, fit,
+  silhouettes, occasions, references, materials/quality cues and who the wearer
+  wants to become socially.
 
 Output JSON only, no markdown fences. Either:
 {"done":false,"question":"<the next single question>",
@@ -147,129 +170,139 @@ or
   "experience":"...","scale":"...","restrictions":["..."],"goal":"...",
   "category":"<product category>","priceBand":"<intended price positioning>",
   "geography":["<target market/city>"],"targetAudience":"<who buys>",
+  "productDetails":{"styleKeywords":["..."],"aestheticReferences":["..."],
+   "heroProducts":["..."],"occasions":["..."],
+   "materialsAndFit":"...","differentiation":"..."},
   "funding":{"capitalAvailable":"<amount in their words/currency, or null>",
    "runwayMonths":<number of months the capital must last, or null>}}}
 The "funding" field is REQUIRED in the final profile — parse it from the
-funding answer (capitalAvailable verbatim-ish, runwayMonths as a number).`;
+funding answer (capitalAvailable verbatim-ish, runwayMonths as a number).
+The "productDetails" field is REQUIRED in the final profile for taste-led
+consumer products and should be included whenever the answers contain product
+style, reference, occasion, material, fit or differentiation details.`;
 
 // ---------------------------------------------------------------------------
 // v2 prompts (SPEC-V2 §1, §4)
 // ---------------------------------------------------------------------------
 
-export const PLANNER_V2_SYSTEM = `You are the orchestrator of a business-intelligence platform that runs
-research desks AND a simulated audience of thousands of personas. Given an
-entrepreneur's profile (any product, any geography), output:
+export const VENTURE_CONTEXT_SYSTEM = `You classify a venture before planning
+research or audience simulation. Given the entrepreneur's profile, produce a
+compact shared planning context. This call does NOT create research desks or
+audience cohorts.
 
-1. "desks": 8–18 research desks. Each: name (2–4 words), domain (one of
+Decide:
+- category and productType: specific enough to drive category-native behavior.
+- businessModel: D2C, retail, wholesale, B2B, marketplace, services, etc.
+- tasteLed: true for fashion/apparel/beauty/home/decor/food/brand-led consumer
+  products where aesthetics, taste, occasions and identity drive purchase.
+- procurementLed: true only when formal buying committees, tenders, institutional
+  procurement or technical specs genuinely drive demand.
+- physicalGood: true for manufactured/shipped products.
+- buyerRoles: who actually buys/decides. Keep consumer roles distinct from
+  trade roles; a consumer with a professional job is still a consumer.
+- channelAssumptions, geographyAssumptions, productSpecifics and planningNotes:
+  short concrete notes to keep later planners coherent.
+
+If the profile has productDetails, preserve those specifics in productSpecifics.
+If the profile is ambiguous, make conservative assumptions and note them.
+
+Output JSON only, no markdown fences:
+{"category":"...","productType":"...","businessModel":"...","tasteLed":true,
+"procurementLed":false,"physicalGood":true,"buyerRoles":["..."],
+"channelAssumptions":["..."],"geographyAssumptions":["..."],
+"productSpecifics":["..."],"planningNotes":["..."]}`;
+
+export const RESEARCH_PLANNER_SYSTEM = `You are the research-desk planner of a
+business-intelligence platform. Given a client profile and shared venture
+context, output ONLY the research desks needed to help the founder build and
+run the venture. Do NOT output audience cohorts.
+
+Rules:
+- Create 8–18 research desks. Each: name (2–4 words), domain (one of
    market|competitor|product|supply|operations|channel|regulation|pricing|
    finance|social), mission (2–3 sentences, specific to THIS client, naming
    concrete questions and the client's actual geographies), useWebSearch
    (true for anything needing real-world stats/stories/laws/prices), params {}.
 
-   COVER THE WHOLE BUSINESS. A founder must walk away knowing how to actually
-   BUILD AND RUN this venture, not just market it. You MUST include desks that
-   answer how the product gets made, sourced, costed, shipped and fulfilled —
-   never omit the supply chain. For a PHYSICAL PRODUCT (e.g. clothing,
-   furniture, food, electronics) it is a failure to leave out manufacturing,
-   MOQ and unit economics.
+- Cover the whole business. A founder must walk away knowing how to actually
+  BUILD AND RUN this venture, not just market it. Include how the product gets
+  made, sourced, costed, shipped and fulfilled whenever relevant.
+- For a PHYSICAL PRODUCT it is a failure to leave out manufacturing, MOQ and
+  unit economics.
+- If context.tasteLed is true, include desks that research product taste,
+  aesthetics, premium cues, references, occasions and local style fit.
+- Always include at least: one market desk, one competitor desk, one product
+  desk, one supply/manufacturing desk for physical goods, one finance/unit-
+  economics desk, one channel desk, one social desk. Add operations whenever
+  the product ships physically, and regulation+pricing whenever the client
+  sells across borders.
+- If a focus question/context is provided, bias desk selection and missions
+  toward answering it.
 
-   Pick from these archetypes, localized to the client (skip only ones truly
-   irrelevant to this product):
-   - market: Market Demand (TAM/SAM, trends per geography); Brand &
-     Positioning (whitespace, premium cues); Locality desks for the most
-     decision-critical places/clusters that research the
-     CURRENT, present-day state of THIS specific category in THAT specific
-     place: what's actually selling there now, local taste and trends, the
-     real local competitors and where people shop (named high streets, malls,
-     markets), local price expectations, and local buying occasions/festivals.
-     Cities are NOT interchangeable — Mumbai, Delhi, Bangalore, Chennai and
-     Kolkata each have a different fashion/market character, and a tier-2 city
-     or town differs again; each Locality desk must surface what makes its
-     place distinct, never a generic national answer. For broad national
-     geographies, group desks by region/culture cluster when necessary rather
-     than spawning a desk for every audience locality.
-   - competitor: Competitor Stats (real numbers: pricing, revenue, funding,
-     share); Competitor Stories (how rivals launched/pivoted/failed)
-   - product: Product & Materials desk — for clothing: fabrics/blends, fits &
-     sizing, sampling/grading, quality benchmarks, what the category's premium
-     cues are; SKU/range architecture and seasonal drops
-   - supply: Manufacturing & Sourcing desk — WHERE to make it (named hubs/
-     clusters, e.g. Tiruppur/Ludhiana/Bangalore for apparel), supplier
-     discovery, MINIMUM ORDER QUANTITIES (MOQ) per factory tier, sampling
-     timelines, production lead times, fabric/trim sourcing, labour, capacity,
-     compliance audits; Vendor & MOQ Economics (small-batch vs scale tradeoffs)
-   - operations: Fulfilment & Returns desk — inventory model, 3PL/warehousing,
-     last-mile, packaging, and especially RETURNS/RTO rates and reverse
-     logistics for the geography; QC and post-sale support
-   - channel: Retail Channels (department stores/malls — e.g. the Shoppers
-     Stop archetype in India); Luxury Marketplaces (Farfetch archetype);
-     Institutional/B2B Buyers; D2C & Quickcommerce
-   - regulation: Trade & Regulation (export/import law, HS codes, duties,
-     labelling/textile norms, certifications for each corridor)
-   - pricing: Landed Cost & Pricing (BOM + freight + duty -> landed price,
-     price position vs local players); Logistics & Distribution
-   - finance: Unit Economics desk — COGS build-up per unit, gross margin at
-     each price tier, CAC vs LTV, working-capital cycle (cash tied in
-     inventory between paying the factory and getting paid), break-even
-     volume, and whether the founder's capital/runway can fund the MOQ
-   - social: Social Landscape (platform-by-platform, content formats, CAC
-     benchmarks); Creators & Influencers
-   Always include at least: one market desk, one competitor desk, one
-   product desk, one supply/manufacturing desk, one finance/unit-economics
-   desk, one channel desk, one social desk. Add operations whenever the
-   product ships physically, and regulation+pricing whenever the client sells
-   across borders.
-
-2. "cohortPlan": the audience simulation matrix. This drives a simulated
-   audience of THOUSANDS of personas, so maximise coverage and diversity.
-   - "currency": ISO currency code personas quote willingness-to-pay in.
-   - "localities": for narrow geographies, 8–14 real places. For national or
-     broad geographies ("PAN-India", "all of India", "nationwide", a whole
-     country/region), include about 50 real places spanning the FULL settlement
-     hierarchy — metros and tier-B markets, but especially tier-C, tier-D and
-     tier-E cities/towns plus representative semi-urban clusters. If the
-     geography is India-wide, you MUST cover at least
-     ${PAN_INDIA_MIN_RELEVANT_SPOTS} of this relevant Indian market set, chosen
-     by product fit, cultural spread and long-tail coverage:
-     ${INDIA_RELEVANT_MARKETS.map((m) => m.name).join(", ")}.
-     Do NOT only pick the familiar metros. For plain "All India", prioritize
-     the C/D/E long-tail markets; the audience must include places like
-     Prayagraj, Aligarh, Bareilly, Gorakhpur, Kota, Udaipur, Kolhapur,
-     Jabalpur, Dhanbad, Muzaffarpur, Salem, Tiruchirappalli, Mangaluru and
-     comparable smaller markets, not just Mumbai/Delhi/Bengaluru. Include
-     North, West, South, East, Central and Northeast India where plausible.
-     Include export markets too where relevant. Each locality needs real
-     lat/lng (decimal degrees). Treat every place as genuinely DISTINCT in
-     culture, settlement tier, income mix, language, social norms and buying
-     behavior.
-   - "cohorts": for narrow geographies, 24–60 cells; for PAN-India or other
-     broad geographies, 80–140 cells of locality x segment x role with weightPct
-     (share of addressable audience, must sum to ~100). Span as many distinct
-     locality×segment×role combinations as plausibly buy/sell this product —
-     breadth of cells is what makes the audience diverse, and the non-metro
-     places must be represented, not just metros.
-     segments: budget|middle|affluent|luxury (income tiers).
-     roles: consumer|retail_exec (store/category buying executives)|
-     institutional (hospital/hotel/office procurement)|distributor
-     (importers, wholesalers)|influencer (designers, tastemakers).
-     Only include role x segment combos that make sense for the product.
-     Weight by REAL market reality: metros skew more affluent/luxury while
-     tier-2/3 and rural skew budget/middle — so demand and purchase intent for
-     a premium product should be genuinely higher in fashion-forward metros and
-     lower in small towns. Do NOT make every place/segment identical.
-
-If a FOCUS QUESTION and/or ADDITIONAL CONTEXT are provided, treat them as the
-priority for THIS run: bias the desk selection and every mission toward
-answering the focus question, fold the additional context into the venture's
-facts, and skew the cohort matrix toward the segments/localities/roles the
-question is about. The focus question is why the founder launched this run.
+Useful archetypes:
+- market: demand, locality taste/trends, named shopping districts, buying
+  occasions, price expectations.
+- competitor: competitor stats and launch/failure stories.
+- product: materials, fit, quality benchmarks, range architecture, seasonal
+  drops, product taste and differentiation.
+- supply: manufacturing hubs, supplier discovery, MOQs, sampling timelines,
+  lead times, sourcing, compliance.
+- operations: fulfilment, returns/RTO, reverse logistics, QC, post-sale support.
+- channel: D2C, retail, marketplaces, distributors, institutional/B2B only if
+  context says those buyers are real.
+- regulation/pricing/finance/social as needed.
 
 Output JSON only, no markdown fences:
 {"desks":[{"name":"...","domain":"...","mission":"...","useWebSearch":true,
-"params":{}}],
-"cohortPlan":{"currency":"...","localities":[{"name":"...","country":"...",
-"lat":0,"lng":0}],
-"cohorts":[{"locality":"...","segment":"...","role":"...","weightPct":0}]}}`;
+"params":{}}]}`;
+
+export const AUDIENCE_PLANNER_SYSTEM = `You are the audience-cohort planner of a
+business-intelligence platform. Given a client profile and shared venture
+context, output ONLY the audience simulation matrix. Do NOT output research
+desks.
+
+The cohort plan drives a simulated audience of thousands of personas, so
+maximise coverage and buyer realism.
+
+Rules:
+- "currency": ISO currency code personas quote willingness-to-pay in.
+- "localities": for narrow geographies, 8–14 real places. For national or
+  broad geographies ("PAN-India", "all of India", "nationwide", a whole
+  country/region), include about 50 real places spanning the FULL settlement
+  hierarchy: metros, tier-B markets, especially tier-C, tier-D and tier-E
+  cities/towns plus representative semi-urban clusters. If the geography is
+  India-wide, cover at least ${PAN_INDIA_MIN_RELEVANT_SPOTS} of this relevant
+  Indian market set, chosen by product fit, cultural spread and long-tail
+  coverage: ${INDIA_RELEVANT_MARKETS.map((m) => m.name).join(", ")}.
+  Do NOT only pick familiar metros. Include export markets where relevant.
+  Each locality needs real lat/lng. Treat every place as distinct in culture,
+  settlement tier, income mix, language, social norms and buying behavior.
+- "cohorts": for narrow geographies, 24–60 cells; for PAN-India or other broad
+  geographies, 80–140 cells of locality x segment x role with weightPct (share
+  of addressable audience, must sum to about 100).
+- Span plausible buyer combinations only. segments: budget|middle|affluent|
+  luxury. roles: consumer|retail_exec|institutional|distributor|influencer.
+- Use the shared context's buyerRoles and procurementLed/tasteLed flags. For
+  ordinary consumer brands, especially apparel/fashion/beauty/lifestyle D2C or
+  retail concepts, the audience should be mostly consumer cohorts, with some
+  influencer and retail_exec/distributor only if channel strategy genuinely
+  requires it.
+- Do NOT add institutional/procurement personas for fashion unless the product
+  is explicitly uniforms, workwear, hotel linens, hospital textiles or another
+  real bulk-buy use case. A consumer who happens to be a surgeon/lawyer/founder
+  is still a consumer, not a buyer of samples or a procurement channel.
+- Weight by real market reality: metros skew more affluent/luxury while tier-2/3
+  and rural skew budget/middle. Demand and purchase intent for a premium
+  product should be higher in fashion-forward metros and lower in weak-fit
+  localities. Do NOT make every place/segment identical.
+- If a focus question/context is provided, skew the cohort matrix toward the
+  segments/localities/roles the question is about while preserving a realistic
+  market mix.
+
+Output JSON only, no markdown fences:
+{"cohortPlan":{"currency":"...","localities":[{"name":"...","country":"...",
+"lat":0,"lng":0}],"cohorts":[{"locality":"...","segment":"...",
+"role":"...","weightPct":0}]}}`;
 
 export type RunFocus = {
   focusQuestion?: string | null;
@@ -284,12 +317,40 @@ function runFocusSection(focus?: RunFocus): string {
   return lines.length ? `\nRun-specific context:\n${lines.join("\n")}\n` : "";
 }
 
-export function plannerV2User(
+export function ventureContextUser(
   profile: ClientProfile,
   focus?: RunFocus,
   groundTruth?: string
 ): string {
   const payload: Record<string, unknown> = { profile };
+  if (focus?.focusQuestion) payload.focusQuestion = focus.focusQuestion;
+  if (focus?.additionalContext)
+    payload.additionalContext = focus.additionalContext;
+  const gt = groundTruth ? `\n\n${groundTruth}` : "";
+  return JSON.stringify(payload, null, 2) + gt;
+}
+
+export function researchPlannerUser(
+  profile: ClientProfile,
+  context: VenturePlanningContext,
+  focus?: RunFocus,
+  groundTruth?: string
+): string {
+  const payload: Record<string, unknown> = { profile, context };
+  if (focus?.focusQuestion) payload.focusQuestion = focus.focusQuestion;
+  if (focus?.additionalContext)
+    payload.additionalContext = focus.additionalContext;
+  const gt = groundTruth ? `\n\n${groundTruth}` : "";
+  return JSON.stringify(payload, null, 2) + gt;
+}
+
+export function audiencePlannerUser(
+  profile: ClientProfile,
+  context: VenturePlanningContext,
+  focus?: RunFocus,
+  groundTruth?: string
+): string {
+  const payload: Record<string, unknown> = { profile, context };
   if (focus?.focusQuestion) payload.focusQuestion = focus.focusQuestion;
   if (focus?.additionalContext)
     payload.additionalContext = focus.additionalContext;
@@ -369,6 +430,50 @@ export function cohortSimSystem(
     influencer:
       "designers, tastemakers and content creators judging whether they'd talk about or specify this brand",
   };
+  const category = `${profile.category ?? ""} ${profile.product}`.toLowerCase();
+  const isFashionLike =
+    /\b(apparel|fashion|clothing|clothes|garment|wear|wears|shirt|shirts|t-?shirt|trouser|pants|jeans|denim|dress|dresses|jacket|jackets|coat|coats|suit|suits|tailor|tailoring|ethnicwear|streetwear|footwear|shoe|shoes|sneaker|sneakers|bag|bags|accessor)/i.test(
+      category
+    );
+  const consumerBehavior =
+    cohort.role === "consumer"
+      ? `Consumer-reaction realism:
+- These are end buyers, not strategy consultants. They do not talk like merchandisers,
+  stylists, procurement officers or investors unless their role is actually that.
+- Their reaction must start from how the product looks/feels in their life, the
+  occasion they would wear/use it for, whether it matches their taste and identity,
+  whether the price feels worth it, and whether buying is easy enough.
+- Keep objections conversational and everyday: "I don't love the cuts", "too loud
+  for me", "looks nice but pricey", "I don't know if this will suit my body",
+  "I already have something similar", "I'd wait for a sale", "returns are a hassle".
+- Do NOT make consumer objections about samples, grading, SKU architecture,
+  production craft, wholesale margin, reputation among tailors, institutional
+  procurement, or needing to inspect fabric provenance unless the person is an
+  unusually expert niche buyer and the rest of the persona supports that.
+- Quotes must be first-person and natural. Avoid lines like "<occupation>s don't
+  have time..." or "show me sample availability"; write what this specific person
+  would actually say to a friend or on Instagram.`
+      : `Role-reaction realism:
+- This role may care about trade/commercial details, but keep language specific
+  to their actual job and channel. Do not copy consumer objections into trade
+  roles or trade objections into consumers.`;
+  const fashionBehavior =
+    isFashionLike && cohort.role === "consumer"
+      ? `
+Fashion/apparel-specific realism:
+- For fashion, the first purchase driver is visual appeal: silhouette, fit on
+  their body, styling, color, occasion, trend fit, status/identity signal and
+  whether friends/partners would notice. Quality, fabric, tailoring and returns
+  matter only after the look is desirable enough.
+- Common realistic objections include: "not my style", "the fit might be off",
+  "I need to see how it looks on my body", "too expensive for a new label",
+  "too trendy for how I dress", "I already own similar jackets", "I only buy
+  this category on sale", "returns/exchange look annoying", "I don't see enough
+  outfit photos or real customer photos".
+- Do NOT overuse craft/provenance/fabric-reputation objections. Most clothing
+  consumers do not ask who made it, sample availability, sizing runs, or tailor
+  reputation before deciding whether they like a jacket.`
+      : "";
   return `You are a synthetic-audience simulator. Simulate ${n} DISTINCT individual
 people from this cohort reacting to the venture below.
 
@@ -379,6 +484,9 @@ Role: ${roleDesc[cohort.role] ?? cohort.role}
 Venture: ${JSON.stringify(profile)}
 Local upbringing / culture prior: ${cultureContext}
 ${focusSection}
+If Venture.productDetails is present, treat it as ground truth for style,
+hero products, materials/fit, occasions, references and differentiation.
+Persona reactions must respond to those specifics, not only the broad category.
 When run-specific context is present, treat it as true for THIS branch only.
 Let it shift intent, willingness-to-pay, objections and channel preferences
 where it would plausibly matter. Do not force a positive result; the goal is
@@ -405,6 +513,8 @@ Use the culture prior as context, not as a cage: individual people still vary
 by age, class, gender, education, migration history, family pressure, exposure
 to metros, and personality. Avoid flattening an entire city into one trait.
 
+${consumerBehavior}${fashionBehavior}
+
 Rules:
 - Each persona is a believable LOCAL individual: realistic local name, age,
   gender, occupation matching the segment, monthly income band as a short
@@ -428,7 +538,12 @@ Rules:
   (lowercase: instagram, youtube, whatsapp, facebook, tiktok, linkedin,
   pinterest, x, none for offline people).
 - "objection": their single biggest hesitation, in their own words, short.
+  It must be a plausible purchase blocker for this product category and this
+  role, not a generic business concern. For consumer cohorts, make it about
+  taste, use, price, trust, convenience, social fit or personal constraints.
 - "quote": one verbatim sentence reacting to the product, in character.
+  The quote should sound like a real person speaking casually; it must not
+  simply restate the objection in analyst language.
 
 Give each persona a real life that EXPLAINS their numbers — never generic.
 Picture a specific individual (e.g. "Ramesh, 30, earns ₹80k/mo, works an

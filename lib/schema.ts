@@ -96,6 +96,18 @@ export const FundingSchema = z.object({
 });
 export type Funding = z.infer<typeof FundingSchema>;
 
+export const ProductDetailsSchema = z
+  .object({
+    styleKeywords: z.array(z.string()).default([]),
+    aestheticReferences: z.array(z.string()).default([]),
+    heroProducts: z.array(z.string()).default([]),
+    occasions: z.array(z.string()).default([]),
+    materialsAndFit: z.string().optional(),
+    differentiation: z.string().optional(),
+  })
+  .default({});
+export type ProductDetails = z.infer<typeof ProductDetailsSchema>;
+
 export const ClientProfileSchema = z.object({
   ambitions: z.string(),
   product: z.string(),
@@ -110,6 +122,7 @@ export const ClientProfileSchema = z.object({
   priceBand: z.string().optional(),
   geography: z.array(z.string()).optional(),
   targetAudience: z.string().optional(),
+  productDetails: ProductDetailsSchema.optional(),
   funding: FundingSchema.nullable().optional(),
   // Numeric financial targets captured at intake — feed the Financials module
   // as founder-entered ground truth. All optional/nullable so profiles saved
@@ -408,46 +421,71 @@ export const PlannerOutputSchema = z.object({
 });
 export type PlannerOutput = z.infer<typeof PlannerOutputSchema>;
 
-// v2 planner: research desks + the audience cohort matrix, localized to the
-// venture's geography (works for any country).
-export const PlannerV2OutputSchema = z.object({
-  desks: z
+// v2 planning is split: shared venture context, research desks, and audience
+// cohort matrix. PlannerV2Output remains as the compatibility aggregate.
+export const VenturePlanningContextSchema = z.object({
+  category: z.string(),
+  productType: z.string(),
+  businessModel: z.string(),
+  tasteLed: z.boolean().default(false),
+  procurementLed: z.boolean().default(false),
+  physicalGood: z.boolean().default(true),
+  buyerRoles: z.array(z.string()).min(1).max(10),
+  channelAssumptions: z.array(z.string()).max(10).default([]),
+  geographyAssumptions: z.array(z.string()).max(12).default([]),
+  productSpecifics: z.array(z.string()).max(12).default([]),
+  planningNotes: z.array(z.string()).max(10).default([]),
+});
+export type VenturePlanningContext = z.infer<typeof VenturePlanningContextSchema>;
+
+const DeskPlanSchema = z.object({
+  name: z.string(),
+  domain: DomainSchema,
+  mission: z.string(),
+  useWebSearch: z.boolean().default(true),
+  params: BlockParamsSchema.default({}),
+});
+
+export const ResearchPlannerOutputSchema = z.object({
+  desks: z.array(DeskPlanSchema).min(4).max(20),
+});
+export type ResearchPlannerOutput = z.infer<typeof ResearchPlannerOutputSchema>;
+
+export const CohortPlanSchema = z.object({
+  currency: z.string(), // ISO code personas quote WTP in, e.g. "INR"
+  localities: z
     .array(
       z.object({
         name: z.string(),
-        domain: DomainSchema,
-        mission: z.string(),
-        useWebSearch: z.boolean().default(true),
-        params: BlockParamsSchema.default({}),
+        country: z.string(),
+        lat: z.number().min(-90).max(90),
+        lng: z.number().min(-180).max(180),
+      })
+    )
+    .min(1)
+    .max(60),
+  cohorts: z
+    .array(
+      z.object({
+        locality: z.string(), // must match a localities[].name
+        segment: SegmentSchema,
+        role: RoleSchema,
+        weightPct: z.number().min(0).max(100),
       })
     )
     .min(4)
-    .max(20),
-  cohortPlan: z.object({
-    currency: z.string(), // ISO code personas quote WTP in, e.g. "INR"
-    localities: z
-      .array(
-        z.object({
-          name: z.string(),
-          country: z.string(),
-          lat: z.number().min(-90).max(90),
-          lng: z.number().min(-180).max(180),
-        })
-      )
-      .min(1)
-      .max(60),
-    cohorts: z
-      .array(
-        z.object({
-          locality: z.string(), // must match a localities[].name
-          segment: SegmentSchema,
-          role: RoleSchema,
-          weightPct: z.number().min(0).max(100),
-        })
-      )
-      .min(4)
-      .max(160),
-  }),
+    .max(160),
+});
+export type CohortPlanOutput = z.infer<typeof CohortPlanSchema>;
+
+export const AudiencePlannerOutputSchema = z.object({
+  cohortPlan: CohortPlanSchema,
+});
+export type AudiencePlannerOutput = z.infer<typeof AudiencePlannerOutputSchema>;
+
+export const PlannerV2OutputSchema = z.object({
+  desks: z.array(DeskPlanSchema).min(4).max(20),
+  cohortPlan: CohortPlanSchema,
 });
 export type PlannerV2Output = z.infer<typeof PlannerV2OutputSchema>;
 
