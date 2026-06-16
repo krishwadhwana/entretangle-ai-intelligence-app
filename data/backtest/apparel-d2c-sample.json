@@ -1,0 +1,64 @@
+{
+  "id": "apparel-d2c-sample",
+  "label": "Synthetic apparel D2C launch (90 days, metro-led)",
+  "category": "apparel",
+  "synthetic": true,
+  "notes": "PLACEHOLDER fixture to exercise the harness — numbers are not a real launch. Replace with a captured first-party outcome (frozen audience + recorded actuals) to make this a real backtest.",
+  "inputs": {
+    "businessModel": "apparel",
+    "currency": "INR",
+    "costPrice": 450,
+    "salePrice": 1499,
+    "adSpendPerMonth": 200000,
+    "granularity": "day",
+    "horizon": 90,
+    "cpm": 200,
+    "shippingPerOrder": 80
+  },
+  "ctx": { "reachableProspectsPerMonth": 40000, "blendedCac": 550 },
+  "audience": [
+    {
+      "count": 30,
+      "segment": "budget",
+      "locality": "Mumbai",
+      "country": "India",
+      "wtp": 900,
+      "intentMean": 0.28,
+      "priceSensitivity": 0.75,
+      "channelPref": "marketplace",
+      "platforms": ["instagram", "youtube"],
+      "returnsObjectionShare": 0.4
+    },
+    {
+      "count": 30,
+      "segment": "middle",
+      "locality": "Pune",
+      "country": "India",
+      "wtp": 1500,
+      "intentMean": 0.34,
+      "priceSensitivity": 0.5,
+      "channelPref": "d2c website",
+      "platforms": ["instagram"],
+      "returnsObjectionShare": 0.3
+    },
+    {
+      "count": 30,
+      "segment": "affluent",
+      "locality": "Bengaluru",
+      "country": "India",
+      "wtp": 2600,
+      "intentMean": 0.4,
+      "priceSensitivity": 0.3,
+      "channelPref": "d2c website",
+      "platforms": ["instagram", "pinterest"],
+      "returnsObjectionShare": 0.25
+    }
+  ],
+  "actual": {
+    "refundRatePct": 30,
+    "totalOrders": 1050,
+    "unitsSold": 1040,
+    "grossRevenue": 1550000,
+    "blendedCac": 600
+  }
+}

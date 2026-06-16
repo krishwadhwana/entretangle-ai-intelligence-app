@@ -204,7 +204,12 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
 - [ ] Tier B licensing — which to buy first (CMIE / Euromonitor / Nielsen)?
       Decide by cells-unlocked vs cost.
 - [ ] Tier C enabler partnership for real funnel/CAC/RTO outcomes.
-- [ ] Backtest harness + first-party outcome capture (Tier D).
+- [~] Backtest harness + first-party outcome capture (Tier D). **Harness done**
+      ([lib/backtest.ts](lib/backtest.ts), [scripts/backtest.ts](scripts/backtest.ts),
+      `data/backtest/`): replays a recorded outcome through `simulateLaunch`,
+      reports predicted-vs-actual error + a benchmark-calibration A/B. Fixture-
+      based (synthetic placeholders for now). **Still pending:** live first-party
+      capture (DB model + run-lifecycle logging) to feed it real launches.
 
 **Open questions for collaborators:**
 - Geo-tier taxonomy: current is `metro / tier1 / tier2 / tier3 / rural /
