@@ -84,6 +84,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   fixedCostsPerMonth: 0,
   returnWindowDays: 30,
   refundRateMult: 1,
+  targetRefundRatePct: null, // null → server anchors to the benchmark returns rate
   resellablePct: 0.7,
   returnShippingPerOrder: null,
   initialInventoryUnits: null,

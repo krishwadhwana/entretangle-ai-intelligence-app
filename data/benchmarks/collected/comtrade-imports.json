@@ -1,0 +1,26 @@
+{
+  "apparel": {
+    "usdMn": 672.6,
+    "year": "2023",
+    "hsChapter": "61",
+    "desc": "knitted/crocheted apparel"
+  },
+  "footwear": {
+    "usdMn": 862.1,
+    "year": "2023",
+    "hsChapter": "64",
+    "desc": "footwear"
+  },
+  "furniture": {
+    "usdMn": 1557.7,
+    "year": "2023",
+    "hsChapter": "94",
+    "desc": "furniture & bedding"
+  },
+  "beauty": {
+    "usdMn": 2166.5,
+    "year": "2023",
+    "hsChapter": "33",
+    "desc": "essential oils, perfumery & cosmetics"
+  }
+}

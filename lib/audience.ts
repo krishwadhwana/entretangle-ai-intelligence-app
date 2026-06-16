@@ -1,6 +1,12 @@
 import { prisma } from "./db";
 import { config } from "./config";
 import { callCohortSim } from "./llm";
+import {
+  categoryKeyFromProfile,
+  geoTierFromPlace,
+  resolveBenchmarks,
+} from "./datasources/benchmarks";
+import { cohortCalibrationBlock } from "./datasources/personaCalibration";
 import { spreadKmForLocality } from "./audienceCoverage";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
@@ -320,6 +326,17 @@ async function simulateCohort(
       data: { state: "simulating" },
     });
 
+    // Benchmark-derived calibration for THIS cohort (category from the venture
+    // profile × geo tier from the cohort's locality), anchoring persona wtp /
+    // objections / channels to real priors instead of model guesses.
+    const calibration = cohortCalibrationBlock(
+      resolveBenchmarks(
+        categoryKeyFromProfile(profile),
+        [geoTierFromPlace(cohort.locality, cohort.country)]
+      ),
+      cohort.segment
+    );
+
     const personas: Persona[] = [];
     let summary = "";
     let idx = 0;
@@ -345,7 +362,8 @@ async function simulateCohort(
           currency,
           n,
           attemptIndex,
-          focus
+          focus,
+          calibration
         );
       } catch (e) {
         console.log(

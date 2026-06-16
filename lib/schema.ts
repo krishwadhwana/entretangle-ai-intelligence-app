@@ -1210,6 +1210,11 @@ export const LaunchSimInputsSchema = z.object({
   // --- refunds / returns ---
   returnWindowDays: z.number().int().min(0).max(180).default(30),
   refundRateMult: z.number().nonnegative().default(1), // scales the per-persona base refund propensity
+  // Industry calibration: when set (from the benchmark layer's returns/RTO rate),
+  // the engine scales per-persona refund propensities so the cohort mean matches
+  // this target, overriding refundRateMult/preset. null → legacy multiplier path.
+  // Part of the hashed inputs, so reruns stay deterministic.
+  targetRefundRatePct: z.number().min(0).max(100).nullable().default(null),
   resellablePct: z.number().min(0).max(1).default(0.7), // fraction of returned units restocked as good
   returnShippingPerOrder: z.number().nonnegative().nullable().default(null), // null → shippingPerOrder
 

@@ -554,6 +554,30 @@ export function simulateLaunch(
     (c) => c.kind === "organic" || c.kind === "owned"
   );
 
+  // Industry calibration: when a target returns/RTO rate is given (from the
+  // benchmark layer), scale per-persona refund propensities so the realized
+  // refund rate lands near it — preserving the relative spread (objection/
+  // export/marketplace signals) but overriding refundRateMult/preset. The
+  // reported rate is order-weighted, so we anchor on a buy-probability-weighted
+  // base mean (a proxy for order volume) rather than a flat persona mean. null → 1.
+  const refundMult = (() => {
+    if (inputs.targetRefundRatePct == null || N === 0) return inputs.refundRateMult;
+    let wSum = 0;
+    let wRefund = 0;
+    for (const p of personas) {
+      const w = buyProbability(p, inputs.salePrice);
+      wSum += w;
+      wRefund += w * refundPropensity(p, homeCountry, 1);
+    }
+    const meanBase =
+      wSum > 0
+        ? wRefund / wSum
+        : personas.reduce((s, p) => s + refundPropensity(p, homeCountry, 1), 0) / N;
+    return meanBase > 0
+      ? inputs.targetRefundRatePct / 100 / meanBase
+      : inputs.refundRateMult;
+  })();
+
   // Precompute per-persona constants.
   const pre = personas.map((p) => {
     const buyProb = buyProbability(p, inputs.salePrice);
@@ -564,7 +588,7 @@ export function simulateLaunch(
       meanBuy,
       inputs.targetingQuality
     );
-    const refundP = refundPropensity(p, homeCountry, inputs.refundRateMult);
+    const refundP = refundPropensity(p, homeCountry, refundMult);
     const seg = (p.segment ?? "middle") as string;
     const annualRepeat =
       (ANNUAL_REPEAT_BY_SEGMENT[seg] ?? 0.4) * inputs.repeatRateMult;
