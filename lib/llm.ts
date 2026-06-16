@@ -92,6 +92,7 @@ import {
   mockDemographics,
   type DemographicsOutput,
 } from "./datasources/demographics";
+import { benchmarksForProfile } from "./datasources/benchmarks";
 
 const globalForLlm = globalThis as unknown as { openai?: OpenAI };
 
@@ -1294,12 +1295,13 @@ export async function callFinancialInputs(
   if (config.mockMode)
     return FinancialInputsSchema.parse({ ...mockFinancialInputs, currency });
 
-  const system = `${FINANCIALS_SYSTEM}\n\n--- INPUT ---\n${financialsUser(
-    profile,
-    conclusions,
-    aggregate,
-    currency
-  )}`;
+  // Anchor CAC/COGS/AOV/CVR/RTO to real public-report ranges for this venture's
+  // category × geography, instead of letting the model invent them.
+  const { block: benchmarkBlock } = benchmarksForProfile(profile);
+  const baseUser = financialsUser(profile, conclusions, aggregate, currency);
+  const user = `${baseUser}\n\n${benchmarkBlock}`;
+
+  const system = `${FINANCIALS_SYSTEM}\n\n--- INPUT ---\n${user}`;
 
   try {
     const response = await client().responses.create(
@@ -1345,7 +1347,7 @@ export async function callFinancialInputs(
     return callJson({
       runId,
       system: FINANCIALS_SYSTEM,
-      user: financialsUser(profile, conclusions, aggregate, currency),
+      user,
       schema: FinancialInputsSchema,
       maxCompletionTokens: 16000,
       maxAttempts: 1,

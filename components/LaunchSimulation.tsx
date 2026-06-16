@@ -50,6 +50,16 @@ type Defaults = {
   suggestedAdSpendPerMonth: number | null;
   reachableProspectsPerMonth: number | null;
   fixedCostsPerMonth: number | null;
+  benchmarks?: {
+    suggestedCpm: number;
+    suggestedShippingPerOrder: number;
+    returnRatePct: number;
+    repeatRatePct: number;
+    codSharePct: number;
+    peakMonths: string[];
+    confidence: number;
+    sources: string[];
+  } | null;
 };
 
 const DEFAULT_INPUTS: LaunchSimInputs = {
@@ -146,6 +156,18 @@ export default function LaunchSimulation({
             cur.adSpendPerMonth || data.defaults.suggestedAdSpendPerMonth || 0,
           fixedCostsPerMonth:
             cur.fixedCostsPerMonth || data.defaults.fixedCostsPerMonth || 0,
+          // Prefill CPM / shipping with category × geo benchmark numbers, but
+          // only while they're still at the universal defaults (don't clobber
+          // a value the founder has already changed).
+          cpm:
+            cur.cpm === DEFAULT_INPUTS.cpm && data.defaults.benchmarks
+              ? data.defaults.benchmarks.suggestedCpm
+              : cur.cpm,
+          shippingPerOrder:
+            cur.shippingPerOrder === DEFAULT_INPUTS.shippingPerOrder &&
+            data.defaults.benchmarks
+              ? data.defaults.benchmarks.suggestedShippingPerOrder
+              : cur.shippingPerOrder,
         }));
         if (data.scenarios[0]) {
           setActive(data.scenarios[0]);

@@ -10,6 +10,13 @@ import {
   type LaunchSimInputs,
   type LaunchSimRecord,
 } from "@/lib/schema";
+import {
+  resolveBenchmarks,
+  categoryKeyFromProfile,
+  categoryKeyFromBusinessModel,
+  geoTiersFromLocalities,
+  type BenchmarkPriors,
+} from "@/lib/datasources/benchmarks";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -87,6 +94,7 @@ export async function GET(
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
+  const priors = benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
   const defaults = {
     currency: model?.currency ?? currency,
     suggestedBusinessModel,
@@ -102,6 +110,18 @@ export async function GET(
     ),
     reachableProspectsPerMonth,
     fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
+    // Real category × geo priors (INR). Surfaced so the form prefills CPM and
+    // shipping with market numbers instead of the universal 250 / 120 defaults.
+    benchmarks: {
+      suggestedCpm: priors.cpmInr.mid,
+      suggestedShippingPerOrder: priors.shippingPerOrderInr,
+      returnRatePct: priors.returnRatePct.mid,
+      repeatRatePct: priors.repeatRatePct.mid,
+      codSharePct: priors.codSharePct,
+      peakMonths: priors.peakMonths,
+      confidence: priors.confidence,
+      sources: priors.sources,
+    },
   };
 
   const scenarios: LaunchSimRecord[] = rows.map((r) => {
@@ -213,6 +233,32 @@ export async function DELETE(
     where: { id: scenarioId, runId: params.id },
   });
   return NextResponse.json({ ok: true });
+}
+
+// Resolve benchmark priors for a run: category from its profile (fall back to
+// the inferred business model) × geo tiers from the actual simulated localities.
+function benchmarkPriorsForRun(
+  run: { clientProfile: string },
+  businessModel: LaunchBusinessModel,
+  personas: { locality: string; country: string }[]
+): BenchmarkPriors {
+  let category;
+  try {
+    const parsed = ClientProfileSchema.safeParse(
+      JSON.parse(run.clientProfile || "{}")
+    );
+    category = parsed.success
+      ? categoryKeyFromProfile(parsed.data)
+      : categoryKeyFromBusinessModel(businessModel);
+  } catch {
+    category = categoryKeyFromBusinessModel(businessModel);
+  }
+  if (category === "general")
+    category = categoryKeyFromBusinessModel(businessModel);
+  const geoTiers = geoTiersFromLocalities(
+    personas.map((p) => ({ name: p.locality, country: p.country }))
+  );
+  return resolveBenchmarks(category, geoTiers);
 }
 
 function safeJsonArray(s: string): string[] {
