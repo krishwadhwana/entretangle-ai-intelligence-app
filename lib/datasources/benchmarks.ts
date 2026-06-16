@@ -1,5 +1,6 @@
 import type { ClientProfile } from "../schema";
 import comtradeImports from "../../data/benchmarks/collected/comtrade-imports.json";
+import { VERIFIED_GROSS_MARGIN_PCT, citeRef } from "./verified";
 
 // Sourced per-category India import value (USD mn), snapshotted by
 // scripts/scrape/ from UN Comtrade. A real market-size / import-served-share
@@ -65,17 +66,16 @@ export type ChannelKey =
 /** A coarse low/mid/high prior. `mid` is the working point estimate. */
 export type Range = { low: number; mid: number; high: number };
 
-// --- Sources (real, public; cite verbatim so they can be checked) ----------
-const S_BAIN = "Bain & Co. × Flipkart — How India Shops Online (2023)";
-const S_META_BCG = "Meta–BCG — Indian online shopper / D2C reports";
-const S_GOKWIK = "GoKwik / Shiprocket — India COD & RTO benchmark reports";
-const S_REDSEER = "Redseer Strategy Consultants — India D2C & e-tailing reports";
-const S_NSSO = "MoSPI — Household Consumption Expenditure Survey 2022-23";
-const S_EUROMONITOR = "Euromonitor / Statista — India category market reports";
-
 // --- Per-category economics (INR; metro baseline) --------------------------
 // landingCvrPct = D2C storefront visit→order conversion. returnRatePct =
 // blended return/RTO across payment modes. cacInr = blended new-customer CAC.
+//
+// PROVENANCE: every cell here is a MODEL ESTIMATE — a reasoned prior informed by
+// general market knowledge of Indian D2C. None is traced to a saved document, so
+// none claims a source (see DATA_PLAN.md §3: CPM/CAC/CVR have no free primary
+// source). Verified figures live in verified.ts and OVERRIDE the matching cell
+// at resolve time (currently: beauty gross margin ← Honasa DRHP); only those are
+// rendered as `sourced`. Do NOT add a citation here without a saved document.
 type CategoryBenchmark = {
   grossMarginPct: Range;
   aovInr: Range;
@@ -83,7 +83,6 @@ type CategoryBenchmark = {
   repeatRatePct: Range; // annual repeat-purchase rate
   returnRatePct: Range; // blended returns + RTO
   cacInr: Range;
-  sources: string[];
 };
 
 const r = (low: number, mid: number, high: number): Range => ({ low, mid, high });
@@ -96,7 +95,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(22, 30, 40),
     returnRatePct: r(20, 30, 40),
     cacInr: r(350, 600, 1100),
-    sources: [S_BAIN, S_GOKWIK, S_REDSEER],
   },
   footwear: {
     grossMarginPct: r(50, 60, 68),
@@ -105,7 +103,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(18, 26, 35),
     returnRatePct: r(18, 28, 38),
     cacInr: r(400, 700, 1200),
-    sources: [S_BAIN, S_GOKWIK],
   },
   beauty: {
     grossMarginPct: r(60, 72, 82),
@@ -114,7 +111,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(35, 48, 60),
     returnRatePct: r(8, 14, 22),
     cacInr: r(250, 450, 900),
-    sources: [S_META_BCG, S_REDSEER],
   },
   food_beverage: {
     grossMarginPct: r(50, 60, 70),
@@ -123,7 +119,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(40, 55, 70),
     returnRatePct: r(4, 8, 14),
     cacInr: r(200, 400, 800),
-    sources: [S_REDSEER, S_NSSO],
   },
   furniture: {
     grossMarginPct: r(40, 50, 58),
@@ -132,7 +127,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(8, 15, 25),
     returnRatePct: r(8, 14, 22),
     cacInr: r(800, 1800, 4000),
-    sources: [S_REDSEER, S_EUROMONITOR],
   },
   home_decor: {
     grossMarginPct: r(50, 60, 70),
@@ -141,7 +135,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(20, 30, 42),
     returnRatePct: r(10, 18, 28),
     cacInr: r(400, 800, 1600),
-    sources: [S_REDSEER, S_EUROMONITOR],
   },
   electronics: {
     grossMarginPct: r(12, 22, 32),
@@ -150,7 +143,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(12, 20, 30),
     returnRatePct: r(6, 12, 20),
     cacInr: r(500, 1100, 2500),
-    sources: [S_BAIN, S_EUROMONITOR],
   },
   jewellery: {
     grossMarginPct: r(20, 35, 55),
@@ -159,7 +151,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(15, 25, 38),
     returnRatePct: r(6, 12, 22),
     cacInr: r(600, 1300, 3000),
-    sources: [S_REDSEER, S_EUROMONITOR],
   },
   services: {
     grossMarginPct: r(50, 65, 80),
@@ -168,7 +159,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(30, 45, 60),
     returnRatePct: r(2, 5, 10),
     cacInr: r(400, 900, 2500),
-    sources: [S_REDSEER],
   },
   general: {
     grossMarginPct: r(45, 58, 70),
@@ -177,7 +167,6 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(20, 30, 42),
     returnRatePct: r(10, 18, 28),
     cacInr: r(400, 800, 1600),
-    sources: [S_BAIN, S_REDSEER],
   },
 };
 
@@ -227,6 +216,8 @@ export type BenchmarkPriors = {
   geoTiers: GeoTier[];
   currency: "INR";
   grossMarginPct: Range;
+  /** True when grossMarginPct came from a verified saved filing (verified.ts). */
+  grossMarginSourced: boolean;
   aovInr: Range;
   landingCvrPct: Range;
   repeatRatePct: Range;
@@ -286,40 +277,55 @@ export function resolveBenchmarks(
   ) as Record<ChannelKey, Range>;
 
   const hasInternational = tiers.includes("international");
-  const notes: string[] = [
-    "Public-report priors (Indian D2C), not first-party data — treat as ranges and verify.",
-    "All monetary figures are INR; convert with live FX for other currencies.",
-  ];
-  if (hasInternational)
-    notes.push(
-      "International tier present: India-baseline figures only roughly approximate export economics — lower confidence."
-    );
 
-  // Confidence: category data is decent; degrade for broad/unknown geo spreads
-  // and for international (numbers are India-derived).
-  let confidence = 0.55;
-  if (tiers.length > 3) confidence -= 0.1;
-  if (hasInternational) confidence -= 0.15;
-  confidence = Math.max(0.25, Math.min(0.7, confidence));
+  // Verified override: use a SOURCED gross margin where verified.ts has one
+  // (traced to a saved filing); otherwise the category estimate. This is the
+  // only metric here that can currently be `sourced`.
+  const vgm = VERIFIED_GROSS_MARGIN_PCT[category];
+  const grossMarginPct = vgm
+    ? { low: vgm.low, mid: vgm.mid, high: vgm.high }
+    : cat.grossMarginPct;
+  const grossMarginSourced = !!vgm;
 
   const imports = COMTRADE_IMPORTS[category];
   const marketImportsUsdMn = imports
     ? { value: imports.usdMn, year: imports.year, desc: imports.desc }
     : null;
 
-  const sources = Array.from(
-    new Set([
-      ...cat.sources,
-      S_GOKWIK,
-      ...(imports ? [`UN Comtrade — India imports HS ${imports.hsChapter} (${imports.year})`] : []),
-    ])
-  );
+  // Sources list = ONLY verified provenance actually used (no agency
+  // placeholders). The rate priors below are model estimates, never attributed.
+  const sources = [
+    ...(vgm ? [citeRef(vgm.ref)] : []),
+    ...(imports
+      ? [`UN Comtrade — India imports HS ${imports.hsChapter} (${imports.year})`]
+      : []),
+  ];
+
+  const notes: string[] = [
+    "Rate priors (CPM, CAC, CVR, AOV, returns/RTO, repeat) are MODEL ESTIMATES — no free primary source (DATA_PLAN §3); treat as ranges, not facts.",
+    "All monetary figures are INR; convert with live FX for other currencies.",
+  ];
+  if (!sources.length)
+    notes.push("No verified source for this category yet — every figure here is an estimate.");
+  if (hasInternational)
+    notes.push(
+      "International tier present: India-baseline figures only roughly approximate export economics — lower confidence."
+    );
+
+  // Confidence: estimate-grade by default; a verified gross margin nudges it up.
+  // Degrade for broad/unknown geo spreads and for international.
+  let confidence = 0.5;
+  if (grossMarginSourced) confidence += 0.05;
+  if (tiers.length > 3) confidence -= 0.1;
+  if (hasInternational) confidence -= 0.15;
+  confidence = Math.max(0.25, Math.min(0.7, confidence));
 
   return {
     category,
     geoTiers: tiers,
     currency: "INR",
-    grossMarginPct: cat.grossMarginPct,
+    grossMarginPct,
+    grossMarginSourced,
     aovInr: scaleRange(cat.aovInr, aovMult),
     landingCvrPct: scaleRange(cat.landingCvrPct, cvrMult),
     repeatRatePct: cat.repeatRatePct,
@@ -455,24 +461,27 @@ function rng(x: Range): string {
 }
 
 export function formatBenchmarks(p: BenchmarkPriors): string {
-  return `BENCHMARK PRIORS (real public-report ranges for Indian D2C, INR — anchor
-your assumptions to these unless the research conclusions give better, more
-specific numbers; do not output figures wildly outside these without saying why):
+  const gm = p.grossMarginSourced ? "[sourced]" : "[estimate]";
+  return `BENCHMARK PRIORS for Indian D2C (INR). Each line is tagged [sourced]
+(traced to a saved document) or [estimate] (model prior, no public source —
+DATA_PLAN §3). Anchor your assumptions to these unless the research conclusions
+give better, more specific numbers; do not output figures wildly outside an
+[estimate] range without saying why, and do not treat [estimate] as fact:
 Category: ${p.category} | Geo tiers: ${p.geoTiers.join(", ")} | confidence ${(p.confidence * 100).toFixed(0)}%
-- Gross margin %: ${rng(p.grossMarginPct)}
-- AOV (INR): ${rng(p.aovInr)}
-- Landing→order CVR %: ${rng(p.landingCvrPct)}
-- Annual repeat-purchase %: ${rng(p.repeatRatePct)}
-- Returns + RTO % (blended): ${rng(p.returnRatePct)} | COD share ~${p.codSharePct}%
-- Blended new-customer CAC (INR): ${rng(p.cacInr)}
-- CPM by channel (INR): Meta ${rng(p.cpmByChannelInr.meta)}, Search ${rng(p.cpmByChannelInr.google_search)}, YouTube ${rng(p.cpmByChannelInr.youtube)}, Marketplace ${rng(p.cpmByChannelInr.marketplace_ads)}, Influencer ${rng(p.cpmByChannelInr.influencer)}
-- Shipping per order (INR): ~${p.shippingPerOrderInr}${
+- Gross margin %: ${rng(p.grossMarginPct)} ${gm}
+- AOV (INR): ${rng(p.aovInr)} [estimate]
+- Landing→order CVR %: ${rng(p.landingCvrPct)} [estimate]
+- Annual repeat-purchase %: ${rng(p.repeatRatePct)} [estimate]
+- Returns + RTO % (blended): ${rng(p.returnRatePct)} | COD share ~${p.codSharePct}% [estimate]
+- Blended new-customer CAC (INR): ${rng(p.cacInr)} [estimate]
+- CPM by channel (INR): Meta ${rng(p.cpmByChannelInr.meta)}, Search ${rng(p.cpmByChannelInr.google_search)}, YouTube ${rng(p.cpmByChannelInr.youtube)}, Marketplace ${rng(p.cpmByChannelInr.marketplace_ads)}, Influencer ${rng(p.cpmByChannelInr.influencer)} [estimate]
+- Shipping per order (INR): ~${p.shippingPerOrderInr} [estimate]${
     p.marketImportsUsdMn
-      ? `\n- India category imports (sourced, UN Comtrade ${p.marketImportsUsdMn.year}): ≈ US$${p.marketImportsUsdMn.value}M/yr (${p.marketImportsUsdMn.desc}) — demand + import-served-share signal`
+      ? `\n- India category imports: ≈ US$${p.marketImportsUsdMn.value}M/yr (${p.marketImportsUsdMn.desc}) — demand + import-served-share signal [sourced]`
       : ""
   }
-- Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (Oct–Nov festive, Jun monsoon trough)
-Sources: ${p.sources.join("; ")}
+- Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (Oct–Nov festive, Jun monsoon trough) [estimate]
+Sources (verified only): ${p.sources.length ? p.sources.join("; ") : "none yet for this category — all figures are estimates"}
 Notes: ${p.notes.join(" ")}
 END BENCHMARK PRIORS.`;
 }
