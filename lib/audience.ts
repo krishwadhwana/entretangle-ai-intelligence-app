@@ -8,6 +8,10 @@ import {
 } from "./datasources/benchmarks";
 import { cohortCalibrationBlock } from "./datasources/personaCalibration";
 import { spreadKmForLocality } from "./audienceCoverage";
+import {
+  personaJitterDegreesForLocality,
+  placedLocalityForCohort,
+} from "./localityAnchors";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import type { RunEmitter } from "./events";
@@ -116,19 +120,25 @@ export async function spawnCohorts(
   for (const [i, c] of cohorts.entries()) {
     await throwIfRunCancelled(emitter.runId);
     const loc = localities.get(c.locality) ?? plan.localities[0];
-    const label = `${loc.name} · ${c.segment} · ${c.role.replace("_", " ")}`;
+    const placed = placedLocalityForCohort(
+      { locality: loc.name, country: loc.country, lat: loc.lat, lng: loc.lng },
+      c.segment,
+      c.role,
+      `${loc.name}:${i}`
+    );
+    const label = `${placed.locality} · ${c.segment} · ${c.role.replace("_", " ")}`;
     const [lat, lng] = spreadPoint(
-      loc.lat,
-      loc.lng,
+      placed.lat,
+      placed.lng,
       label,
-      spreadKmForLocality(loc.name, loc.country)
+      placed.spreadKm ?? spreadKmForLocality(loc.name, loc.country)
     );
     const row = await prisma.cohort.create({
       data: {
         runId: emitter.runId,
         label,
-        locality: loc.name,
-        country: loc.country,
+        locality: placed.locality,
+        country: placed.country,
         // Spread same-city cohorts across the metro/market area instead of
         // stacking them on the city centroid.
         lat,
@@ -309,7 +319,7 @@ function computeCohortStats(
  * failing does not fail the cohort; only zero personas does. Returns true if
  * the cohort produced any personas.
  */
-async function simulateCohort(
+export async function simulateCohort(
   emitter: RunEmitter,
   cohortId: string,
   profile: ClientProfile,
@@ -372,6 +382,10 @@ async function simulateCohort(
         continue; // partial-failure tolerant
       }
       if (!summary) summary = out.summary;
+      const jitterDegrees = personaJitterDegreesForLocality(
+        cohort.locality,
+        cohort.country
+      );
       for (const p of out.personas.slice(0, n)) {
         await throwIfRunCancelled(emitter.runId);
         const row = await prisma.persona.create({
@@ -382,8 +396,8 @@ async function simulateCohort(
             gender: p.gender,
             occupation: p.occupation,
             incomeBand: p.incomeBand,
-            lat: jitter(cohort.lat, `${cohortId}:${idx}:lat`, 0.08),
-            lng: jitter(cohort.lng, `${cohortId}:${idx}:lng`, 0.08),
+            lat: jitter(cohort.lat, `${cohortId}:${idx}:lat`, jitterDegrees),
+            lng: jitter(cohort.lng, `${cohortId}:${idx}:lng`, jitterDegrees),
             intent: p.intent,
             wtp: p.wtp,
             wtpCurrency: currency,

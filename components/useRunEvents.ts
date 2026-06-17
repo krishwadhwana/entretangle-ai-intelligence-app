@@ -159,17 +159,21 @@ export function canvasReducer(
       return { ...next, tokensUsed: event.tokensUsed };
     case "cost_used":
       return { ...next, costUsd: event.costUsd };
-    case "cohort_spawned":
+    case "cohort_spawned": {
+      const existing = next.cohorts[event.cohort.id];
       return {
         ...next,
         cohorts: {
           ...next.cohorts,
-          [event.cohort.id]: { ...event.cohort, personas: [] },
+          [event.cohort.id]: existing
+            ? { ...event.cohort, personas: existing.personas }
+            : { ...event.cohort, personas: [] },
         },
         cohortOrder: next.cohortOrder.includes(event.cohort.id)
           ? next.cohortOrder
           : [...next.cohortOrder, event.cohort.id],
       };
+    }
     case "cohort_simulated": {
       const c = next.cohorts[event.cohortId];
       if (!c) return next;

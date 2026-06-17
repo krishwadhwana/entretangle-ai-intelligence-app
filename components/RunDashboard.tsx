@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import type { Domain } from "@/lib/schema";
+import type { AudienceAggregate, Cohort, Domain, Persona } from "@/lib/schema";
 import {
   RotateCcw,
   Coins,
@@ -54,6 +54,14 @@ type Props = {
   maxCostUsd: number;
   maxTokens: number;
   siblingRuns: SiblingRun[];
+};
+
+type AudienceBatchResult = {
+  cohort: Cohort;
+  personas: Persona[];
+  aggregate: AudienceAggregate | null;
+  tokensUsed?: number;
+  costUsd?: number;
 };
 
 /** Header dropdown to hop between sibling runs in the same project. */
@@ -348,6 +356,35 @@ export default function RunDashboard({
       setAudienceBranchBusy(false);
     }
   }, [audienceBranchBusy, audienceBranchInfo, router, runId]);
+
+  const onAudienceBatchAdded = useCallback(
+    (result: AudienceBatchResult) => {
+      const cohort = { ...result.cohort, personas: result.personas };
+      patchState({
+        status: state.status === "capped" ? "capped" : "complete",
+        phaseLabel:
+          state.status === "capped"
+            ? "Audience batch added; run remains capped"
+            : "World model ready",
+        cohorts: { ...state.cohorts, [cohort.id]: cohort },
+        cohortOrder: state.cohortOrder.includes(cohort.id)
+          ? state.cohortOrder
+          : [...state.cohortOrder, cohort.id],
+        aggregate: result.aggregate ?? state.aggregate,
+        ...(typeof result.tokensUsed === "number"
+          ? { tokensUsed: result.tokensUsed }
+          : {}),
+        ...(typeof result.costUsd === "number" ? { costUsd: result.costUsd } : {}),
+      });
+    },
+    [
+      patchState,
+      state.aggregate,
+      state.cohortOrder,
+      state.cohorts,
+      state.status,
+    ]
+  );
 
   // --- "Continue run" (resume) ----------------------------------------------
   // A run is resumable if it ended capped/failed, OR it claims to be "running"
@@ -682,9 +719,12 @@ export default function RunDashboard({
           />
         ) : view === "geo" ? (
           <MapView
+            runId={runId}
             cohorts={cohorts}
             selectedCohortId={selectedCohortId}
+            canAddAudience={canBranchAudience}
             onSelectCohort={setSelectedCohortId}
+            onAudienceBatchAdded={onAudienceBatchAdded}
           />
         ) : view === "insights" ? (
           <InsightsView
