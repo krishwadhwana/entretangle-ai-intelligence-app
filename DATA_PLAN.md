@@ -185,8 +185,8 @@ human to save the PDF + transcribe the page/quote.
 | Metric | Status | Reliable free source? |
 |---|---|---|
 | Gross margin (beauty) | **sourced** — Honasa DRHP | Yes — company filings |
-| Gross margin (apparel, footwear) | **reported** — Go Fashion / Metro Brands primary disclosures | Yes — promoted from estimate |
-| Gross margin (remaining categories) | estimate | Yes — one filing per category needed |
+| Gross margin (apparel, footwear, food_beverage, home_decor) | **reported** — Go Fashion / Metro Brands / Britannia+Bikaji / Cello World | Yes — promoted from estimate |
+| Gross margin (furniture, electronics, jewellery, services) | estimate | Partial — electronics/jewellery lack a representative listed pure-play with a clean *gross* margin |
 | Income / spend by tier | **sourced** — NSSO | Yes — NSSO HCES |
 | AOV by category | estimate | Partial — Unicommerce / GoKwik (vendor) |
 | RTO / COD share / returns | estimate | Partial — GoKwik / Unicommerce (vendor) |

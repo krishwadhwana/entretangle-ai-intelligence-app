@@ -55,6 +55,16 @@ export const SOURCES: Record<string, { title: string; file: string; url: string 
     file: "",
     url: "https://www.business-standard.com/article/news-cm/metro-brands-q3-pat-rises-54-6-yoy-to-rs-100-8-cr-122011700148_1.html",
   },
+  "britannia-bikaji-results": {
+    title: "Britannia Industries / Bikaji Foods — reported gross margins (FY23–FY24)",
+    file: "",
+    url: "https://www.business-standard.com/amp/markets/capital-market-news/britannia-inds-q4-pat-drops-4-yoy-to-rs-537-cr-124050400107_1.html",
+  },
+  "cello-world-fy24": {
+    title: "Cello World Ltd — consumer houseware, FY24 results / investor presentation",
+    file: "",
+    url: "https://corporate.celloworld.com/wp-content/uploads/2025/05/InvestorPresentationCWL.pdf",
+  },
 };
 
 // Provenance for an API-sourced figure: no page/quote (it's an API, not a PDF);
@@ -134,6 +144,35 @@ export const REPORTED_GROSS_MARGIN_PCT: Partial<
       period: "FY23–FY25",
       url: "https://www.business-standard.com/article/news-cm/metro-brands-q3-pat-rises-54-6-yoy-to-rs-100-8-cr-122011700148_1.html",
       note: "Premium footwear retail; single listed player → anchors the upper range, not all footwear.",
+    },
+  },
+  // Packaged food: FMCG/biscuits (Britannia ~40–44%) run higher, snacks (Bikaji
+  // ~30–32%) lower. Notably this CORRECTS the prior estimate (50–60–70%), which
+  // was too high for packaged food.
+  food_beverage: {
+    low: 30,
+    mid: 38,
+    high: 44,
+    ref: {
+      sourceId: "britannia-bikaji-results",
+      publisher: "Britannia Industries / Bikaji Foods — reported gross margins",
+      period: "FY23–FY24",
+      url: "https://www.business-standard.com/amp/markets/capital-market-news/britannia-inds-q4-pat-drops-4-yoy-to-rs-537-cr-124050400107_1.html",
+      note: "Biscuits/FMCG (Britannia ~40–44%) higher; snacks (Bikaji ~30–32%) lower. Beverages/premium D2C can sit above this band.",
+    },
+  },
+  // Cello World — consumer houseware/consumerware leader; reported FY24 gross
+  // margin ~52.6%. Maps to home decor / furnishing / tableware.
+  home_decor: {
+    low: 50,
+    mid: 53,
+    high: 55,
+    ref: {
+      sourceId: "cello-world-fy24",
+      publisher: "Cello World Ltd — consumer houseware (FY24 results / investor presentation)",
+      period: "FY24",
+      url: "https://corporate.celloworld.com/wp-content/uploads/2025/05/InvestorPresentationCWL.pdf",
+      note: "Consumer houseware leader; FY24 gross margin ~52.6%.",
     },
   },
 };
