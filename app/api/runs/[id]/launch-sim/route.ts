@@ -125,12 +125,15 @@ export async function GET(
   };
 
   const scenarios: LaunchSimRecord[] = rows.map((r) => {
-    const inputs = applyDefaultBusinessModel(
-      applyLegacyAcquisitionDefault(
-        LaunchSimInputsSchema.parse(r.inputs),
-        defaults.suggestedAdSpendPerMonth
+    const inputs = applyBenchmarkRefund(
+      applyDefaultBusinessModel(
+        applyLegacyAcquisitionDefault(
+          LaunchSimInputsSchema.parse(r.inputs),
+          defaults.suggestedAdSpendPerMonth
+        ),
+        suggestedBusinessModel
       ),
-      suggestedBusinessModel
+      priors
     );
     return {
       id: r.id,
@@ -183,11 +186,12 @@ export async function POST(
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
+  const priors = benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
 
   try {
-    const inputs = applyDefaultBusinessModel(
-      body.data.inputs,
-      suggestedBusinessModel
+    const inputs = applyBenchmarkRefund(
+      applyDefaultBusinessModel(body.data.inputs, suggestedBusinessModel),
+      priors
     );
     const result = simulateLaunch(personas, inputs, {
       reachableProspectsPerMonth,
@@ -330,6 +334,16 @@ function applyDefaultBusinessModel(
 ): LaunchSimInputs {
   if (inputs.businessModel !== "generic") return inputs;
   return { ...inputs, businessModel, channels: [] };
+}
+
+// Anchor the launch-sim refund curve to the benchmark layer's returns/RTO rate
+// unless the founder set an explicit target. Provenance-tracked, deterministic.
+function applyBenchmarkRefund(
+  inputs: LaunchSimInputs,
+  priors: BenchmarkPriors
+): LaunchSimInputs {
+  if (inputs.targetRefundRatePct != null) return inputs;
+  return { ...inputs, targetRefundRatePct: priors.returnRatePct.mid };
 }
 
 function inferLaunchBusinessModel(run: {

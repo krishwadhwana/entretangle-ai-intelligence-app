@@ -440,7 +440,8 @@ export async function callCohortSim(
   currency: string,
   n: number,
   batchIndex = 0,
-  focus?: RunFocus
+  focus?: RunFocus,
+  calibration?: string
 ): Promise<CohortSimOutput> {
   if (config.mockMode) {
     return CohortSimOutputSchema.parse(
@@ -454,7 +455,7 @@ export async function callCohortSim(
       : "";
   const out = await callJson({
     runId,
-    system: cohortSimSystem(cohort, profile, currency, n, focus),
+    system: cohortSimSystem(cohort, profile, currency, n, focus, calibration),
     user: `Simulate ${n} personas now.${batchNote} Output JSON only.`,
     schema: CohortSimOutputSchema,
     model: config.miniModel,

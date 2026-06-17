@@ -136,6 +136,27 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
   - Verified: `tsc` clean · launch-sim determinism (11 invariants + rerun
     equality) passes · financials smoke test passes.
 
+### Update — data-merge (folds in the web-branch collectors + calibration)
+- **Personas now wired to benchmarks** — `cohortSimSystem` takes a calibration
+  block built per-cohort from `resolveBenchmarks(categoryFromProfile × geoTier
+  fromLocality)` ([lib/datasources/personaCalibration.ts](lib/datasources/personaCalibration.ts),
+  [lib/audience.ts](lib/audience.ts)): anchors persona `wtp` to category order
+  value, surfaces the returns rate, and adds category objection/discovery hints
+  (flagged ESTIMATE). Fills the personas row of §1.
+- **Launch-sim returns now anchored, not just prefilled** — new
+  `targetRefundRatePct` input scales per-persona refund propensity so the cohort
+  refund rate matches the benchmark `returnRatePct.mid`; the route sets it from
+  resolved priors unless the founder overrides ([lib/launchSim.ts](lib/launchSim.ts),
+  [lib/schema.ts](lib/schema.ts), launch-sim route). Deterministic (target is in
+  the hashed inputs).
+- **First automated `sourced` data** — keyless authoritative-API collectors under
+  [scripts/scrape/](scripts/scrape/) snapshot into `data/benchmarks/collected/`:
+  UN Comtrade per-category India import value (surfaced in `formatBenchmarks` as
+  a sourced market-size line) + World Bank population/urban share. Provenance via
+  a new `ApiSourceRef` variant in `verified.ts`. Run `npx tsx scripts/scrape/enrich.ts`
+  (idempotent — snapshots carry the data's own year). **Does NOT cover CPM/CAC/CVR**
+  — those still have no free source (§3 reality check stands).
+
 ### Saved sources (committed)
 - [data/benchmarks/SOURCES.md](data/benchmarks/SOURCES.md) — manifest.
 - **NSSO HCES 2022-23 Fact Sheet** (govt) → income/MPCE by sector.

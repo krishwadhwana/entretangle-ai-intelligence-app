@@ -1,4 +1,13 @@
 import type { ClientProfile } from "../schema";
+import comtradeImports from "../../data/benchmarks/collected/comtrade-imports.json";
+
+// Sourced per-category India import value (USD mn), snapshotted by
+// scripts/scrape/ from UN Comtrade. A real market-size / import-served-share
+// signal; absent for categories with no clean HS-chapter mapping (e.g. food).
+const COMTRADE_IMPORTS = comtradeImports as Record<
+  string,
+  { usdMn: number; year: string; hsChapter: string; desc: string }
+>;
 
 // ---------------------------------------------------------------------------
 // Benchmark / priors layer (SPEC-V2 §1A — replace LLM-guessed launch & finance
@@ -230,6 +239,8 @@ export type BenchmarkPriors = {
   shippingPerOrderInr: number;
   seasonality: number[]; // 12 monthly multipliers
   peakMonths: string[];
+  /** Sourced India import value for the category (USD mn, UN Comtrade), if mapped. */
+  marketImportsUsdMn: { value: number; year: string; desc: string } | null;
   confidence: number; // 0–1
   sources: string[];
   notes: string[];
@@ -291,7 +302,18 @@ export function resolveBenchmarks(
   if (hasInternational) confidence -= 0.15;
   confidence = Math.max(0.25, Math.min(0.7, confidence));
 
-  const sources = Array.from(new Set([...cat.sources, S_GOKWIK]));
+  const imports = COMTRADE_IMPORTS[category];
+  const marketImportsUsdMn = imports
+    ? { value: imports.usdMn, year: imports.year, desc: imports.desc }
+    : null;
+
+  const sources = Array.from(
+    new Set([
+      ...cat.sources,
+      S_GOKWIK,
+      ...(imports ? [`UN Comtrade — India imports HS ${imports.hsChapter} (${imports.year})`] : []),
+    ])
+  );
 
   return {
     category,
@@ -311,6 +333,7 @@ export function resolveBenchmarks(
     peakMonths: SEASONALITY.map((m, i) => ({ m, i }))
       .filter((x) => x.m >= 1.3)
       .map((x) => MONTHS[x.i]),
+    marketImportsUsdMn,
     confidence,
     sources,
     notes,
@@ -443,7 +466,11 @@ Category: ${p.category} | Geo tiers: ${p.geoTiers.join(", ")} | confidence ${(p.
 - Returns + RTO % (blended): ${rng(p.returnRatePct)} | COD share ~${p.codSharePct}%
 - Blended new-customer CAC (INR): ${rng(p.cacInr)}
 - CPM by channel (INR): Meta ${rng(p.cpmByChannelInr.meta)}, Search ${rng(p.cpmByChannelInr.google_search)}, YouTube ${rng(p.cpmByChannelInr.youtube)}, Marketplace ${rng(p.cpmByChannelInr.marketplace_ads)}, Influencer ${rng(p.cpmByChannelInr.influencer)}
-- Shipping per order (INR): ~${p.shippingPerOrderInr}
+- Shipping per order (INR): ~${p.shippingPerOrderInr}${
+    p.marketImportsUsdMn
+      ? `\n- India category imports (sourced, UN Comtrade ${p.marketImportsUsdMn.year}): ≈ US$${p.marketImportsUsdMn.value}M/yr (${p.marketImportsUsdMn.desc}) — demand + import-served-share signal`
+      : ""
+  }
 - Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (Oct–Nov festive, Jun monsoon trough)
 Sources: ${p.sources.join("; ")}
 Notes: ${p.notes.join(" ")}

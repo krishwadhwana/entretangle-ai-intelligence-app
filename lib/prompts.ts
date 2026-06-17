@@ -412,13 +412,15 @@ export function cohortSimSystem(
   profile: ClientProfile,
   currency: string,
   n: number,
-  focus?: RunFocus
+  focus?: RunFocus,
+  calibration?: string
 ): string {
   const cultureContext = cultureContextForLocality(
     cohort.locality,
     cohort.country
   );
   const focusSection = runFocusSection(focus);
+  const calibrationSection = calibration ? `\n${calibration}` : "";
   const roleDesc: Record<string, string> = {
     consumer: "end consumers considering buying the product themselves",
     retail_exec:
@@ -483,7 +485,7 @@ Income segment: ${cohort.segment}
 Role: ${roleDesc[cohort.role] ?? cohort.role}
 Venture: ${JSON.stringify(profile)}
 Local upbringing / culture prior: ${cultureContext}
-${focusSection}
+${focusSection}${calibrationSection}
 If Venture.productDetails is present, treat it as ground truth for style,
 hero products, materials/fit, occasions, references and differentiation.
 Persona reactions must respond to those specifics, not only the broad category.

@@ -30,6 +30,29 @@ export const SOURCES: Record<string, { title: string; file: string; url: string 
     file: "data/benchmarks/sources/honasa-mamaearth-drhp-2022.pdf",
     url: "https://www.bseindia.com/corporates/download/332525/DRHP_20221229142958.pdf",
   },
+  // API sources — authoritative, free, methodology-backed primary data fetched
+  // by scripts/scrape/ and snapshotted under data/benchmarks/collected/. These
+  // count as `sourced` (not `estimate`) via the ApiSourceRef variant below.
+  "uncomtrade-preview": {
+    title: "UN Comtrade — annual trade by HS code (public preview)",
+    file: "data/benchmarks/collected/comtrade-imports.json",
+    url: "https://comtradeapi.un.org/public/v1/preview/C/A/HS",
+  },
+  "worldbank-wdi": {
+    title: "World Bank — World Development Indicators",
+    file: "data/benchmarks/collected/worldbank-macro.json",
+    url: "https://api.worldbank.org/v2",
+  },
+};
+
+// Provenance for an API-sourced figure: no page/quote (it's an API, not a PDF);
+// instead the endpoint + the exact query + the retrieval date make it checkable.
+export type ApiSourceRef = {
+  sourceId: string;
+  publisher: string;
+  retrieved: string; // ISO date the snapshot was taken
+  endpoint: string; // base API endpoint
+  query: string; // the exact query/parameters used
 };
 
 // --- Verified gross margins by category (audited company filings) -----------
@@ -76,6 +99,8 @@ export const VERIFIED_MPCE = {
 };
 
 /** A one-line provenance string for a verified figure, for prompt rendering. */
-export function citeRef(ref: SourceRef): string {
-  return `${ref.publisher}, ${ref.year}, ${ref.page}`;
+export function citeRef(ref: SourceRef | ApiSourceRef): string {
+  return "page" in ref
+    ? `${ref.publisher}, ${ref.year}, ${ref.page}`
+    : `${ref.publisher}, retrieved ${ref.retrieved}`;
 }
