@@ -18,6 +18,17 @@ import {
 import { SEGMENT_COLORS } from "./segments";
 import type { CanvasState } from "./useRunEvents";
 
+// GoI zonal-council colours for the by-region audience chart.
+const ZONE_COLORS: Record<string, string> = {
+  North: "#6366f1",
+  South: "#10b981",
+  East: "#f59e0b",
+  West: "#ef4444",
+  Central: "#8b5cf6",
+  Northeast: "#14b8a6",
+  Other: "#94a3b8",
+};
+
 // ---------------------------------------------------------------------------
 // Insights view (v2.1): every chart derives purely from CanvasState — the
 // same event-log-reduced state the map and network render from.
@@ -844,6 +855,12 @@ export default function InsightsView({
         </Card>
         <Card title="Purchase intent by locality">
           <GroupBars data={agg ? toRows(agg.byLocality) : []} colorBy={() => "#0ea5e9"} />
+        </Card>
+        <Card title="Purchase intent by region (zone)">
+          <GroupBars
+            data={agg ? toRows(agg.byZone ?? {}) : []}
+            colorBy={(n) => ZONE_COLORS[n] ?? "#64748b"}
+          />
         </Card>
         <Card title="Purchase intent by role">
           <GroupBars data={agg ? toRows(agg.byRole) : []} colorBy={() => "#10b981"} />

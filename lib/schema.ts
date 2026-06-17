@@ -249,6 +249,7 @@ export const AudienceAggregateSchema = z.object({
   totalCohorts: z.number().int(),
   bySegment: z.record(groupStat),
   byLocality: z.record(groupStat),
+  byZone: z.record(groupStat).default({}), // GoI zone (North/South/…); default {} for legacy aggregates
   byRole: z.record(groupStat),
   channelShare: z.array(z.object({ name: z.string(), share: z.number() })),
   platformShare: z.array(z.object({ name: z.string(), share: z.number() })),

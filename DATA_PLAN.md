@@ -254,8 +254,10 @@ authoritative + tractable first (same discipline as §3-4).
   covering the cities the app already classifies. Neutral/authoritative (Census +
   Zonal Councils), pure + deterministic. Wired into `cohortSimSystem` so personas
   are region-aware; `zonesForLocalities` ready for map + aggregation.
-- **[ ] Map + aggregation (Phase 2)** — render zones/states on MapView; add a
-  by-zone/by-state breakdown to the audience aggregate + report.
+- **[~] Aggregation (Phase 2)** — DONE: `AudienceAggregate.byZone` (GoI zone
+  breakdown) computed in `aggregateAudience`, rendered as a "Purchase intent by
+  region (zone)" chart in `InsightsView`. **Phase 2b (deferred):** colour MapView
+  markers by zone (bigger UI; deferred to avoid churn on the reconciled map).
 - **[ ] Attention/hype demand signal (Phase 3)** — extend the existing Wikipedia-
   pageviews interest proxy with additional buzz signals as a demand input. HONEST
   LIMIT: Google Trends / social-listening have no clean free API (same as
