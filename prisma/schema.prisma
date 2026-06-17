@@ -85,6 +85,7 @@ model Run {
   cohorts Cohort[]
   jobs    RunJob[]
   launchSims LaunchSimulation[]
+  launchOutcomes LaunchOutcome[]
 
   @@index([projectId])
 }
@@ -243,6 +244,30 @@ model LaunchSimulation {
 
   @@index([runId, createdAt])
   @@map("launch_simulations")
+}
+
+// First-party capture (the moat): a REAL launch outcome recorded against a run.
+// Stores the inputs that were used, a frozen audience snapshot at capture time,
+// and the actual observed metrics — so the backtest harness (lib/backtest.ts)
+// can replay it through the sim and score predicted-vs-actual. This is the data
+// that turns the harness from a demo (synthetic fixtures) into real validation.
+model LaunchOutcome {
+  id           String   @id @default(cuid())
+  runId        String   @map("run_id")
+  projectId    String?  @map("project_id")
+  label        String   @default("Outcome")
+  source       String   @default("founder-reported") // founder-reported | shopify-export | ...
+  horizonLabel String?  @map("horizon_label") // e.g. "first 90 days"
+  notes        String?
+  inputs       Json // LaunchSimInputs that were used (replayed by the harness)
+  audience     Json // frozen LaunchPersona[] snapshot at capture time
+  actual       Json // ActualOutcome — observed metrics over the horizon
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([runId, createdAt])
+  @@map("launch_outcomes")
 }
 
 model RunEvent {
