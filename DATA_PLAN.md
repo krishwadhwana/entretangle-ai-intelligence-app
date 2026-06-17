@@ -207,9 +207,14 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
 - [~] Backtest harness + first-party outcome capture (Tier D). **Harness done**
       ([lib/backtest.ts](lib/backtest.ts), [scripts/backtest.ts](scripts/backtest.ts),
       `data/backtest/`): replays a recorded outcome through `simulateLaunch`,
-      reports predicted-vs-actual error + a benchmark-calibration A/B. Fixture-
-      based (synthetic placeholders for now). **Still pending:** live first-party
-      capture (DB model + run-lifecycle logging) to feed it real launches.
+      reports predicted-vs-actual error + a benchmark-calibration A/B.
+      **Capture path done** ([prisma `LaunchOutcome`](prisma/schema.prisma),
+      [app/api/runs/[id]/launch-outcome/route.ts](app/api/runs/[id]/launch-outcome/route.ts)):
+      POST snapshots the run's frozen audience + inputs + actual metrics; GET
+      replays each capture through the harness. ⚠️ **Needs `npm run db:migrate`**
+      (adds the `launch_outcomes` table) before the endpoint works — a new table,
+      so it does NOT affect the running app until migrated. **Still pending:** a UI
+      to enter outcomes, and accumulating ~15 real launches for a true backtest set.
 
 **Open questions for collaborators:**
 - Geo-tier taxonomy: current is `metro / tier1 / tier2 / tier3 / rural /

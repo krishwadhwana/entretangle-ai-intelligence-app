@@ -63,7 +63,10 @@ export type BacktestOutcome = {
   notes?: string;
   inputs: Partial<LaunchSimInputs>;
   ctx?: LaunchContext;
-  audience: PersonaSpec[];
+  // Audience: real captures carry the frozen persona snapshot directly; compact
+  // fixtures carry specs that synthPersonas expands. `personas` wins if present.
+  personas?: LaunchPersona[];
+  audience?: PersonaSpec[];
   actual: ActualOutcome;
 };
 
@@ -135,7 +138,8 @@ function pctErr(pred: number, actual: number): number {
 
 /** Replay one recorded outcome through the sim and score it. */
 export function runBacktest(o: BacktestOutcome): BacktestResult {
-  const personas = synthPersonas(o.audience);
+  const personas = o.personas ?? synthPersonas(o.audience ?? []);
+  if (!personas.length) throw new Error(`outcome ${o.id} has no audience`);
   const baseInputs = LaunchSimInputsSchema.parse(o.inputs);
   const ctx = o.ctx ?? {};
 
