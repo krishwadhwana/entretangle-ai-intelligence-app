@@ -121,8 +121,10 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
   taxonomy (`CategoryKey × GeoTier × ChannelKey`), per-category economics,
   geo-tier modifiers, channel CPMs, India seasonality curve, mapping helpers,
   and a `formatBenchmarks` prompt renderer.
-  ⚠️ **Numbers are currently estimates.** The honest provenance refactor (flag
-  estimates, pull verified figures, drop placeholder citations) is **pending**.
+  ✅ **Provenance refactor done** (data-merge follow-up): every cell now renders
+  `[sourced]` or `[estimate]`; placeholder agency citations removed; the beauty
+  gross margin is pulled from the verified Honasa figure; `sources` lists verified
+  provenance only. Rate cells (CPM/CAC/CVR/AOV/returns/repeat) stay `[estimate]`.
 - **Provenance layer** — [lib/datasources/verified.ts](lib/datasources/verified.ts):
   the only place numbers are allowed to claim a source; holds verified figures
   with source id + page + quote.
@@ -184,9 +186,10 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
 ## 7. Next steps & open decisions
 
 **Immediate (code):**
-- [ ] Finish the provenance refactor in `benchmarks.ts`: flag every unsourced
-      cell `estimate: true`, pull verified figures from `verified.ts`, remove
+- [x] Finish the provenance refactor in `benchmarks.ts`: flag every unsourced
+      cell `estimate`, pull verified figures from `verified.ts`, remove
       placeholder source attributions, label sourced vs estimate in output.
+      *(done — beauty margin ← Honasa; rate cells stay estimate; sources = verified only.)*
 
 **Data acquisition (Tier A, free):**
 - [ ] One audited filing per category for gross margins: Nykaa (beauty),
