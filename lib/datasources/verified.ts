@@ -43,6 +43,18 @@ export const SOURCES: Record<string, { title: string; file: string; url: string 
     file: "data/benchmarks/collected/worldbank-macro.json",
     url: "https://api.worldbank.org/v2",
   },
+  // Reported-tier sources: primary company disclosures, figure corroborated but
+  // not transcribed to a saved page + quote (file intentionally blank).
+  "go-fashion-ar-2023-24": {
+    title: "Go Fashion (India) Ltd — Annual Report 2023-24 / investor presentations",
+    file: "",
+    url: "https://investor.gocolors.com/annual-reports/2023-24/Go_Fashion_Annual_Report_2023-24.pdf",
+  },
+  "metro-brands-results": {
+    title: "Metro Brands Ltd — reported quarterly results / company commentary",
+    file: "",
+    url: "https://www.business-standard.com/article/news-cm/metro-brands-q3-pat-rises-54-6-yoy-to-rs-100-8-cr-122011700148_1.html",
+  },
 };
 
 // Provenance for an API-sourced figure: no page/quote (it's an API, not a PDF);
@@ -76,6 +88,56 @@ export const VERIFIED_GROSS_MARGIN_PCT: Partial<
   },
 };
 
+// Provenance for a company-REPORTED figure: a number the company states in its
+// own primary investor communication (annual report / investor presentation /
+// results), corroborated across sources, but NOT transcribed here to an exact
+// saved page + verbatim quote. Strictly weaker than SourceRef (the gold tier),
+// strictly stronger than an estimate. Rendered as `[reported]`.
+export type ReportedFigureRef = {
+  sourceId: string;
+  publisher: string;
+  period: string; // e.g. "FY24 / Q1 FY26"
+  url: string;
+  note?: string;
+};
+
+// --- Reported gross margins by category (company primary disclosures) -------
+// Each is a single listed player, so it anchors the UPPER part of its category
+// range (premium retail), not the whole category — same caveat as the verified
+// beauty figure. Overrides the estimate range for its category at resolve time.
+export const REPORTED_GROSS_MARGIN_PCT: Partial<
+  Record<string, { low: number; mid: number; high: number; ref: ReportedFigureRef }>
+> = {
+  // Go Fashion (Go Colors) — premium women's bottom-wear; reported gross margin
+  // ran ~60–64% across FY23–Q1FY26 (63.8% Q4FY23, 63.5% Q4FY24, 63.0% Q1FY26).
+  apparel: {
+    low: 60,
+    mid: 63,
+    high: 64,
+    ref: {
+      sourceId: "go-fashion-ar-2023-24",
+      publisher: "Go Fashion (India) Ltd — investor presentations / annual report",
+      period: "FY23–Q1FY26",
+      url: "https://investor.gocolors.com/annual-reports/2023-24/Go_Fashion_Annual_Report_2023-24.pdf",
+      note: "Premium women's bottom-wear; single listed player → anchors the upper range, not all apparel.",
+    },
+  },
+  // Metro Brands — premium multi-brand footwear retail; company-reported gross
+  // margin ~55–60% (Q3FY23 59.2%, full-year guidance 55–57%, Q1FY25 ~60%).
+  footwear: {
+    low: 55,
+    mid: 57,
+    high: 60,
+    ref: {
+      sourceId: "metro-brands-results",
+      publisher: "Metro Brands Ltd — reported quarterly results / company commentary",
+      period: "FY23–FY25",
+      url: "https://www.business-standard.com/article/news-cm/metro-brands-q3-pat-rises-54-6-yoy-to-rs-100-8-cr-122011700148_1.html",
+      note: "Premium footwear retail; single listed player → anchors the upper range, not all footwear.",
+    },
+  },
+};
+
 // --- Verified income / spend levels (NSSO HCES 2022-23) ---------------------
 // Monthly Per Capita Consumption Expenditure (MPCE), INR. Used to calibrate the
 // budget→luxury spread and a realism ceiling on per-capita spend by sector.
@@ -99,8 +161,8 @@ export const VERIFIED_MPCE = {
 };
 
 /** A one-line provenance string for a verified figure, for prompt rendering. */
-export function citeRef(ref: SourceRef | ApiSourceRef): string {
-  return "page" in ref
-    ? `${ref.publisher}, ${ref.year}, ${ref.page}`
-    : `${ref.publisher}, retrieved ${ref.retrieved}`;
+export function citeRef(ref: SourceRef | ApiSourceRef | ReportedFigureRef): string {
+  if ("page" in ref) return `${ref.publisher}, ${ref.year}, ${ref.page}`;
+  if ("retrieved" in ref) return `${ref.publisher}, retrieved ${ref.retrieved}`;
+  return `${ref.publisher} (${ref.period}, reported)`;
 }

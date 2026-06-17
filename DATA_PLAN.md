@@ -159,6 +159,17 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
   (idempotent — snapshots carry the data's own year). **Does NOT cover CPM/CAC/CVR**
   — those still have no free source (§3 reality check stands).
 
+### Update — provenance tiers
+Three honest tiers now render on each benchmark line: **`[sourced]`** (saved
+document + page + verbatim quote — beauty margin ← Honasa, income ← NSSO),
+**`[reported]`** (a company's own primary disclosure, corroborated but not
+transcribed — apparel margin ← Go Fashion, footwear margin ← Metro Brands), and
+**`[estimate]`** (model prior, no public source). The `[reported]` figures are
+single premium players, so they anchor the *upper* range of their category, not
+the whole category (same caveat as the verified beauty figure). Note: the large
+DRHP PDFs exceed the fetch limit, so promoting these to full `[sourced]` needs a
+human to save the PDF + transcribe the page/quote.
+
 ### Saved sources (committed)
 - [data/benchmarks/SOURCES.md](data/benchmarks/SOURCES.md) — manifest.
 - **NSSO HCES 2022-23 Fact Sheet** (govt) → income/MPCE by sector.
@@ -174,7 +185,8 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
 | Metric | Status | Reliable free source? |
 |---|---|---|
 | Gross margin (beauty) | **sourced** — Honasa DRHP | Yes — company filings |
-| Gross margin (other categories) | estimate | Yes — one filing per category needed |
+| Gross margin (apparel, footwear) | **reported** — Go Fashion / Metro Brands primary disclosures | Yes — promoted from estimate |
+| Gross margin (remaining categories) | estimate | Yes — one filing per category needed |
 | Income / spend by tier | **sourced** — NSSO | Yes — NSSO HCES |
 | AOV by category | estimate | Partial — Unicommerce / GoKwik (vendor) |
 | RTO / COD share / returns | estimate | Partial — GoKwik / Unicommerce (vendor) |
