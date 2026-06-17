@@ -1,6 +1,10 @@
 import type { ClientProfile } from "../schema";
 import comtradeImports from "../../data/benchmarks/collected/comtrade-imports.json";
-import { VERIFIED_GROSS_MARGIN_PCT, citeRef } from "./verified";
+import {
+  VERIFIED_GROSS_MARGIN_PCT,
+  REPORTED_GROSS_MARGIN_PCT,
+  citeRef,
+} from "./verified";
 
 // Sourced per-category India import value (USD mn), snapshotted by
 // scripts/scrape/ from UN Comtrade. A real market-size / import-served-share
@@ -216,8 +220,8 @@ export type BenchmarkPriors = {
   geoTiers: GeoTier[];
   currency: "INR";
   grossMarginPct: Range;
-  /** True when grossMarginPct came from a verified saved filing (verified.ts). */
-  grossMarginSourced: boolean;
+  /** sourced = saved filing+page+quote; reported = company primary disclosure; estimate = model prior. */
+  grossMarginProvenance: "sourced" | "reported" | "estimate";
   aovInr: Range;
   landingCvrPct: Range;
   repeatRatePct: Range;
@@ -278,14 +282,20 @@ export function resolveBenchmarks(
 
   const hasInternational = tiers.includes("international");
 
-  // Verified override: use a SOURCED gross margin where verified.ts has one
-  // (traced to a saved filing); otherwise the category estimate. This is the
-  // only metric here that can currently be `sourced`.
+  // Gross margin provenance ladder: a SOURCED figure (saved filing + page +
+  // quote) wins; else a REPORTED figure (company primary disclosure, not
+  // transcribed); else the category estimate.
   const vgm = VERIFIED_GROSS_MARGIN_PCT[category];
-  const grossMarginPct = vgm
-    ? { low: vgm.low, mid: vgm.mid, high: vgm.high }
+  const rgm = REPORTED_GROSS_MARGIN_PCT[category];
+  const gm = vgm ?? rgm;
+  const grossMarginPct = gm
+    ? { low: gm.low, mid: gm.mid, high: gm.high }
     : cat.grossMarginPct;
-  const grossMarginSourced = !!vgm;
+  const grossMarginProvenance: "sourced" | "reported" | "estimate" = vgm
+    ? "sourced"
+    : rgm
+      ? "reported"
+      : "estimate";
 
   const imports = COMTRADE_IMPORTS[category];
   const marketImportsUsdMn = imports
@@ -295,7 +305,7 @@ export function resolveBenchmarks(
   // Sources list = ONLY verified provenance actually used (no agency
   // placeholders). The rate priors below are model estimates, never attributed.
   const sources = [
-    ...(vgm ? [citeRef(vgm.ref)] : []),
+    ...(gm ? [citeRef(gm.ref)] : []),
     ...(imports
       ? [`UN Comtrade — India imports HS ${imports.hsChapter} (${imports.year})`]
       : []),
@@ -315,7 +325,8 @@ export function resolveBenchmarks(
   // Confidence: estimate-grade by default; a verified gross margin nudges it up.
   // Degrade for broad/unknown geo spreads and for international.
   let confidence = 0.5;
-  if (grossMarginSourced) confidence += 0.05;
+  if (grossMarginProvenance === "sourced") confidence += 0.05;
+  else if (grossMarginProvenance === "reported") confidence += 0.03;
   if (tiers.length > 3) confidence -= 0.1;
   if (hasInternational) confidence -= 0.15;
   confidence = Math.max(0.25, Math.min(0.7, confidence));
@@ -325,7 +336,7 @@ export function resolveBenchmarks(
     geoTiers: tiers,
     currency: "INR",
     grossMarginPct,
-    grossMarginSourced,
+    grossMarginProvenance,
     aovInr: scaleRange(cat.aovInr, aovMult),
     landingCvrPct: scaleRange(cat.landingCvrPct, cvrMult),
     repeatRatePct: cat.repeatRatePct,
@@ -461,9 +472,10 @@ function rng(x: Range): string {
 }
 
 export function formatBenchmarks(p: BenchmarkPriors): string {
-  const gm = p.grossMarginSourced ? "[sourced]" : "[estimate]";
+  const gm = `[${p.grossMarginProvenance}]`;
   return `BENCHMARK PRIORS for Indian D2C (INR). Each line is tagged [sourced]
-(traced to a saved document) or [estimate] (model prior, no public source —
+(saved document + page + quote), [reported] (a company's own primary disclosure,
+corroborated but not transcribed), or [estimate] (model prior, no public source —
 DATA_PLAN §3). Anchor your assumptions to these unless the research conclusions
 give better, more specific numbers; do not output figures wildly outside an
 [estimate] range without saying why, and do not treat [estimate] as fact:
@@ -481,7 +493,7 @@ Category: ${p.category} | Geo tiers: ${p.geoTiers.join(", ")} | confidence ${(p.
       : ""
   }
 - Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (Oct–Nov festive, Jun monsoon trough) [estimate]
-Sources (verified only): ${p.sources.length ? p.sources.join("; ") : "none yet for this category — all figures are estimates"}
+Sources (sourced/reported only): ${p.sources.length ? p.sources.join("; ") : "none yet for this category — all figures are estimates"}
 Notes: ${p.notes.join(" ")}
 END BENCHMARK PRIORS.`;
 }
