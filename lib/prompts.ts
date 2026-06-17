@@ -15,6 +15,7 @@ import {
   INDIA_RELEVANT_MARKETS,
   PAN_INDIA_MIN_RELEVANT_SPOTS,
 } from "./audienceCoverage";
+import { formatRegion } from "./datasources/politicalGeography";
 
 // All prompts demand JSON only, no markdown fences, and include the literal
 // JSON schema (SPEC §5). Anti-fabrication clause in the executor is
@@ -421,6 +422,7 @@ export function cohortSimSystem(
   );
   const focusSection = runFocusSection(focus);
   const calibrationSection = calibration ? `\n${calibration}` : "";
+  const regionLine = formatRegion(cohort.locality, cohort.country);
   const roleDesc: Record<string, string> = {
     consumer: "end consumers considering buying the product themselves",
     retail_exec:
@@ -485,7 +487,7 @@ Income segment: ${cohort.segment}
 Role: ${roleDesc[cohort.role] ?? cohort.role}
 Venture: ${JSON.stringify(profile)}
 Local upbringing / culture prior: ${cultureContext}
-${focusSection}${calibrationSection}
+${regionLine ? regionLine + "\n" : ""}${focusSection}${calibrationSection}
 If Venture.productDetails is present, treat it as ground truth for style,
 hero products, materials/fit, occasions, references and differentiation.
 Persona reactions must respond to those specifics, not only the broad category.

@@ -240,3 +240,28 @@ human to save the PDF + transcribe the page/quote.
   (apparel/footwear/beauty/food_beverage/furniture/home_decor/electronics/
   jewellery/services/general) — align before merging.
 - Currency: benchmark tables are INR; non-INR markets need an FX step.
+
+---
+
+## 8. Political geography & attention/hype (in progress)
+
+A political-geography axis (state / GoI zone / urban-rural) plus attention/hype
+demand signals, layered onto the map + cohorts + analysis. Ordered by what is
+authoritative + tractable first (same discipline as §3-4).
+
+- **[x] Administrative geography (Phase 1)** — `lib/datasources/politicalGeography.ts`:
+  factual locality → {state, GoI Zonal-Council zone, urban/semi-urban/rural},
+  covering the cities the app already classifies. Neutral/authoritative (Census +
+  Zonal Councils), pure + deterministic. Wired into `cohortSimSystem` so personas
+  are region-aware; `zonesForLocalities` ready for map + aggregation.
+- **[ ] Map + aggregation (Phase 2)** — render zones/states on MapView; add a
+  by-zone/by-state breakdown to the audience aggregate + report.
+- **[ ] Attention/hype demand signal (Phase 3)** — extend the existing Wikipedia-
+  pageviews interest proxy with additional buzz signals as a demand input. HONEST
+  LIMIT: Google Trends / social-listening have no clean free API (same as
+  CPM/CAC); those tiers need licensed data, and will be flagged `[estimate]`.
+- **[ ] Governance / regulatory regional signals (Phase 4)** — FACTUAL, neutral,
+  sourced only (e.g. state-level GST/again category regulation, ease-of-business);
+  deliberately NOT partisan/electoral-outcome data. Deferred (volatile + sensitive).
+- **[ ] Voter-style segmentation (Phase 5)** — political-demographic blocs; last,
+  as it overlaps the income segments and is the most speculative.
