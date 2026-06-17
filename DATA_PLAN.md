@@ -213,8 +213,12 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
       POST snapshots the run's frozen audience + inputs + actual metrics; GET
       replays each capture through the harness. ⚠️ **Needs `npm run db:migrate`**
       (adds the `launch_outcomes` table) before the endpoint works — a new table,
-      so it does NOT affect the running app until migrated. **Still pending:** a UI
-      to enter outcomes, and accumulating ~15 real launches for a true backtest set.
+      so it does NOT affect the running app until migrated.
+      **Capture UI done** — an "Actual outcome & backtest" panel on the launch-sim
+      view ([components/LaunchSimulation.tsx](components/LaunchSimulation.tsx))
+      records actuals against the active scenario and shows predicted-vs-actual +
+      the refund-calibration A/B (degrades to a migrate-me note until the table
+      exists). **Still pending:** accumulating ~15 real launches for a true backtest set.
 
 **Open questions for collaborators:**
 - Geo-tier taxonomy: current is `metro / tier1 / tier2 / tier3 / rural /

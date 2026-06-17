@@ -564,9 +564,237 @@ export default function LaunchSimulation({
         </section>
 
         {active && <Results record={active} fmt={fmt} />}
+
+        <OutcomeCapture
+          runId={runId}
+          activeScenarioId={active?.id ?? null}
+          fmt={fmt}
+        />
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// OutcomeCapture: record a REAL launch outcome (the first-party moat) and show
+// the backtest score — predicted-vs-actual + the benchmark refund-calibration
+// A/B. POSTs to /api/runs/[id]/launch-outcome (which freezes the audience).
+// Requires the launch_outcomes table (npm run db:migrate); degrades to a note
+// if the endpoint is unavailable.
+// ---------------------------------------------------------------------------
+
+type OutcomeScore = {
+  mapePct: number | null;
+  errors: { metric: string; predicted: number; actual: number; absPctError: number }[];
+  refundAb: {
+    actual: number | null;
+    calibratedPred: number;
+    uncalibratedPred: number;
+    winner: "calibrated" | "uncalibrated" | "tie" | "n/a";
+  };
+};
+type CapturedOutcome = {
+  id: string;
+  label: string;
+  createdAt: string;
+  score: OutcomeScore | null;
+  error: string | null;
+};
+
+const OUTCOME_FIELDS: { key: string; label: string }[] = [
+  { key: "refundRatePct", label: "Returns/RTO %" },
+  { key: "totalOrders", label: "Total orders" },
+  { key: "unitsSold", label: "Units sold" },
+  { key: "grossRevenue", label: "Gross revenue" },
+  { key: "blendedCac", label: "Blended CAC" },
+];
+
+function OutcomeCapture({
+  runId,
+  activeScenarioId,
+  fmt,
+}: {
+  runId: string;
+  activeScenarioId: string | null;
+  fmt: Formatters;
+}) {
+  const [outcomes, setOutcomes] = useState<CapturedOutcome[]>([]);
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [unavailable, setUnavailable] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/runs/${runId}/launch-outcome`);
+      if (!res.ok) {
+        setUnavailable(true);
+        return;
+      }
+      const data = (await res.json()) as { outcomes: CapturedOutcome[] };
+      setOutcomes(data.outcomes ?? []);
+      setUnavailable(false);
+    } catch {
+      setUnavailable(true);
+    }
+  }, [runId]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const submit = useCallback(async () => {
+    if (busy) return;
+    const actual: Record<string, number> = {};
+    for (const f of OUTCOME_FIELDS) {
+      const v = form[f.key];
+      if (v != null && v.trim() !== "" && Number.isFinite(Number(v))) {
+        actual[f.key] = Number(v);
+      }
+    }
+    if (Object.keys(actual).length === 0) {
+      setErr("Enter at least one actual metric.");
+      return;
+    }
+    if (!activeScenarioId) {
+      setErr("Run or select a scenario first — its inputs are replayed for the backtest.");
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/launch-outcome`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          actual,
+          scenarioId: activeScenarioId,
+          label: `Outcome ${new Date().toISOString().slice(0, 10)}`,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error ?? `failed (${res.status})`);
+      setForm({});
+      await load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : "Failed to record outcome");
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, form, activeScenarioId, runId, load]);
+
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <h3 className="text-xs font-semibold text-neutral-700">
+        Actual outcome & backtest
+      </h3>
+      <p className="mt-0.5 text-[10px] leading-snug text-neutral-500">
+        Record what really happened to score the simulation against reality. The
+        audience is frozen on capture and replayed through the engine.
+      </p>
+
+      {unavailable ? (
+        <p className="mt-3 rounded-lg bg-amber-50 px-3 py-2 text-[11px] text-amber-700">
+          Outcome capture isn’t available yet — run <code>npm run db:migrate</code>{" "}
+          to create the <code>launch_outcomes</code> table.
+        </p>
+      ) : (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {OUTCOME_FIELDS.map((f) => (
+              <label key={f.key} className="text-[10px] text-neutral-500">
+                {f.label}
+                <input
+                  type="number"
+                  value={form[f.key] ?? ""}
+                  onChange={(e) =>
+                    setForm((c) => ({ ...c, [f.key]: e.target.value }))
+                  }
+                  className="mt-0.5 w-full rounded border border-neutral-200 px-2 py-1 text-[11px] tabular-nums"
+                />
+              </label>
+            ))}
+          </div>
+          <div className="mt-3 flex items-center gap-3">
+            <button
+              onClick={submit}
+              disabled={busy}
+              className="rounded-lg bg-neutral-900 px-3 py-1.5 text-[11px] font-medium text-white disabled:opacity-50"
+            >
+              {busy ? "Recording…" : "Record outcome"}
+            </button>
+            {err && <span className="text-[11px] text-red-600">{err}</span>}
+          </div>
+
+          {outcomes.length > 0 && (
+            <div className="mt-4 space-y-3">
+              {outcomes.map((o) => (
+                <OutcomeRow key={o.id} outcome={o} fmt={fmt} />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </section>
+  );
+}
+
+function OutcomeRow({
+  outcome,
+  fmt,
+}: {
+  outcome: CapturedOutcome;
+  fmt: Formatters;
+}) {
+  const s = outcome.score;
+  const ab = s?.refundAb;
+  return (
+    <div className="rounded-lg border border-neutral-100 p-3">
+      <div className="flex items-center justify-between text-[11px]">
+        <span className="font-medium text-neutral-700">{outcome.label}</span>
+        <span className="text-neutral-400">
+          {s?.mapePct != null ? `MAPE ${s.mapePct}%` : outcome.error ?? "—"}
+        </span>
+      </div>
+      {s && s.errors.length > 0 && (
+        <table className="mt-2 w-full text-[10px] tabular-nums">
+          <thead>
+            <tr className="text-neutral-400">
+              <td className="text-left font-normal">metric</td>
+              <td className="text-right font-normal">predicted</td>
+              <td className="text-right font-normal">actual</td>
+              <td className="text-right font-normal">err</td>
+            </tr>
+          </thead>
+          <tbody>
+            {s.errors.map((e) => (
+              <tr key={e.metric} className="text-neutral-600">
+                <td className="text-left">{e.metric}</td>
+                <td className="text-right">{fmt.num(e.predicted)}</td>
+                <td className="text-right">{fmt.num(e.actual)}</td>
+                <td className="text-right">{e.absPctError}%</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {ab && ab.actual != null && (
+        <p className="mt-2 text-[10px] text-neutral-500">
+          Refund calibration: actual {ab.actual}% · benchmark-calibrated{" "}
+          {ab.calibratedPred}% · uncalibrated {ab.uncalibratedPred}% →{" "}
+          <span
+            className={
+              ab.winner === "calibrated"
+                ? "font-medium text-emerald-600"
+                : "text-neutral-500"
+            }
+          >
+            {ab.winner} closer
+          </span>
+        </p>
+      )}
     </div>
   );
 }
