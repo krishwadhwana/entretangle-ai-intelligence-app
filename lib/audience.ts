@@ -12,6 +12,7 @@ import {
   personaJitterDegreesForLocality,
   placedLocalityForCohort,
 } from "./localityAnchors";
+import { regionForLocality } from "./datasources/politicalGeography";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import type { RunEmitter } from "./events";
@@ -590,6 +591,10 @@ export async function aggregateAudience(
     totalCohorts: cohorts.length,
     bySegment: group((p) => p.cohort.segment),
     byLocality: group((p) => p.cohort.locality),
+    byZone: group(
+      (p) =>
+        regionForLocality(p.cohort.locality, p.cohort.country)?.zone ?? "Other"
+    ),
     byRole: group((p) => p.cohort.role),
     channelShare: shares(personas.map((p) => p.channelPref), 8),
     platformShare: shares(personas.flatMap((p) => p.platforms), 8),

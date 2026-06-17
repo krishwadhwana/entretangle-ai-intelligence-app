@@ -140,6 +140,7 @@ const aggregateOnly = computeFinancials(
         affluent: { n: 20, meanIntent: 0.7, wtpP50: 200000 },
       },
       byLocality: {},
+      byZone: {},
       byRole: {},
       channelShare: [],
       platformShare: [],
