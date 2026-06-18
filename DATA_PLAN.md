@@ -273,3 +273,32 @@ authoritative + tractable first (same discipline as §3-4).
   fake per-state rate variation).
 - **[ ] Voter-style segmentation (Phase 5)** — political-demographic blocs; last,
   as it overlaps the income segments and is the most speculative.
+
+---
+
+## 9. Launch-sim realism fix + benchmark wiring
+
+Two correctness bugs made launch-sim outputs balloon (multi-million revenue,
+orders that converted most of the reachable pool, repeat orders dominating
+month 1):
+
+1. **No acquisition cap without a financial model.** The engine only caps paid
+   new customers (`adSpend / CAC`) when a CAC is supplied; with no founder
+   financial model `blendedCac` was null → acquisition ran unbounded (~85% of
+   the reachable pool converted). **Fix:** the launch-sim route now defaults
+   `blendedCac` to the **benchmark `cacInr.mid`**, so acquisition is always
+   budget-bounded. (This is also the "use the deployed data" wire — benchmark CAC.)
+2. **Repeat computed on the pre-cap active pool.** Repeat orders used `active`
+   *after* adding the same step's (uncapped) new buyers, so repeat rode the
+   uncapped acquisition spike and newly-acquired customers "reordered" the same
+   step. **Fix:** repeat now comes from the prior, cap-corrected active pool only.
+
+Result on a representative apparel run (₹200k/mo ad spend, ₹1499 AOV): revenue
+~₹7.5M / 12 mo (was ~₹610M), new orders flat at the budget cap, repeat ramps as
+the base builds. Determinism suite + financials smoke still pass.
+
+**What the launch sim now consumes from the deployed data:** benchmark CAC
+(acquisition cap), benchmark returns/RTO (refund anchor, §-earlier), benchmark
+CPM + shipping (form prefills). Not yet wired: festive **seasonality** (needs a
+launch-start-month input) and the attention/hype momentum — available as a
+focused follow-up.
