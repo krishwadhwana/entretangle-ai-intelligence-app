@@ -264,8 +264,11 @@ authoritative + tractable first (same discipline as §3-4).
   an attention/hype line and explicitly labelled a proxy. HONEST LIMIT (as
   expected): Google Trends / social-listening have no clean free API, so true
   ad/social attention stays out of scope and is called out in the line itself.
-- **[ ] Governance / regulatory regional signals (Phase 4)** — FACTUAL, neutral,
-  sourced only (e.g. state-level GST/again category regulation, ease-of-business);
-  deliberately NOT partisan/electoral-outcome data. Deferred (volatile + sensitive).
+- **[x] Governance / regulatory regional signals (Phase 4)** — `regionalGovernance.ts`:
+  per-state DPIIT BRAP Ease-of-Doing-Business band (Top Achiever/Achiever/Aspirer/
+  Emerging), sourced + dated. Injected into the operating-environment research
+  desks (regulation/finance/supply/market) only — not consumer-demand desks.
+  FACTUAL/NEUTRAL by design; NOT partisan/electoral. GST left as national (no
+  fake per-state rate variation).
 - **[ ] Voter-style segmentation (Phase 5)** — political-demographic blocs; last,
   as it overlaps the income segments and is the most speculative.

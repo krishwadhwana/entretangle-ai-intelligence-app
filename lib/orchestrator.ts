@@ -19,6 +19,7 @@ import {
   type StructuredData,
 } from "./datasources/structured";
 import { getIndustryLibrary, formatLibrary } from "./datasources/library";
+import { formatRegionalGovernance } from "./datasources/regionalGovernance";
 import {
   getOrBuildIndustryKnowledge,
   formatIndustryKnowledge,
@@ -496,12 +497,23 @@ export async function executeRun(runId: string): Promise<void> {
 
     // Per-desk ground truth = founder RAG chunks (option B) + structured real
     // data for the desk's domain (option C), injected into the desk prompt.
+    // Regional business-environment (DPIIT EoDB) is operating-context, so it goes
+    // only to the desks that reason about setup/ops, not consumer-demand desks.
+    const governanceGroundTruth = formatRegionalGovernance(
+      plan.cohortPlan.localities.map((l) => ({
+        name: l.name,
+        country: l.country,
+      }))
+    );
+    const GOVERNANCE_DOMAINS = new Set(["regulation", "finance", "supply", "market"]);
     const deskGroundTruth = new Map<string, string>();
     for (const [i, d] of desks.entries()) {
       await throwIfRunCancelled(runId);
       const parts: string[] = [];
       // Auto-built (or curated-fallback) industry knowledge — every desk.
       if (industryGroundTruth) parts.push(industryGroundTruth);
+      if (governanceGroundTruth && GOVERNANCE_DOMAINS.has(d.domain))
+        parts.push(governanceGroundTruth);
       if (retriever?.hasDocs) {
         const gt = formatGroundTruth(await retriever.search(d.mission, 4));
         if (gt) parts.push(gt);
