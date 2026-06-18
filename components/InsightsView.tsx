@@ -15,19 +15,8 @@ import {
   Scatter,
   ZAxis,
 } from "recharts";
-import { SEGMENT_COLORS } from "./segments";
+import { SEGMENT_COLORS, ZONE_COLORS } from "./segments";
 import type { CanvasState } from "./useRunEvents";
-
-// GoI zonal-council colours for the by-region audience chart.
-const ZONE_COLORS: Record<string, string> = {
-  North: "#6366f1",
-  South: "#10b981",
-  East: "#f59e0b",
-  West: "#ef4444",
-  Central: "#8b5cf6",
-  Northeast: "#14b8a6",
-  Other: "#94a3b8",
-};
 
 // ---------------------------------------------------------------------------
 // Insights view (v2.1): every chart derives purely from CanvasState — the

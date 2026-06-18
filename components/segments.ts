@@ -8,6 +8,17 @@ export const SEGMENT_COLORS: Record<string, string> = {
   luxury: "#a855f7",
 };
 
+// GoI zonal-council colours (political-geography map + region chart).
+export const ZONE_COLORS: Record<string, string> = {
+  North: "#6366f1",
+  South: "#10b981",
+  East: "#f59e0b",
+  West: "#ef4444",
+  Central: "#8b5cf6",
+  Northeast: "#14b8a6",
+  Other: "#94a3b8",
+};
+
 export const DOMAIN_COLORS: Record<string, string> = {
   market: "#0ea5e9",
   competitor: "#ef4444",
