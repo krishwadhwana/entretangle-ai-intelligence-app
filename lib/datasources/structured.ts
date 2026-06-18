@@ -114,22 +114,37 @@ async function worldBank(
   return null;
 }
 
-/** Monthly Wikipedia pageviews for a term — a free real interest proxy. */
-async function wikipediaInterest(term: string): Promise<number | null> {
+// Attention / hype proxy: Wikipedia monthly pageviews for the term, plus a
+// MOMENTUM read (last 3 months vs the prior 3) → rising / steady / cooling. This
+// is the one clean FREE attention signal — a demand-interest proxy, NOT true ad
+// or social attention (Google Trends / social listening have no clean free API
+// and need licensed data). Honest by construction; callers flag it as a proxy.
+type AttentionSignal = {
+  avgMonthly: number;
+  momentumPct: number;
+  trend: "rising" | "steady" | "cooling";
+};
+
+async function attentionSignal(term: string): Promise<AttentionSignal | null> {
   const article = term.trim().split(/\s+/).slice(0, 3).join("_");
   if (!article) return null;
-  // last ~5 completed months; timestamps are illustrative, callers pass none.
   try {
     const data = (await fetchJson(
       `https://wikimedia.org/api/rest_v1/metrics/pageviews/per-article/en.wikipedia/all-access/all-agents/${encodeURIComponent(
         article
-      )}/monthly/2025010100/2025120100`
+      )}/monthly/2024010100/2026120100`
     )) as { items?: Array<{ views: number }> };
-    if (!data.items?.length) return null;
-    const recent = data.items.slice(-3);
-    return Math.round(
-      recent.reduce((s, i) => s + i.views, 0) / recent.length
-    );
+    const items = data.items ?? [];
+    if (items.length < 2) return null;
+    const mean = (a: Array<{ views: number }>) =>
+      a.length ? a.reduce((s, i) => s + i.views, 0) / a.length : 0;
+    const avgMonthly = Math.round(mean(items.slice(-3)));
+    const priorAvg = mean(items.slice(-6, -3));
+    const momentumPct =
+      priorAvg > 0 ? Math.round(((avgMonthly - priorAvg) / priorAvg) * 100) : 0;
+    const trend =
+      momentumPct >= 15 ? "rising" : momentumPct <= -15 ? "cooling" : "steady";
+    return { avgMonthly, momentumPct, trend };
   } catch {
     return null;
   }
@@ -185,10 +200,14 @@ async function marketData(ctx: StructuredCtx): Promise<StructuredData | null> {
       sources.push("https://data.worldbank.org");
     }
   }
-  const interest = await wikipediaInterest(ctx.product);
-  if (interest != null) {
+  const attention = await attentionSignal(ctx.product);
+  if (attention != null) {
+    const momentum =
+      attention.momentumPct !== 0
+        ? ` (${attention.momentumPct > 0 ? "+" : ""}${attention.momentumPct}% vs prior quarter)`
+        : "";
     parts.push(
-      `  "${ctx.product}" Wikipedia interest: ~${interest.toLocaleString()} views/mo (demand-interest proxy)`
+      `  "${ctx.product}" attention/hype (proxy): ~${attention.avgMonthly.toLocaleString()} Wikipedia views/mo, ${attention.trend}${momentum} — demand-interest proxy only; true ad/social attention (Trends/CPM/virality) needs licensed data`
     );
     sources.push("https://wikimedia.org (pageviews)");
   }

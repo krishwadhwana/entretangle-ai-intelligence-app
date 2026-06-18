@@ -258,10 +258,12 @@ authoritative + tractable first (same discipline as §3-4).
   breakdown) computed in `aggregateAudience`, rendered as a "Purchase intent by
   region (zone)" chart in `InsightsView`. **Phase 2b (deferred):** colour MapView
   markers by zone (bigger UI; deferred to avoid churn on the reconciled map).
-- **[ ] Attention/hype demand signal (Phase 3)** — extend the existing Wikipedia-
-  pageviews interest proxy with additional buzz signals as a demand input. HONEST
-  LIMIT: Google Trends / social-listening have no clean free API (same as
-  CPM/CAC); those tiers need licensed data, and will be flagged `[estimate]`.
+- **[x] Attention/hype demand signal (Phase 3)** — `attentionSignal()` in
+  structured.ts extends the Wikipedia interest proxy with a MOMENTUM read (last 3
+  months vs prior 3 → rising/steady/cooling), surfaced in the market-data block as
+  an attention/hype line and explicitly labelled a proxy. HONEST LIMIT (as
+  expected): Google Trends / social-listening have no clean free API, so true
+  ad/social attention stays out of scope and is called out in the line itself.
 - **[ ] Governance / regulatory regional signals (Phase 4)** — FACTUAL, neutral,
   sourced only (e.g. state-level GST/again category regulation, ease-of-business);
   deliberately NOT partisan/electoral-outcome data. Deferred (volatile + sensitive).
