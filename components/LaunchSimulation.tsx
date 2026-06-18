@@ -50,6 +50,7 @@ type Defaults = {
   suggestedSalePrice: number | null;
   suggestedAdSpendPerMonth: number | null;
   reachableProspectsPerMonth: number | null;
+  availableRegions?: string[];
   fixedCostsPerMonth: number | null;
   benchmarks?: {
     suggestedCpm: number;
@@ -69,6 +70,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   costPrice: 0,
   salePrice: 0,
   adSpendPerMonth: 0,
+  region: null, // null → whole audience; or a GoI zone to scope the launch
   granularity: "day",
   horizon: 90,
   reachablePool: null,
@@ -277,9 +279,16 @@ export default function LaunchSimulation({
                     setActive(s);
                     setInputs(s.inputs);
                   }}
-                  title={`${fmt.money(s.result.summary.netProfit)} net profit`}
+                  title={`${fmt.money(s.result.summary.netProfit)} net profit${
+                    s.inputs.region ? ` · ${s.inputs.region} region` : ""
+                  }`}
                 >
                   {s.name}
+                  {s.inputs.region && (
+                    <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-px text-[9px] font-semibold text-indigo-600">
+                      {s.inputs.region}
+                    </span>
+                  )}
                 </button>
                 <button
                   onClick={() => onDelete(s.id)}
@@ -336,6 +345,26 @@ export default function LaunchSimulation({
                 ))}
               </select>
             </div>
+            {(defaults?.availableRegions?.length ?? 0) > 1 && (
+              <div>
+                <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                  Audience
+                </label>
+                <select
+                  value={inputs.region ?? ""}
+                  onChange={(e) => set("region", e.target.value || null)}
+                  className="h-[31px] rounded-lg border border-neutral-300 bg-white px-2.5 text-xs outline-none focus:border-indigo-500"
+                  title="Run this launch for the whole audience or one region only"
+                >
+                  <option value="">Whole audience</option>
+                  {defaults?.availableRegions?.map((r) => (
+                    <option key={r} value={r}>
+                      {r} region only
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
             <div>
               <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
                 Granularity

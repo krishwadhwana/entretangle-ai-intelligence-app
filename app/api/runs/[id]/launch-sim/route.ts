@@ -18,6 +18,7 @@ import {
   type BenchmarkPriors,
 } from "@/lib/datasources/benchmarks";
 import { getAttentionMomentumPct } from "@/lib/datasources/structured";
+import { regionForLocality } from "@/lib/datasources/politicalGeography";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -35,10 +36,16 @@ const BodySchema = z.object({
   projectId: z.string().nullable().optional(),
 });
 
-// Load the run's frozen personas in the shape the engine needs.
+// A persona plus the GoI region (zone) it belongs to, so a launch can be scoped
+// to one ring of the country.
+type ScopedPersona = LaunchPersona & { region: string };
+
+// Load the run's frozen personas in the shape the engine needs, each tagged with
+// its region. `regions` is the sorted set of regions present (for the picker).
 async function loadPersonas(runId: string): Promise<{
-  personas: LaunchPersona[];
+  personas: ScopedPersona[];
   currency: string;
+  regions: string[];
 }> {
   const rows = await prisma.persona.findMany({
     where: { cohort: { runId } },
@@ -55,7 +62,7 @@ async function loadPersonas(runId: string): Promise<{
       cohort: { select: { segment: true, locality: true, country: true } },
     },
   });
-  const personas: LaunchPersona[] = rows.map((p) => ({
+  const personas: ScopedPersona[] = rows.map((p) => ({
     intent: p.intent,
     wtp: p.wtp,
     priceSensitivity: p.priceSensitivity,
@@ -67,8 +74,36 @@ async function loadPersonas(runId: string): Promise<{
     gender: p.gender,
     locality: p.cohort.locality,
     country: p.cohort.country,
+    region: regionForLocality(p.cohort.locality, p.cohort.country)?.zone ?? "Other",
   }));
-  return { personas, currency: dominantCurrency(rows.map((p) => p.wtpCurrency)) ?? "INR" };
+  const regions = Array.from(new Set(personas.map((p) => p.region))).sort();
+  return {
+    personas,
+    currency: dominantCurrency(rows.map((p) => p.wtpCurrency)) ?? "INR",
+    regions,
+  };
+}
+
+// Restrict the audience to a region and report its share of the whole run, so we
+// can scale the (global) reachable-prospects market down to the regional slice.
+function scopeToRegion(
+  all: ScopedPersona[],
+  region: string | null
+): { personas: ScopedPersona[]; share: number } {
+  if (!region) return { personas: all, share: 1 };
+  const personas = all.filter((p) => p.region === region);
+  const share = all.length > 0 ? personas.length / all.length : 0;
+  return { personas, share };
+}
+
+// Scale the global reachable market to a regional scenario's share.
+function scaledMonthly(
+  reachableProspectsPerMonth: number | null,
+  share: number
+): number | null {
+  return reachableProspectsPerMonth == null
+    ? null
+    : Math.round(reachableProspectsPerMonth * share);
 }
 
 export async function GET(
@@ -85,7 +120,7 @@ export async function GET(
     }),
     loadPersonas(run.id),
   ]);
-  const { personas, currency } = personaData;
+  const { personas, currency, regions } = personaData;
 
   // Prefill suggestions from the saved financial model, if the founder built one.
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
@@ -110,6 +145,8 @@ export async function GET(
       baseTier?.price.value ?? null
     ),
     reachableProspectsPerMonth,
+    // Regions present in this run's audience — powers the launch-sim scope picker.
+    availableRegions: regions,
     fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
     // Real category × geo priors (INR). Surfaced so the form prefills CPM and
     // shipping with market numbers instead of the universal 250 / 120 defaults.
@@ -136,15 +173,21 @@ export async function GET(
       ),
       priors
     );
+    // Scope to the scenario's region (null → whole audience) and scale the
+    // reachable market to that region's share, so a regional run is self-contained.
+    const scoped = scopeToRegion(personas, inputs.region);
     return {
       id: r.id,
       runId: r.runId,
       name: r.name,
       inputs,
       result:
-        personas.length > 0
-          ? simulateLaunch(personas, inputs, {
-              reachableProspectsPerMonth,
+        scoped.personas.length > 0
+          ? simulateLaunch(scoped.personas, inputs, {
+              reachableProspectsPerMonth: scaledMonthly(
+                reachableProspectsPerMonth,
+                scoped.share
+              ),
               // Fall back to the benchmark CAC so paid acquisition is ALWAYS
               // capped — without it the engine converts most of the reachable
               // pool and revenue/orders blow up.
@@ -186,6 +229,16 @@ export async function POST(
       { status: 409 }
     );
   }
+  // Scope to the requested region (null → whole audience). Done before the sim so
+  // a regional scenario only ever sees that ring's personas.
+  const requestedRegion = body.data.inputs.region ?? null;
+  const scoped = scopeToRegion(personas, requestedRegion);
+  if (scoped.personas.length === 0) {
+    return NextResponse.json(
+      { error: `no personas in region "${requestedRegion}" to run a launch against` },
+      { status: 409 }
+    );
+  }
 
   // Reach ceiling default comes from the founder's financial model when present.
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
@@ -211,8 +264,11 @@ export async function POST(
       momentumPct,
       nowMonth
     );
-    const result = simulateLaunch(personas, inputs, {
-      reachableProspectsPerMonth,
+    const result = simulateLaunch(scoped.personas, inputs, {
+      reachableProspectsPerMonth: scaledMonthly(
+        reachableProspectsPerMonth,
+        scoped.share
+      ),
       // Benchmark CAC fallback → paid acquisition is always capped (see GET).
       blendedCac: blendedCac ?? priors.cacInr.mid,
       seasonality: priors.seasonality,

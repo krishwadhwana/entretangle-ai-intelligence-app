@@ -1252,6 +1252,12 @@ export const LaunchSimInputsSchema = z.object({
   salePrice: z.number().nonnegative(), // retail price per unit
   adSpendPerMonth: z.number().nonnegative(), // monthly paid-media budget
 
+  // --- audience scope ---
+  // Restrict the launch to one region (GoI zone, e.g. "West"). null → the whole
+  // run's audience. Stored so a regional scenario re-simulates identically and
+  // stands as its own saved run.
+  region: z.string().nullable().default(null),
+
   // --- time axis ---
   granularity: LaunchGranularitySchema.default("day"),
   horizon: z.number().int().min(1).max(366).default(90), // steps to simulate
