@@ -763,6 +763,7 @@ export default function RunDashboard({
           <CohortDrawer
             runId={runId}
             cohort={selectedCohort}
+            allCohorts={cohorts}
             onClose={() => {
               setSelectedCohortId(null);
               setChatTarget(null);

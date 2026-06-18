@@ -1,10 +1,22 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Loader2, Send, Sparkles, Flag, Plus, Search, X } from "lucide-react";
-import type { CohortWithPersonas } from "./useRunEvents";
+import { Loader2, Send, Sparkles, Flag, Plus, Search, X, MapPin } from "lucide-react";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
+
+// A persona the picker can choose — carries its cohort context (label, region,
+// segment) so you can pull someone in from another ring of the country.
+export type PickablePersona = {
+  id: string;
+  name: string;
+  occupation: string;
+  personality: string;
+  intent: number;
+  cohortLabel: string;
+  region: string;
+  segment: string;
+};
 
 type Loading = "start" | "inject" | "conclude" | string | null;
 type SentimentFilter = "all" | "approve" | "mixed" | "reject";
@@ -33,7 +45,7 @@ export default function PersonaInteraction({
   initialAId,
 }: {
   runId: string;
-  personas: CohortWithPersonas["personas"];
+  personas: PickablePersona[];
   initialConvo?: PersonaConversation | null;
   initialAId?: string;
 }) {
@@ -52,27 +64,47 @@ export default function PersonaInteraction({
   const [note, setNote] = useState("");
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SentimentFilter>("all");
+  const [region, setRegion] = useState<string>("all");
 
   const byId = useMemo(
     () => new Map(personas.map((p) => [p.id, p])),
     [personas]
   );
   const nameOf = (id: string) => byId.get(id)?.name ?? "Persona";
+  const regionOf = (id: string) => byId.get(id)?.region ?? "";
 
-  // The add-persona picker: not-yet-selected personas matching search + filter.
+  // Regions present across the run — drives the "another ring of the country"
+  // filter so you can deliberately pull in someone from elsewhere.
+  const regions = useMemo(
+    () => Array.from(new Set(personas.map((p) => p.region).filter(Boolean))).sort(),
+    [personas]
+  );
+
+  // The add-persona picker: not-yet-selected personas matching search + filters.
   const candidates = useMemo(() => {
     const q = query.trim().toLowerCase();
     return personas.filter((p) => {
       if (selected.includes(p.id)) return false;
       if (filter !== "all" && classifySentiment(p.intent) !== filter) return false;
+      if (region !== "all" && p.region !== region) return false;
       if (!q) return true;
       return (
         p.name.toLowerCase().includes(q) ||
         p.occupation.toLowerCase().includes(q) ||
+        p.cohortLabel.toLowerCase().includes(q) ||
+        p.region.toLowerCase().includes(q) ||
         (p.personality ?? "").toLowerCase().includes(q)
       );
     });
-  }, [personas, selected, query, filter]);
+  }, [personas, selected, query, filter, region]);
+
+  // How many distinct regions are in the current discussion — surfaced as a
+  // "cross-region" hint so the multi-ring nature is obvious.
+  const selectedRegions = useMemo(
+    () => Array.from(new Set(selected.map(regionOf).filter(Boolean))),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [selected, personas]
+  );
 
   const post = async (payload: Record<string, unknown>, kind: Loading) => {
     setLoading(kind);
@@ -129,14 +161,20 @@ export default function PersonaInteraction({
           <Sparkles className="h-3.5 w-3.5" /> Persona interaction
         </p>
         <p className="mb-2 text-[10px] leading-snug text-neutral-500">
-          Pick {MIN}–{MAX} personas to discuss a topic. You generate each reply
-          turn-by-turn, can add knowledge mid-conversation, and wrap it up into a
-          conclusion.
+          Pick {MIN}–{MAX} personas — from this cohort or any other region — to
+          discuss a topic. You generate each reply turn-by-turn, can add knowledge
+          mid-conversation, and wrap it up into a conclusion.
         </p>
 
         {/* Selected participants */}
-        <p className="mb-1 text-[10px] font-medium text-neutral-500">
+        <p className="mb-1 flex items-center gap-1.5 text-[10px] font-medium text-neutral-500">
           In this discussion ({selected.length}/{MAX})
+          {selectedRegions.length > 1 && (
+            <span className="flex items-center gap-0.5 rounded-full bg-indigo-50 px-1.5 py-px text-[9px] font-semibold text-indigo-600">
+              <MapPin className="h-2.5 w-2.5" /> cross-region ·{" "}
+              {selectedRegions.join(", ")}
+            </span>
+          )}
         </p>
         <div className="mb-2 flex flex-wrap gap-1">
           {selected.length === 0 && (
@@ -153,6 +191,9 @@ export default function PersonaInteraction({
                 style={{ background: PALETTE[i % PALETTE.length].dot }}
               />
               {nameOf(id)}
+              {regionOf(id) && (
+                <span className="text-neutral-400">· {regionOf(id)}</span>
+              )}
               <button
                 type="button"
                 onClick={() => removePersona(id)}
@@ -173,15 +214,32 @@ export default function PersonaInteraction({
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search personas by name, job, trait…"
+                placeholder="Search any region by name, job, place…"
                 className="min-w-0 flex-1 text-[11px] text-neutral-700 outline-none placeholder:text-neutral-400"
               />
+            </div>
+            <div className="mt-1.5 flex items-center gap-1.5">
+              {regions.length > 1 && (
+                <select
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                  className="min-w-0 flex-1 rounded border border-neutral-200 bg-white px-1 py-0.5 text-[10px] text-neutral-600 outline-none"
+                  title="Filter personas by region of the country"
+                >
+                  <option value="all">All regions</option>
+                  {regions.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              )}
               <select
                 value={filter}
                 onChange={(e) => setFilter(e.target.value as SentimentFilter)}
                 className="rounded border border-neutral-200 bg-white px-1 py-0.5 text-[10px] text-neutral-600 outline-none"
               >
-                <option value="all">All</option>
+                <option value="all">All sentiment</option>
                 <option value="approve">Approve</option>
                 <option value="mixed">Mixed</option>
                 <option value="reject">Reject</option>
@@ -203,6 +261,10 @@ export default function PersonaInteraction({
                     <span className="min-w-0 truncate">
                       <span className="font-medium text-neutral-700">{p.name}</span>{" "}
                       · {p.occupation}
+                      <span className="text-neutral-400">
+                        {" "}
+                        · {p.region || p.cohortLabel}
+                      </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-1">
                       <span

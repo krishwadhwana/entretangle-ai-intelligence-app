@@ -886,19 +886,33 @@ type InteractionMsg = {
   content: string;
 };
 
+// A participant in a (possibly cross-region) discussion: the persona plus the
+// cohort they were drawn from, so the model knows where they live.
+export type PersonaCtx = { persona: Persona; cohort: Cohort };
+
+function personaForInteraction({ persona, cohort }: PersonaCtx) {
+  return {
+    ...personaForChat(persona),
+    from: `${cohort.locality}, ${cohort.country}`,
+    segment: cohort.segment,
+  };
+}
+
 /**
  * Generate ONE reply from `speaker`, in character, responding to the other
  * participants (and any founder-injected knowledge) in an ongoing group
- * discussion of 2-4 people. One message per call keeps the thread cost-bounded —
- * the user drives each turn.
+ * discussion of 2-4 people who may live in DIFFERENT regions. One message per
+ * call keeps the thread cost-bounded — the user drives each turn.
  */
 export function personaReplySystem(
   profile: ClientProfile,
-  cohort: Cohort,
-  speaker: Persona,
-  others: Persona[],
+  speaker: PersonaCtx,
+  others: PersonaCtx[],
   topic: string
 ): string {
+  const crossRegion = others.some(
+    (o) => o.cohort.locality !== speaker.cohort.locality
+  );
   return `You ARE a single simulated person in a candid group conversation with
 ${others.length === 1 ? "another real-feeling person" : `${others.length} other real-feeling people`} about a product/venture. Stay 100% in character as the
 SPEAKER below — never break character, never talk like an analyst, never
@@ -906,16 +920,11 @@ describe yourself in the third person. Use only the facts given; do not invent
 biographical details that contradict your profile.
 
 Venture under discussion: ${JSON.stringify(profile)}
-Shared locality/segment context: ${JSON.stringify({
-    locality: cohort.locality,
-    country: cohort.country,
-    segment: cohort.segment,
-  })}
 Discussion topic: ${topic || "their honest take on this venture/product"}
 
-YOU (the speaker): ${JSON.stringify(personaForChat(speaker), null, 2)}
+YOU (the speaker): ${JSON.stringify(personaForInteraction(speaker), null, 2)}
 THE OTHER PARTICIPANT${others.length === 1 ? "" : "S"}: ${JSON.stringify(
-    others.map(personaForChat),
+    others.map(personaForInteraction),
     null,
     2
   )}
@@ -927,7 +936,14 @@ Rules:
   name when it's natural.
 - Be true to your income, lifestyle, price sensitivity, objection, baseline
   intent and personality. Disagree, agree, or build on their points as your
-  character genuinely would.
+  character genuinely would.${
+    crossRegion
+      ? `\n- Participants live in DIFFERENT parts of the country (see each person's
+  "from"). Speak from YOUR region's reality — local prices, taste, what's
+  available, delivery/returns, climate, culture — and react honestly to how the
+  others' regions differ from yours.`
+      : ""
+  }
 - If the discussion (an argument or a founder note) genuinely shifts how likely
   YOU are to buy/stock, set intentAfter to your new 0-1 intent; otherwise null.
 - No markdown, no preamble, no stage directions.
@@ -951,18 +967,20 @@ export function personaReplyUser(
 
 export function personaConclusionSystem(
   profile: ClientProfile,
-  participants: Persona[],
+  participants: PersonaCtx[],
   topic: string
 ): string {
   return `${participants.length} simulated customers just discussed a venture.
 Summarize their exchange into a concise, useful CONCLUSION for the founder —
-what they agreed on, where they diverged, the strongest objection or unlock that
-surfaced, and the single most important takeaway for the founder. Ground it
-strictly in what was actually said.
+what they agreed on, where they diverged (including any REGIONAL differences),
+the strongest objection or unlock that surfaced, and the single most important
+takeaway for the founder. Ground it strictly in what was actually said.
 
 Venture: ${JSON.stringify(profile)}
 Topic: ${topic || "their take on this venture/product"}
-Participants: ${participants.map((p) => p.name).join(", ")}
+Participants: ${participants
+    .map((p) => `${p.persona.name} (${p.cohort.locality})`)
+    .join(", ")}
 
 Output JSON only: {"conclusion":"3-6 sentence synthesis"}`;
 }

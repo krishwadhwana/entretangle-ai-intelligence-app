@@ -160,7 +160,10 @@ export async function POST(
       const out = await callPersonaConclusion(
         run.id,
         profile,
-        participants.map((p) => personaToWire(p.row)),
+        participants.map((p) => ({
+          persona: personaToWire(p.row),
+          cohort: cohortToWire(p.cohort),
+        })),
         convo.topic,
         messages
       );
@@ -196,9 +199,11 @@ export async function POST(
     reply = await callPersonaReply(
       run.id,
       profile,
-      cohortToWire(speaker.cohort),
-      personaToWire(speaker.row),
-      others.map((p) => personaToWire(p.row)),
+      { persona: personaToWire(speaker.row), cohort: cohortToWire(speaker.cohort) },
+      others.map((p) => ({
+        persona: personaToWire(p.row),
+        cohort: cohortToWire(p.cohort),
+      })),
       convo.topic,
       messages
     );

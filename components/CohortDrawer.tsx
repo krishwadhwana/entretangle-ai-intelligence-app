@@ -11,7 +11,8 @@ import {
   X,
 } from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
-import PersonaInteraction from "./PersonaInteraction";
+import PersonaInteraction, { type PickablePersona } from "./PersonaInteraction";
+import { regionForLocality } from "@/lib/datasources/politicalGeography";
 import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
 import type { PersonaConversation } from "@/lib/schema";
@@ -20,10 +21,19 @@ import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 type Props = {
   runId: string;
   cohort: CohortWithPersonas;
+  /** All cohorts in the run — lets Persona Interaction pull in someone from
+   *  another region. Falls back to just this cohort when omitted. */
+  allCohorts?: CohortWithPersonas[];
   onClose: () => void;
   /** When set, auto-open the chat targeting this persona (win-back deep link). */
   initialChatPersonaId?: string;
 };
+
+// Short region label for a cohort (GoI zone), e.g. "West", "South" — used to
+// flag cross-region picks in Persona Interaction.
+function cohortRegion(c: { locality: string; country: string }): string {
+  return regionForLocality(c.locality, c.country)?.zone ?? "Other";
+}
 
 type ChatMode = "customer" | "group";
 type ChatRole = "founder" | "customer" | "moderator";
@@ -265,9 +275,34 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
 export default function CohortDrawer({
   runId,
   cohort,
+  allCohorts,
   onClose,
   initialChatPersonaId,
 }: Props) {
+  // Every persona in the run, tagged with its cohort/region — the pool Persona
+  // Interaction draws from so you can stage a cross-region discussion. The
+  // current cohort's people are listed first.
+  const interactionPool = useMemo<PickablePersona[]>(() => {
+    const cohorts = allCohorts?.length ? allCohorts : [cohort];
+    const ordered = [cohort, ...cohorts.filter((c) => c.id !== cohort.id)];
+    const out: PickablePersona[] = [];
+    for (const c of ordered) {
+      const region = cohortRegion(c);
+      for (const p of c.personas) {
+        out.push({
+          id: p.id,
+          name: p.name,
+          occupation: p.occupation,
+          personality: p.personality,
+          intent: p.intent,
+          cohortLabel: c.label,
+          region,
+          segment: c.segment,
+        });
+      }
+    }
+    return out;
+  }, [allCohorts, cohort]);
   const [shown, setShown] = useState(12);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => {
@@ -589,7 +624,7 @@ export default function CohortDrawer({
           <PersonaInteraction
             key={resumeConvo?.id ?? `new-${pendingInteractionAId ?? ""}`}
             runId={runId}
-            personas={cohort.personas}
+            personas={interactionPool}
             initialConvo={resumeConvo}
             initialAId={pendingInteractionAId ?? undefined}
           />
@@ -605,7 +640,7 @@ export default function CohortDrawer({
                 const names = c.participantIds
                   .map(
                     (id) =>
-                      cohort.personas.find((p) => p.id === id)?.name ?? "Persona"
+                      interactionPool.find((p) => p.id === id)?.name ?? "Persona"
                   )
                   .join(" · ");
                 return (

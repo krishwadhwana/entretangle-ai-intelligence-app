@@ -72,6 +72,7 @@ import {
   personaReplyUser,
   personaConclusionSystem,
   personaConclusionUser,
+  type PersonaCtx,
   BRAND_KIT_SYSTEM,
   brandKitUser,
   INSPIRATION_SYSTEM,
@@ -1009,30 +1010,29 @@ export async function callAudienceChat(
 export async function callPersonaReply(
   runId: string,
   profile: ClientProfile,
-  cohort: Cohort,
-  speaker: Persona,
-  others: Persona[],
+  speaker: PersonaCtx,
+  others: PersonaCtx[],
   topic: string,
   history: PersonaConversationMessage[]
 ): Promise<PersonaReplyOutput> {
   if (config.mockMode) {
     return PersonaReplyOutputSchema.parse({
-      content: `[${speaker.name}] (mock) Responding to ${others
-        .map((o) => o.name)
+      content: `[${speaker.persona.name}] (mock) Responding to ${others
+        .map((o) => o.persona.name)
         .join(", ")} about ${topic || "the product"}.`,
       intentAfter: null,
     });
   }
   return callJson({
     runId,
-    system: personaReplySystem(profile, cohort, speaker, others, topic),
+    system: personaReplySystem(profile, speaker, others, topic),
     user: personaReplyUser(
       history.map((m) => ({
         role: m.role,
         speaker: m.speaker,
         content: m.content,
       })),
-      speaker.name
+      speaker.persona.name
     ),
     schema: PersonaReplyOutputSchema,
     model: config.miniModel,
@@ -1047,14 +1047,14 @@ export async function callPersonaReply(
 export async function callPersonaConclusion(
   runId: string,
   profile: ClientProfile,
-  participants: Persona[],
+  participants: PersonaCtx[],
   topic: string,
   history: PersonaConversationMessage[]
 ): Promise<PersonaConclusionOutput> {
   if (config.mockMode) {
     return PersonaConclusionOutputSchema.parse({
       conclusion: `(mock) ${participants
-        .map((p) => p.name)
+        .map((p) => p.persona.name)
         .join(", ")} discussed ${topic || "the product"}.`,
     });
   }
