@@ -1490,6 +1490,20 @@ function NumField({
   step?: number;
   small?: boolean;
 }) {
+  // Local text buffer so the field can be emptied while typing — the parent
+  // still holds a number. Without this, backspacing to "" snaps back to 0 and
+  // the 0 acts like un-deletable text instead of a placeholder.
+  const [text, setText] = useState(
+    Number.isFinite(value) ? String(value) : ""
+  );
+  const editing = useRef(false);
+
+  // Reflect external value changes (recompute, reset, scenario load) only when
+  // the user isn't actively editing this field.
+  useEffect(() => {
+    if (!editing.current) setText(Number.isFinite(value) ? String(value) : "");
+  }, [value]);
+
   return (
     <div>
       <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
@@ -1498,9 +1512,26 @@ function NumField({
       <div className="relative">
         <input
           type="number"
-          value={Number.isFinite(value) ? value : 0}
+          inputMode="decimal"
+          value={text}
+          placeholder="0"
           step={step}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          onFocus={() => {
+            editing.current = true;
+          }}
+          onBlur={() => {
+            editing.current = false;
+            // Normalise the display to the canonical value on blur.
+            setText(Number.isFinite(value) ? String(value) : "");
+          }}
+          onChange={(e) => {
+            const raw = e.target.value;
+            setText(raw);
+            // Empty / partial ("-", ".") report 0 to the parent but keep the raw
+            // text so the user can keep typing.
+            const n = parseFloat(raw);
+            onChange(Number.isFinite(n) ? n : 0);
+          }}
           className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
             unit ? "pr-24" : ""
           } ${small ? "py-1 text-xs" : "py-1.5 text-sm"}`}
