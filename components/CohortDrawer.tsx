@@ -197,35 +197,65 @@ function IntentHistogram({ cohort }: { cohort: CohortWithPersonas }) {
 function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
   const s = cohort.stats;
   if (!s) return null;
-  const max = Math.max(s.wtpP75 * 1.15, 1);
   const color = SEGMENT_COLORS[cohort.segment] ?? "#6366f1";
+  const cur = s.wtpCurrency;
+  // Scale the track to the band with a half-span of padding on each side, so
+  // the band sits comfortably inside the bar (no dead space) and every label
+  // can be placed at its TRUE position rather than evenly spaced.
+  const span = Math.max(s.wtpP75 - s.wtpP25, 1);
+  const lo = Math.max(0, s.wtpP25 - span * 0.5);
+  const hi = s.wtpP75 + span * 0.5;
+  const denom = Math.max(hi - lo, 1);
+  const pct = (v: number) =>
+    Math.min(100, Math.max(0, ((v - lo) / denom) * 100));
+  const p25 = pct(s.wtpP25);
+  const p50 = pct(s.wtpP50);
+  const p75 = pct(s.wtpP75);
+  // Keep the floating median label inside the bar at the extremes.
+  const medianLabelLeft = Math.min(86, Math.max(14, p50));
   return (
     <div className="mb-4">
       <p className="mb-1 text-[11px] font-medium text-neutral-500">
-        Willingness to pay ({s.wtpCurrency})
+        Willingness to pay ({cur})
       </p>
       <ValueTooltip
-        content={`Willingness to pay — P25 ${s.wtpCurrency} ${s.wtpP25.toLocaleString()} · P50 ${s.wtpCurrency} ${s.wtpP50.toLocaleString()} · P75 ${s.wtpCurrency} ${s.wtpP75.toLocaleString()}`}
+        content={`Willingness to pay — P25 ${cur} ${s.wtpP25.toLocaleString()} · P50 ${cur} ${s.wtpP50.toLocaleString()} · P75 ${cur} ${s.wtpP75.toLocaleString()}`}
       >
-        <div className="relative h-4 rounded bg-neutral-100">
-          <div
-            className="absolute h-4 rounded opacity-40"
-            style={{
-              left: `${(s.wtpP25 / max) * 100}%`,
-              width: `${Math.max(1, ((s.wtpP75 - s.wtpP25) / max) * 100)}%`,
-              background: color,
-            }}
-          />
-          <div
-            className="absolute top-0 h-4 w-1 rounded"
-            style={{ left: `${(s.wtpP50 / max) * 100}%`, background: color }}
-          />
+        <div className="relative pt-5">
+          {/* Median (P50) value, pinned above its line so it reads at a glance. */}
+          <span
+            className="absolute top-0 -translate-x-1/2 whitespace-nowrap rounded bg-neutral-900 px-1 py-px text-[9px] font-semibold text-white"
+            style={{ left: `${medianLabelLeft}%` }}
+          >
+            P50 · {cur} {s.wtpP50.toLocaleString()}
+          </span>
+          <div className="relative h-4 rounded bg-neutral-100">
+            {/* P25–P75 band */}
+            <div
+              className="absolute inset-y-0 rounded"
+              style={{
+                left: `${p25}%`,
+                width: `${Math.max(2, p75 - p25)}%`,
+                background: color,
+                opacity: 0.4,
+              }}
+            />
+            {/* P50 median line — taller + full-strength so it stands out. */}
+            <div
+              className="absolute -top-1 h-6 w-[2px] -translate-x-1/2 rounded"
+              style={{ left: `${p50}%`, background: color }}
+            />
+          </div>
         </div>
       </ValueTooltip>
-      <div className="mt-0.5 flex justify-between text-[10px] text-neutral-400">
-        <span>P25 {s.wtpP25.toLocaleString()}</span>
-        <span>P50 {s.wtpP50.toLocaleString()}</span>
-        <span>P75 {s.wtpP75.toLocaleString()}</span>
+      {/* P25 / P75 labels anchored under the band's actual ends. */}
+      <div className="relative mt-1 h-3 text-[10px] text-neutral-400">
+        <span className="absolute" style={{ left: `${p25}%` }}>
+          P25 {s.wtpP25.toLocaleString()}
+        </span>
+        <span className="absolute -translate-x-full" style={{ left: `${p75}%` }}>
+          P75 {s.wtpP75.toLocaleString()}
+        </span>
       </div>
     </div>
   );
