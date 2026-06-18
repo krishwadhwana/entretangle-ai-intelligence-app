@@ -7,6 +7,7 @@ import type { CanvasState } from "./useRunEvents";
 import { DOMAIN_META, PLAYBOOK_ORDER } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
 import GlossaryText from "./GlossaryText";
+import { ValueTooltip } from "./ValueTooltip";
 
 // What each business module answers — shown as the section subtitle so a
 // founder can "walk through each module of the business".
@@ -33,12 +34,14 @@ type QueryFn = (
 function ConfidenceBar({ value }: { value: number }) {
   return (
     <span className="inline-flex items-center gap-1" title={`confidence ${Math.round(value * 100)}%`}>
-      <span className="h-1.5 w-12 overflow-hidden rounded-full bg-neutral-200">
-        <span
-          className="block h-full rounded-full bg-neutral-700"
-          style={{ width: `${Math.round(value * 100)}%` }}
-        />
-      </span>
+      <ValueTooltip content={`Confidence: ${Math.round(value * 100)}%`}>
+        <span className="h-1.5 w-12 overflow-hidden rounded-full bg-neutral-200">
+          <span
+            className="block h-full rounded-full bg-neutral-700"
+            style={{ width: `${Math.round(value * 100)}%` }}
+          />
+        </span>
+      </ValueTooltip>
       <span className="text-[9px] text-neutral-400">{Math.round(value * 100)}%</span>
     </span>
   );
@@ -136,12 +139,14 @@ function ModuleSection({
   return (
     <section className="h-fit rounded-2xl border border-neutral-200 bg-neutral-50/40 p-4">
       <div className="flex items-start gap-2.5">
-        <span
-          className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white"
-          style={{ background: color }}
-        >
-          <Icon className="h-4 w-4" />
-        </span>
+        <ValueTooltip content={`Module: ${meta.label}`}>
+          <span
+            className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-white"
+            style={{ background: color }}
+          >
+            <Icon className="h-4 w-4" />
+          </span>
+        </ValueTooltip>
         <div className="flex-1">
           <div className="flex items-center gap-2">
             <h3 className="text-sm font-semibold text-neutral-900">{meta.label}</h3>

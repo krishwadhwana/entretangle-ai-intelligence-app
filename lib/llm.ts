@@ -11,6 +11,11 @@ import {
   EntanglerOutputSchema,
   QueryOutputSchema,
   AudienceChatOutputSchema,
+  PersonaReplyOutputSchema,
+  PersonaConclusionOutputSchema,
+  type PersonaReplyOutput,
+  type PersonaConclusionOutput,
+  type PersonaConversationMessage,
   IntakeOutputSchema,
   CohortSimOutputSchema,
   BrandKitSchema,
@@ -63,6 +68,10 @@ import {
   finalReportUser,
   audienceChatSystem,
   audienceChatUser,
+  personaReplySystem,
+  personaReplyUser,
+  personaConclusionSystem,
+  personaConclusionUser,
   BRAND_KIT_SYSTEM,
   brandKitUser,
   INSPIRATION_SYSTEM,
@@ -986,6 +995,80 @@ export async function callAudienceChat(
     model: config.miniModel,
     tier: "mini",
     maxCompletionTokens: 5000,
+    requestTimeoutMs: config.blockTimeoutMs,
+    requestMaxRetries: 1,
+  });
+}
+
+/**
+ * Persona Interaction: generate ONE in-character reply from `speaker` in an
+ * ongoing two-persona discussion. One message per call = bounded cost (the user
+ * clicks to advance each turn). Founder-injected notes ride along in `history`
+ * as role "founder" so both personas reason over the new knowledge.
+ */
+export async function callPersonaReply(
+  runId: string,
+  profile: ClientProfile,
+  cohort: Cohort,
+  speaker: Persona,
+  other: Persona,
+  topic: string,
+  history: PersonaConversationMessage[]
+): Promise<PersonaReplyOutput> {
+  if (config.mockMode) {
+    return PersonaReplyOutputSchema.parse({
+      content: `[${speaker.name}] (mock) Responding to ${other.name} about ${topic || "the product"}.`,
+      intentAfter: null,
+    });
+  }
+  return callJson({
+    runId,
+    system: personaReplySystem(profile, cohort, speaker, other, topic),
+    user: personaReplyUser(
+      history.map((m) => ({
+        role: m.role,
+        speaker: m.speaker,
+        content: m.content,
+      })),
+      speaker.name
+    ),
+    schema: PersonaReplyOutputSchema,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: 1200,
+    requestTimeoutMs: config.blockTimeoutMs,
+    requestMaxRetries: 1,
+  });
+}
+
+/** Synthesize a finished two-persona discussion into a founder conclusion. */
+export async function callPersonaConclusion(
+  runId: string,
+  profile: ClientProfile,
+  personaA: Persona,
+  personaB: Persona,
+  topic: string,
+  history: PersonaConversationMessage[]
+): Promise<PersonaConclusionOutput> {
+  if (config.mockMode) {
+    return PersonaConclusionOutputSchema.parse({
+      conclusion: `(mock) ${personaA.name} and ${personaB.name} discussed ${topic || "the product"}.`,
+    });
+  }
+  return callJson({
+    runId,
+    system: personaConclusionSystem(profile, personaA, personaB, topic),
+    user: personaConclusionUser(
+      history.map((m) => ({
+        role: m.role,
+        speaker: m.speaker,
+        content: m.content,
+      }))
+    ),
+    schema: PersonaConclusionOutputSchema,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: 1500,
     requestTimeoutMs: config.blockTimeoutMs,
     requestMaxRetries: 1,
   });

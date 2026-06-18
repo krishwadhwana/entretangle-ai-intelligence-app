@@ -31,6 +31,7 @@ import type {
   FinancialsSection as FinancialsState,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
+import { ValueTooltip } from "./ValueTooltip";
 
 // Provenance dot — the visible signal of "hybrid by stage": ai estimates firm
 // up to founder/data numbers over the journey.
@@ -362,10 +363,12 @@ export default function FinancialsSection({
                 Data maturity
               </span>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-neutral-200">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all"
-                  style={{ width: `${model.dataMaturityPct}%` }}
-                />
+                <ValueTooltip content={`Data maturity: ${model.dataMaturityPct}% real`}>
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    style={{ width: `${model.dataMaturityPct}%` }}
+                  />
+                </ValueTooltip>
               </div>
               <span className="text-[11px] font-semibold text-neutral-600">
                 {model.dataMaturityPct}% real

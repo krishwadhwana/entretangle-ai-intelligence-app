@@ -226,6 +226,29 @@ model Persona {
   @@index([cohortId])
 }
 
+// A two-persona conversation ("Persona Interaction"): two simulated personas
+// discuss a topic turn-by-turn. Replies are generated one at a time (the user
+// clicks "generate reply from X") to keep cost bounded; the founder can inject
+// knowledge mid-conversation (a "founder" message both personas then see), and
+// the discussion can be wrapped up into a synthesized conclusion. Persisted so
+// the conversation survives drawer close / reload (lives in the Win Back tab).
+model PersonaConversation {
+  id         String   @id @default(cuid())
+  runId      String   @map("run_id")
+  personaAId String   @map("persona_a_id")
+  personaBId String   @map("persona_b_id")
+  topic      String   @default("")
+  // Json: [{ speaker, personaId|null, role: "personaA"|"personaB"|"founder",
+  //          content, intentAfter|null, ts }]
+  messages   String   @default("[]")
+  conclusion String?
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  @@index([runId])
+  @@map("persona_conversations")
+}
+
 // A saved Launch Simulation scenario. The engine is deterministic over the
 // run's frozen personas, so the inputs alone reproduce the result — but we
 // persist the computed result too so saved scenarios render instantly and can

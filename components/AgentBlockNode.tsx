@@ -10,6 +10,7 @@ import {
   Loader2,
 } from "lucide-react";
 import type { Block, Conclusion } from "@/lib/schema";
+import { ValueTooltip } from "./ValueTooltip";
 
 export type AgentBlockNodeData = {
   block: Block;
@@ -58,12 +59,16 @@ function ConclusionChip({ conclusion }: { conclusion: Conclusion }) {
           <p className="mt-1 text-neutral-700">{conclusion.value}</p>
           <div className="mt-2 flex items-center gap-2">
             <span className="text-neutral-500">confidence</span>
-            <div className="h-1.5 w-24 rounded-full bg-neutral-200">
-              <div
-                className="h-1.5 rounded-full bg-indigo-500"
-                style={{ width: `${Math.round(conclusion.confidence * 100)}%` }}
-              />
-            </div>
+            <ValueTooltip
+              content={`Confidence: ${Math.round(conclusion.confidence * 100)}%`}
+            >
+              <div className="h-1.5 w-24 rounded-full bg-neutral-200">
+                <div
+                  className="h-1.5 rounded-full bg-indigo-500"
+                  style={{ width: `${Math.round(conclusion.confidence * 100)}%` }}
+                />
+              </div>
+            </ValueTooltip>
             <span className="font-medium">
               {Math.round(conclusion.confidence * 100)}%
             </span>

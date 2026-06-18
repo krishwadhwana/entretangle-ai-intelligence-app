@@ -620,6 +620,61 @@ export const AudienceChatOutputSchema = z.object({
 export type AudienceChatOutput = z.infer<typeof AudienceChatOutputSchema>;
 
 // ---------------------------------------------------------------------------
+// Persona Interaction: two personas discuss a topic turn-by-turn. The user
+// drives each turn ("generate reply from X"), can inject founder knowledge both
+// personas then see, and can wrap up the thread into a conclusion.
+// ---------------------------------------------------------------------------
+export const PersonaConversationRoleSchema = z.enum([
+  "personaA",
+  "personaB",
+  "founder",
+]);
+export type PersonaConversationRole = z.infer<
+  typeof PersonaConversationRoleSchema
+>;
+
+export const PersonaConversationMessageSchema = z.object({
+  role: PersonaConversationRoleSchema,
+  speaker: z.string().min(1).max(80),
+  personaId: z.string().nullable().default(null),
+  content: z.string().min(1).max(2000),
+  intentAfter: z.number().min(0).max(1).nullable().default(null),
+  ts: z.string(),
+});
+export type PersonaConversationMessage = z.infer<
+  typeof PersonaConversationMessageSchema
+>;
+
+// Wire shape of a saved conversation returned to the drawer.
+export const PersonaConversationSchema = z.object({
+  id: z.string(),
+  runId: z.string(),
+  personaAId: z.string(),
+  personaBId: z.string(),
+  topic: z.string().default(""),
+  messages: z.array(PersonaConversationMessageSchema).default([]),
+  conclusion: z.string().nullable().default(null),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type PersonaConversation = z.infer<typeof PersonaConversationSchema>;
+
+// One generated turn from a single persona (cost-bounded: one message/click).
+export const PersonaReplyOutputSchema = z.object({
+  content: z.string().min(1).max(1200),
+  // The speaker's own purchase intent after this exchange, if it shifted.
+  intentAfter: z.number().min(0).max(1).nullable().default(null),
+});
+export type PersonaReplyOutput = z.infer<typeof PersonaReplyOutputSchema>;
+
+export const PersonaConclusionOutputSchema = z.object({
+  conclusion: z.string().min(1).max(1500),
+});
+export type PersonaConclusionOutput = z.infer<
+  typeof PersonaConclusionOutputSchema
+>;
+
+// ---------------------------------------------------------------------------
 // Owner Dashboard › Brand & Social Action Plan (one frontier call over the
 // converged world model). The founder studies comparable accounts, reads
 // brand + social guidelines, and ticks off the action checklist as they do it.

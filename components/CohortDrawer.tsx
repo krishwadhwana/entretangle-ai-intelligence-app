@@ -1,9 +1,20 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { GripVertical, Loader2, MessageCircle, Send, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  GripVertical,
+  Loader2,
+  MessageCircle,
+  Send,
+  Sparkles,
+  Users,
+  X,
+} from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
+import PersonaInteraction from "./PersonaInteraction";
 import { SEGMENT_COLORS } from "./segments";
+import { ValueTooltip } from "./ValueTooltip";
+import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 
 type Props = {
@@ -31,6 +42,55 @@ type AudienceChatResponse = {
   summary?: string;
   nextMove?: string;
 };
+
+// A persisted 1:1 win-back turn, as returned by the conversations endpoint.
+type SavedWinbackTurn = {
+  question: string;
+  messages: Array<{
+    role?: ChatRole;
+    speaker: string;
+    personaId?: string | null;
+    content: string;
+    intentAfter?: number | null;
+    objection?: string | null;
+  }>;
+  intentBefore: number;
+  intentAfter: number | null;
+  ts: string;
+};
+type SavedWinbackEntry = {
+  personaId: string;
+  name: string;
+  intent: number;
+  intentOriginal: number | null;
+  turns: SavedWinbackTurn[];
+};
+
+// Flatten a persisted win-back transcript back into renderable chat bubbles so
+// a past 1:1 conversation reappears exactly as it was left.
+function flattenTurns(entry: SavedWinbackEntry): DrawerChatMessage[] {
+  const out: DrawerChatMessage[] = [];
+  entry.turns.forEach((turn, ti) => {
+    out.push({
+      id: `saved-${entry.personaId}-${ti}-q`,
+      role: "founder",
+      speaker: "You",
+      content: turn.question,
+    });
+    turn.messages.forEach((m, mi) => {
+      out.push({
+        id: `saved-${entry.personaId}-${ti}-${mi}`,
+        role: m.role === "moderator" ? "moderator" : "customer",
+        speaker: m.speaker,
+        personaId: m.personaId ?? null,
+        content: m.content,
+        intentAfter: m.intentAfter ?? null,
+        objection: m.objection ?? null,
+      });
+    });
+  });
+  return out;
+}
 
 const DRAWER_DEFAULT_WIDTH = 384;
 const DRAWER_MIN_WIDTH = 360;
@@ -108,17 +168,20 @@ function IntentHistogram({ cohort }: { cohort: CohortWithPersonas }) {
       </p>
       <div className="flex h-14 items-end gap-0.5">
         {bins.map((n, i) => (
-          <div
+          <ValueTooltip
             key={i}
-            className="flex-1 rounded-t"
-            style={{
-              height: `${(n / max) * 100}%`,
-              minHeight: n > 0 ? 2 : 0,
-              background: color,
-              opacity: 0.35 + (i / 9) * 0.65,
-            }}
-            title={`${i * 10}–${i * 10 + 10}%: ${n} personas`}
-          />
+            content={`Intent ${i * 10}–${i * 10 + 10}%: ${n} ${n === 1 ? "persona" : "personas"}`}
+          >
+            <div
+              className="flex-1 rounded-t"
+              style={{
+                height: `${(n / max) * 100}%`,
+                minHeight: n > 0 ? 2 : 0,
+                background: color,
+                opacity: 0.35 + (i / 9) * 0.65,
+              }}
+            />
+          </ValueTooltip>
         ))}
       </div>
       <div className="mt-0.5 flex justify-between text-[10px] text-neutral-400">
@@ -141,20 +204,24 @@ function WtpSpread({ cohort }: { cohort: CohortWithPersonas }) {
       <p className="mb-1 text-[11px] font-medium text-neutral-500">
         Willingness to pay ({s.wtpCurrency})
       </p>
-      <div className="relative h-4 rounded bg-neutral-100">
-        <div
-          className="absolute h-4 rounded opacity-40"
-          style={{
-            left: `${(s.wtpP25 / max) * 100}%`,
-            width: `${Math.max(1, ((s.wtpP75 - s.wtpP25) / max) * 100)}%`,
-            background: color,
-          }}
-        />
-        <div
-          className="absolute top-0 h-4 w-1 rounded"
-          style={{ left: `${(s.wtpP50 / max) * 100}%`, background: color }}
-        />
-      </div>
+      <ValueTooltip
+        content={`Willingness to pay — P25 ${s.wtpCurrency} ${s.wtpP25.toLocaleString()} · P50 ${s.wtpCurrency} ${s.wtpP50.toLocaleString()} · P75 ${s.wtpCurrency} ${s.wtpP75.toLocaleString()}`}
+      >
+        <div className="relative h-4 rounded bg-neutral-100">
+          <div
+            className="absolute h-4 rounded opacity-40"
+            style={{
+              left: `${(s.wtpP25 / max) * 100}%`,
+              width: `${Math.max(1, ((s.wtpP75 - s.wtpP25) / max) * 100)}%`,
+              background: color,
+            }}
+          />
+          <div
+            className="absolute top-0 h-4 w-1 rounded"
+            style={{ left: `${(s.wtpP50 / max) * 100}%`, background: color }}
+          />
+        </div>
+      </ValueTooltip>
       <div className="mt-0.5 flex justify-between text-[10px] text-neutral-400">
         <span>P25 {s.wtpP25.toLocaleString()}</span>
         <span>P50 {s.wtpP50.toLocaleString()}</span>
@@ -194,6 +261,21 @@ export default function CohortDrawer({
   } | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState<string | null>(null);
+  // Which panel the chat region shows: 1:1/group "chat" or two-persona "interaction".
+  const [panel, setPanel] = useState<"chat" | "interaction">("chat");
+  // Persisted conversations (so they don't disappear) — loaded when the panel opens.
+  const [savedWinback, setSavedWinback] = useState<SavedWinbackEntry[]>([]);
+  const [interactionConvos, setInteractionConvos] = useState<
+    PersonaConversation[]
+  >([]);
+  // A saved interaction the user chose to resume (key forces a fresh mount).
+  const [resumeConvo, setResumeConvo] = useState<PersonaConversation | null>(
+    null
+  );
+  // Persona pre-selected as side A when launching an interaction from a card.
+  const [pendingInteractionAId, setPendingInteractionAId] = useState<
+    string | null
+  >(null);
   const s = cohort.stats;
   const selectedPersona = useMemo(
     () =>
@@ -203,15 +285,49 @@ export default function CohortDrawer({
     [cohort.personas, selectedPersonaId]
   );
 
+  // Load the cohort's persisted conversations (win-back transcripts + saved
+  // two-persona interactions) so they survive drawer close / reload.
+  const loadSaved = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/runs/${runId}/conversations?cohortId=${cohort.id}`
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as {
+        winback: SavedWinbackEntry[];
+        interactions: PersonaConversation[];
+      };
+      setSavedWinback(data.winback ?? []);
+      setInteractionConvos(data.interactions ?? []);
+      // If the open 1:1 chat has no live messages yet, replay saved history.
+      const entry = (data.winback ?? []).find(
+        (w) => w.personaId === selectedPersonaId
+      );
+      if (entry) {
+        setChatMessages((cur) => (cur.length === 0 ? flattenTurns(entry) : cur));
+      }
+    } catch {
+      // Non-fatal — the panel still works for new conversations.
+    }
+  }, [runId, cohort.id, selectedPersonaId]);
+
+  useEffect(() => {
+    if (chatOpen) void loadSaved();
+  }, [chatOpen, loadSaved]);
+
   useEffect(() => {
     setShown(12);
     setChatOpen(false);
     setChatMode("customer");
+    setPanel("chat");
     setSelectedPersonaId(cohort.personas[0]?.id ?? "");
     setChatQuestion("");
     setChatMessages([]);
     setChatSummary(null);
     setChatError(null);
+    setSavedWinback([]);
+    setInteractionConvos([]);
+    setResumeConvo(null);
   }, [cohort.id]);
 
   useEffect(() => {
@@ -227,17 +343,41 @@ export default function CohortDrawer({
     if (!initialChatPersonaId) return;
     if (!cohort.personas.some((p) => p.id === initialChatPersonaId)) return;
     setChatOpen(true);
+    setPanel("chat");
     setChatMode("customer");
-    setSelectedPersonaId(initialChatPersonaId);
+    selectWinbackPersona(initialChatPersonaId);
     setChatError(null);
     scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cohort.id, initialChatPersonaId, cohort.personas]);
+
+  // Switch the 1:1 chat to a persona and replay their saved transcript (so a
+  // past win-back conversation reappears instead of starting blank).
+  const selectWinbackPersona = useCallback(
+    (personaId: string) => {
+      setSelectedPersonaId(personaId);
+      const entry = savedWinback.find((w) => w.personaId === personaId);
+      setChatMessages(entry ? flattenTurns(entry) : []);
+      setChatSummary(null);
+    },
+    [savedWinback]
+  );
 
   const startWinBack = (personaId: string) => {
     setChatOpen(true);
+    setPanel("chat");
     setChatMode("customer");
-    setSelectedPersonaId(personaId);
+    selectWinbackPersona(personaId);
     setChatError(null);
+    scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  // Launch a fresh two-persona discussion seeded with this persona as side A.
+  const startInteraction = (personaId: string) => {
+    setResumeConvo(null);
+    setPendingInteractionAId(personaId);
+    setPanel("interaction");
+    setChatOpen(true);
     scrollRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -375,15 +515,33 @@ export default function CohortDrawer({
           </p>
         </div>
         <button
-          onClick={() => setChatOpen((open) => !open)}
+          onClick={() => {
+            setPanel("chat");
+            setChatOpen((open) => (panel === "chat" ? !open : true));
+          }}
           className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium ${
-            chatOpen
+            chatOpen && panel === "chat"
               ? "border-indigo-200 bg-indigo-50 text-indigo-700"
               : "border-neutral-200 text-neutral-500 hover:border-indigo-300 hover:text-indigo-600"
           }`}
           title="Chat with this audience"
         >
           <MessageCircle className="h-3.5 w-3.5" /> Chat
+        </button>
+        <button
+          onClick={() => {
+            setResumeConvo(null);
+            setPanel("interaction");
+            setChatOpen((open) => (panel === "interaction" ? !open : true));
+          }}
+          className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[11px] font-medium ${
+            chatOpen && panel === "interaction"
+              ? "border-indigo-200 bg-indigo-50 text-indigo-700"
+              : "border-neutral-200 text-neutral-500 hover:border-indigo-300 hover:text-indigo-600"
+          }`}
+          title="Have two personas discuss a topic"
+        >
+          <Sparkles className="h-3.5 w-3.5" /> Interact
         </button>
         <button onClick={onClose} className="text-neutral-400 hover:text-neutral-700">
           <X className="h-4 w-4" />
@@ -397,7 +555,58 @@ export default function CohortDrawer({
           </p>
         )}
 
-        {chatOpen && (
+        {chatOpen && panel === "interaction" && (
+          <PersonaInteraction
+            key={resumeConvo?.id ?? `new-${pendingInteractionAId ?? ""}`}
+            runId={runId}
+            personas={cohort.personas}
+            initialConvo={resumeConvo}
+            initialAId={pendingInteractionAId ?? undefined}
+          />
+        )}
+
+        {chatOpen && panel === "interaction" && interactionConvos.length > 0 && (
+          <div className="mb-4 rounded-lg border border-neutral-200 bg-white p-3">
+            <p className="mb-1.5 text-[10px] font-semibold text-neutral-500">
+              Saved discussions
+            </p>
+            <ul className="space-y-1">
+              {interactionConvos.map((c) => {
+                const a =
+                  cohort.personas.find((p) => p.id === c.personaAId)?.name ??
+                  "Persona";
+                const b =
+                  cohort.personas.find((p) => p.id === c.personaBId)?.name ??
+                  "Persona";
+                return (
+                  <li key={c.id}>
+                    <button
+                      type="button"
+                      onClick={() => setResumeConvo(c)}
+                      className={`w-full rounded-md border px-2 py-1.5 text-left text-[10px] ${
+                        resumeConvo?.id === c.id
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                          : "border-neutral-200 text-neutral-600 hover:border-indigo-300"
+                      }`}
+                    >
+                      <span className="font-medium">
+                        {a} ↔ {b}
+                      </span>
+                      {c.topic ? ` · ${c.topic}` : ""}
+                      <span className="text-neutral-400">
+                        {" "}
+                        · {c.messages.length} msgs
+                        {c.conclusion ? " · concluded" : ""}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {chatOpen && panel === "chat" && (
           <section className="mb-4 rounded-lg border border-indigo-100 bg-white p-3 shadow-sm">
             <div className="grid grid-cols-2 gap-2">
               <label className="text-[10px] font-medium text-neutral-500">
@@ -418,7 +627,7 @@ export default function CohortDrawer({
                 Target
                 <select
                   value={chatMode === "group" ? "group" : selectedPersonaId}
-                  onChange={(event) => setSelectedPersonaId(event.target.value)}
+                  onChange={(event) => selectWinbackPersona(event.target.value)}
                   className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-700 outline-none focus:border-indigo-400"
                 >
                   {chatMode === "group" ? (
@@ -437,6 +646,31 @@ export default function CohortDrawer({
                 </select>
               </label>
             </div>
+
+            {chatMode === "customer" && savedWinback.length > 0 && (
+              <div className="mt-2">
+                <p className="mb-1 text-[10px] font-medium text-neutral-400">
+                  Saved win-back conversations
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {savedWinback.map((w) => (
+                    <button
+                      key={w.personaId}
+                      type="button"
+                      onClick={() => selectWinbackPersona(w.personaId)}
+                      className={`rounded-full border px-2 py-0.5 text-[10px] ${
+                        selectedPersonaId === w.personaId
+                          ? "border-indigo-300 bg-indigo-50 text-indigo-700"
+                          : "border-neutral-200 text-neutral-600 hover:border-indigo-300"
+                      }`}
+                      title={`${w.turns.length} message${w.turns.length === 1 ? "" : "s"} · now ${Math.round(w.intent * 100)}% intent`}
+                    >
+                      {w.name} · {w.turns.length}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div className="mt-3 max-h-72 overflow-y-auto rounded-lg border border-neutral-100 bg-neutral-50 p-2">
               {chatMessages.length === 0 ? (
@@ -676,15 +910,27 @@ export default function CohortDrawer({
                 <p className="mt-1 text-[11px] leading-snug text-red-400">
                   ⚠ {p.objection}
                 </p>
-                {isRejector(p.intent) && (
-                  <button
-                    type="button"
-                    onClick={() => startWinBack(p.id)}
-                    className="mt-2 flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
-                  >
-                    <MessageCircle className="h-3 w-3" /> Win back
-                  </button>
-                )}
+                <div className="mt-2 flex flex-wrap gap-1.5">
+                  {isRejector(p.intent) && (
+                    <button
+                      type="button"
+                      onClick={() => startWinBack(p.id)}
+                      className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                    >
+                      <MessageCircle className="h-3 w-3" /> Win back
+                    </button>
+                  )}
+                  {cohort.personas.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => startInteraction(p.id)}
+                      className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                      title={`Have ${p.name} discuss with another persona`}
+                    >
+                      <Sparkles className="h-3 w-3" /> Persona interaction
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

@@ -18,6 +18,7 @@ import type {
   ChecklistItem,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
+import { ValueTooltip } from "./ValueTooltip";
 
 const CHECK_ORDER = ["Setup", "Brand", "Content", "Growth", "Outreach"];
 const PRIORITY_STYLE: Record<string, string> = {
@@ -349,12 +350,18 @@ export default function BrandSocialSection({
                 </span>
               </div>
               <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-neutral-100">
-                <div
-                  className="h-full rounded-full bg-emerald-500 transition-all"
-                  style={{
-                    width: `${totalCount ? (100 * doneCount) / totalCount : 0}%`,
-                  }}
-                />
+                <ValueTooltip
+                  content={`${doneCount}/${totalCount} complete (${
+                    totalCount ? Math.round((100 * doneCount) / totalCount) : 0
+                  }%)`}
+                >
+                  <div
+                    className="h-full rounded-full bg-emerald-500 transition-all"
+                    style={{
+                      width: `${totalCount ? (100 * doneCount) / totalCount : 0}%`,
+                    }}
+                  />
+                </ValueTooltip>
               </div>
 
               <div className="mt-4 space-y-5">

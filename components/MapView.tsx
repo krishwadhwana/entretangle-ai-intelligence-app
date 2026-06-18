@@ -33,6 +33,7 @@ import {
   cohortAreaRadiusMeters,
   searchKnownLocalities,
 } from "@/lib/localityAnchors";
+import { ValueTooltip } from "./ValueTooltip";
 
 type AudienceBatchResult = {
   cohort: Cohort;
@@ -359,10 +360,14 @@ export default function MapView({
                 key={k}
                 className="flex items-center gap-1 text-[10px] capitalize text-neutral-600"
               >
-                <span
-                  className="h-2 w-2 rounded-full"
-                  style={{ background: v }}
-                />
+                <ValueTooltip
+                  content={`${colorMode === "zone" ? "Region" : "Segment"}: ${k}`}
+                >
+                  <span
+                    className="h-2 w-2 rounded-full"
+                    style={{ background: v }}
+                  />
+                </ValueTooltip>
                 {k}
               </span>
             )

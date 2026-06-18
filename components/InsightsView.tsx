@@ -16,6 +16,7 @@ import {
   ZAxis,
 } from "recharts";
 import { SEGMENT_COLORS, ZONE_COLORS } from "./segments";
+import { ValueTooltip } from "./ValueTooltip";
 import type { CanvasState } from "./useRunEvents";
 
 // ---------------------------------------------------------------------------
@@ -99,12 +100,14 @@ function ShareBars({
       {data.map((d) => (
         <li key={d.name} className="flex items-center gap-2 text-[11px]">
           <span className="w-32 truncate text-neutral-600">{d.name}</span>
-          <div className="h-3 flex-1 rounded bg-neutral-100">
-            <div
-              className="h-3 rounded"
-              style={{ width: `${(d.share / max) * 100}%`, background: color }}
-            />
-          </div>
+          <ValueTooltip content={`${d.name}: ${d.share}%`}>
+            <div className="h-3 flex-1 rounded bg-neutral-100">
+              <div
+                className="h-3 rounded"
+                style={{ width: `${(d.share / max) * 100}%`, background: color }}
+              />
+            </div>
+          </ValueTooltip>
           <span className="w-10 text-right text-neutral-500">{d.share}%</span>
         </li>
       ))}
@@ -142,12 +145,14 @@ function OpinionBars({
                 {d.examples.join(" / ")}
               </p>
             )}
-            <div className="h-2 rounded-full bg-neutral-100">
-              <div
-                className="h-2 rounded-full"
-                style={{ width: `${(d.count / max) * 100}%`, background: color }}
-              />
-            </div>
+            <ValueTooltip content={`${d.name} — ${d.count} ${d.count === 1 ? "persona" : "personas"} (${share}% of ${total})`}>
+              <div className="h-2 rounded-full bg-neutral-100">
+                <div
+                  className="h-2 rounded-full"
+                  style={{ width: `${(d.count / max) * 100}%`, background: color }}
+                />
+              </div>
+            </ValueTooltip>
           </li>
         );
       })}
@@ -330,13 +335,17 @@ function SentimentSummary({
       </div>
       <div className="flex h-3 overflow-hidden rounded-full bg-neutral-100">
         {(["approve", "mixed", "reject"] as const).map((key) => (
-          <div
+          <ValueTooltip
             key={key}
-            style={{
-              width: `${pct(counts[key])}%`,
-              background: SENTIMENT_META[key].color,
-            }}
-          />
+            content={`${SENTIMENT_META[key].label}: ${counts[key].toLocaleString()} personas (${pct(counts[key])}%)`}
+          >
+            <div
+              style={{
+                width: `${pct(counts[key])}%`,
+                background: SENTIMENT_META[key].color,
+              }}
+            />
+          </ValueTooltip>
         ))}
       </div>
       <p className="text-[10px] leading-relaxed text-neutral-400">
@@ -373,13 +382,17 @@ function SentimentBreakdown({
             </div>
             <div className="flex h-2.5 overflow-hidden rounded-full bg-neutral-100">
               {(["approve", "mixed", "reject"] as const).map((key) => (
-                <div
+                <ValueTooltip
                   key={key}
-                  style={{
-                    width: `${pct(row[key])}%`,
-                    background: SENTIMENT_META[key].color,
-                  }}
-                />
+                  content={`${row.name} — ${SENTIMENT_META[key].label}: ${row[key].toLocaleString()} (${Math.round(pct(row[key]))}%)`}
+                >
+                  <div
+                    style={{
+                      width: `${pct(row[key])}%`,
+                      background: SENTIMENT_META[key].color,
+                    }}
+                  />
+                </ValueTooltip>
               ))}
             </div>
           </li>
@@ -772,12 +785,16 @@ export default function InsightsView({
                   ${state.costUsd.toFixed(2)} / ${maxCostUsd.toFixed(2)}
                 </span>
               </div>
-              <div className="h-3 rounded-full bg-neutral-100">
-                <div
-                  className={`h-3 rounded-full ${costPct > 85 ? "bg-red-500" : costPct > 60 ? "bg-amber-400" : "bg-emerald-500"}`}
-                  style={{ width: `${costPct}%` }}
-                />
-              </div>
+              <ValueTooltip
+                content={`Spent $${state.costUsd.toFixed(2)} of $${maxCostUsd.toFixed(2)} cap (${costPct.toFixed(1)}%)`}
+              >
+                <div className="h-3 rounded-full bg-neutral-100">
+                  <div
+                    className={`h-3 rounded-full ${costPct > 85 ? "bg-red-500" : costPct > 60 ? "bg-amber-400" : "bg-emerald-500"}`}
+                    style={{ width: `${costPct}%` }}
+                  />
+                </div>
+              </ValueTooltip>
             </div>
             <div>
               <div className="mb-1 flex justify-between text-neutral-600">
@@ -787,12 +804,16 @@ export default function InsightsView({
                   {maxTokens.toLocaleString()}
                 </span>
               </div>
-              <div className="h-3 rounded-full bg-neutral-100">
-                <div
-                  className="h-3 rounded-full bg-indigo-500"
-                  style={{ width: `${tokPct}%` }}
-                />
-              </div>
+              <ValueTooltip
+                content={`${state.tokensUsed.toLocaleString()} of ${maxTokens.toLocaleString()} tokens (${tokPct.toFixed(1)}%)`}
+              >
+                <div className="h-3 rounded-full bg-neutral-100">
+                  <div
+                    className="h-3 rounded-full bg-indigo-500"
+                    style={{ width: `${tokPct}%` }}
+                  />
+                </div>
+              </ValueTooltip>
             </div>
             <div className="flex gap-4 pt-1 text-neutral-500">
               <span>
@@ -863,24 +884,27 @@ export default function InsightsView({
               {wtpRanges.map((r) => (
                 <li key={r.segment} className="flex items-center gap-2 text-[11px]">
                   <span className="w-16 capitalize text-neutral-600">{r.segment}</span>
-                  <div className="relative h-4 flex-1 rounded bg-neutral-100">
-                    <div
-                      className="absolute h-4 rounded opacity-40"
-                      style={{
-                        left: `${(r.p25 / wtpMax) * 100}%`,
-                        width: `${Math.max(1, ((r.p75 - r.p25) / wtpMax) * 100)}%`,
-                        background: SEGMENT_COLORS[r.segment],
-                      }}
-                    />
-                    <div
-                      className="absolute top-0 h-4 w-1 rounded"
-                      style={{
-                        left: `${(r.p50 / wtpMax) * 100}%`,
-                        background: SEGMENT_COLORS[r.segment],
-                      }}
-                      title={`P50 ${r.cur} ${r.p50.toLocaleString()}`}
-                    />
-                  </div>
+                  <ValueTooltip
+                    content={`${r.segment} willingness to pay — P25 ${r.cur} ${r.p25.toLocaleString()} · P50 ${r.cur} ${r.p50.toLocaleString()} · P75 ${r.cur} ${r.p75.toLocaleString()}`}
+                  >
+                    <div className="relative h-4 flex-1 rounded bg-neutral-100">
+                      <div
+                        className="absolute h-4 rounded opacity-40"
+                        style={{
+                          left: `${(r.p25 / wtpMax) * 100}%`,
+                          width: `${Math.max(1, ((r.p75 - r.p25) / wtpMax) * 100)}%`,
+                          background: SEGMENT_COLORS[r.segment],
+                        }}
+                      />
+                      <div
+                        className="absolute top-0 h-4 w-1 rounded"
+                        style={{
+                          left: `${(r.p50 / wtpMax) * 100}%`,
+                          background: SEGMENT_COLORS[r.segment],
+                        }}
+                      />
+                    </div>
+                  </ValueTooltip>
                   <span className="w-24 text-right text-neutral-500">
                     {r.cur} {Math.round(r.p50 / 1000)}k
                   </span>
@@ -1047,15 +1071,19 @@ export default function InsightsView({
                           const v = row[s] ?? 0;
                           return (
                             <td key={s} className="px-1 py-0.5">
-                              <div
-                                className="rounded py-1 text-center"
-                                style={{
-                                  background: `rgba(99,102,241,${Math.min(0.9, v / 100 + 0.04)})`,
-                                  color: v > 45 ? "white" : "#404040",
-                                }}
+                              <ValueTooltip
+                                content={`${p.name} × ${s}: ${v.toFixed(1)}% affinity`}
                               >
-                                {Math.round(v)}
-                              </div>
+                                <div
+                                  className="rounded py-1 text-center"
+                                  style={{
+                                    background: `rgba(99,102,241,${Math.min(0.9, v / 100 + 0.04)})`,
+                                    color: v > 45 ? "white" : "#404040",
+                                  }}
+                                >
+                                  {Math.round(v)}
+                                </div>
+                              </ValueTooltip>
                             </td>
                           );
                         })}

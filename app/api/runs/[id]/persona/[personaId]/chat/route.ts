@@ -69,29 +69,31 @@ export async function POST(
   const intentAfter = withIntent?.intentAfter ?? null;
   const newObjection = withIntent?.objection ?? null;
 
-  let voteChanged = false;
-  if (intentAfter !== null && intentAfter !== intentBefore) {
-    voteChanged = true;
-    const changedAt = new Date();
+  // ALWAYS persist the exchange to the transcript — not only when the vote
+  // moves — so the Win Back tab can replay every conversation after the drawer
+  // is closed/reopened (previously a non-moving chat vanished on close).
+  const now = new Date();
+  const turn = {
+    question: body.data.question,
+    messages: result.messages,
+    intentBefore,
+    intentAfter,
+    ts: now.toISOString(),
+  };
+  const chatLog = [...safeParseLog(personaRow.chatLog), turn];
+
+  const voteChanged = intentAfter !== null && intentAfter !== intentBefore;
+  if (voteChanged) {
     const intentOriginal = personaRow.intentOriginal ?? intentBefore;
     const objection = newObjection ?? personaRow.objection;
-    const turn = {
-      question: body.data.question,
-      messages: result.messages,
-      intentBefore,
-      intentAfter,
-      ts: changedAt.toISOString(),
-    };
-    const priorLog = safeParseLog(personaRow.chatLog);
-
     await prisma.persona.update({
       where: { id: personaRow.id },
       data: {
-        intent: intentAfter,
+        intent: intentAfter as number,
         intentOriginal,
         objection,
-        voteChangedAt: changedAt,
-        chatLog: JSON.stringify([...priorLog, turn]),
+        voteChangedAt: now,
+        chatLog: JSON.stringify(chatLog),
       },
     });
 
@@ -100,10 +102,16 @@ export async function POST(
       type: "persona_updated",
       cohortId: personaRow.cohortId,
       personaId: personaRow.id,
-      intent: intentAfter,
+      intent: intentAfter as number,
       intentOriginal,
       objection,
-      voteChangedAt: changedAt.toISOString(),
+      voteChangedAt: now.toISOString(),
+    });
+  } else {
+    // No vote change — still append the transcript so it persists.
+    await prisma.persona.update({
+      where: { id: personaRow.id },
+      data: { chatLog: JSON.stringify(chatLog) },
     });
   }
 
@@ -114,6 +122,7 @@ export async function POST(
     voteBefore: classifySentiment(intentBefore),
     voteAfter: classifySentiment(intentAfter ?? intentBefore),
     voteChanged,
+    chatLog,
   });
 }
 

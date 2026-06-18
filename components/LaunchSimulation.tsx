@@ -32,6 +32,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { SEGMENT_COLORS } from "./segments";
+import { ValueTooltip } from "./ValueTooltip";
 import type { LaunchSimInputs, LaunchSimRecord } from "@/lib/schema";
 
 // ---------------------------------------------------------------------------
@@ -1152,18 +1153,20 @@ function Pnl({
             {r.name}
           </span>
           <div className="relative h-4 flex-1 rounded bg-neutral-100">
-            <div
-              className={`h-4 rounded ${
-                r.kind === "in"
-                  ? "bg-emerald-400"
-                  : r.kind === "net"
-                    ? r.value >= 0
-                      ? "bg-emerald-600"
-                      : "bg-red-600"
-                    : "bg-red-300"
-              }`}
-              style={{ width: `${Math.min(100, (Math.abs(r.value) / max) * 100)}%` }}
-            />
+            <ValueTooltip content={`${r.name}: ${fmt.money(r.value)}`}>
+              <div
+                className={`h-4 rounded ${
+                  r.kind === "in"
+                    ? "bg-emerald-400"
+                    : r.kind === "net"
+                      ? r.value >= 0
+                        ? "bg-emerald-600"
+                        : "bg-red-600"
+                      : "bg-red-300"
+                }`}
+                style={{ width: `${Math.min(100, (Math.abs(r.value) / max) * 100)}%` }}
+              />
+            </ValueTooltip>
           </div>
           <span
             className={`w-24 shrink-0 text-right text-[11px] tabular-nums ${
@@ -1215,15 +1218,19 @@ function Funnel({
             {st.name}
           </span>
           <div className="h-5 flex-1 rounded bg-neutral-100">
-            <div
-              className="flex h-5 items-center rounded px-1.5 text-[10px] font-medium text-neutral-700"
-              style={{
-                width: `${Math.max(2, (st.value / max) * 100)}%`,
-                backgroundColor: st.color,
-              }}
+            <ValueTooltip
+              content={`${st.name}: ${fmt.num(st.value)} (${((st.value / max) * 100).toFixed(1)}% of impressions)`}
             >
-              {fmt.num(st.value)}
-            </div>
+              <div
+                className="flex h-5 items-center rounded px-1.5 text-[10px] font-medium text-neutral-700"
+                style={{
+                  width: `${Math.max(2, (st.value / max) * 100)}%`,
+                  backgroundColor: st.color,
+                }}
+              >
+                {fmt.num(st.value)}
+              </div>
+            </ValueTooltip>
           </div>
         </div>
       ))}
@@ -1380,7 +1387,9 @@ function Ratio({
         </span>
       </div>
       <div className="h-3 rounded bg-neutral-100">
-        <div className="h-3 rounded" style={{ width: `${pct}%`, backgroundColor: color }} />
+        <ValueTooltip content={`${label}: ${fmt.num(value)} (${pct.toFixed(1)}%)`}>
+          <div className="h-3 rounded" style={{ width: `${pct}%`, backgroundColor: color }} />
+        </ValueTooltip>
       </div>
     </div>
   );
