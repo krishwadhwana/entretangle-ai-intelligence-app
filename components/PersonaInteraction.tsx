@@ -1,18 +1,30 @@
 "use client";
 
-import { useState } from "react";
-import { Loader2, Send, Sparkles, Flag } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Loader2, Send, Sparkles, Flag, Plus, Search, X } from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
 import type { PersonaConversation } from "@/lib/schema";
+import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
 
-type Loading = "start" | "A" | "B" | "inject" | "conclude" | null;
+type Loading = "start" | "inject" | "conclude" | string | null;
+type SentimentFilter = "all" | "approve" | "mixed" | "reject";
+
+const MIN = 2;
+const MAX = 4;
+
+// Per-participant colour, by their index in the discussion.
+const PALETTE = [
+  { dot: "#6366f1", bubble: "border-indigo-100 bg-indigo-50", btn: "border-indigo-200 bg-indigo-50 text-indigo-700 hover:bg-indigo-100" },
+  { dot: "#10b981", bubble: "border-emerald-100 bg-emerald-50", btn: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100" },
+  { dot: "#f59e0b", bubble: "border-amber-100 bg-amber-50", btn: "border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100" },
+  { dot: "#0ea5e9", bubble: "border-sky-100 bg-sky-50", btn: "border-sky-200 bg-sky-50 text-sky-700 hover:bg-sky-100" },
+];
 
 /**
- * Persona Interaction: two simulated personas discuss a topic. The user drives
- * each turn by clicking "Generate reply from <name>" (one LLM call per click,
- * so the discussion can't run away on cost), can inject knowledge both personas
- * then see, and can wrap the thread into a conclusion. The conversation is
- * persisted server-side, so it survives drawer close / reload.
+ * Persona Interaction: 2-4 simulated personas discuss a topic. The user drives
+ * each turn by clicking "Reply from <name>" (one LLM call per click, so it
+ * can't run away on cost), can inject knowledge everyone then sees, and can wrap
+ * the thread into a conclusion. Persisted server-side, so it survives reload.
  */
 export default function PersonaInteraction({
   runId,
@@ -25,24 +37,42 @@ export default function PersonaInteraction({
   initialConvo?: PersonaConversation | null;
   initialAId?: string;
 }) {
-  const defaultA = initialConvo?.personaAId ?? initialAId ?? personas[0]?.id ?? "";
-  const [aId, setAId] = useState(defaultA);
-  const [bId, setBId] = useState(
-    initialConvo?.personaBId ??
-      personas.find((p) => p.id !== defaultA)?.id ??
-      personas[0]?.id ??
-      ""
-  );
+  const seed =
+    initialConvo?.participantIds ??
+    (initialAId
+      ? [initialAId]
+      : personas[0]
+        ? [personas[0].id]
+        : []);
+  const [selected, setSelected] = useState<string[]>(seed);
   const [topic, setTopic] = useState(initialConvo?.topic ?? "");
   const [convo, setConvo] = useState<PersonaConversation | null>(initialConvo);
   const [loading, setLoading] = useState<Loading>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<SentimentFilter>("all");
 
-  const nameOf = (id: string) =>
-    personas.find((p) => p.id === id)?.name ?? "Persona";
-  const aName = convo ? nameOf(convo.personaAId) : nameOf(aId);
-  const bName = convo ? nameOf(convo.personaBId) : nameOf(bId);
+  const byId = useMemo(
+    () => new Map(personas.map((p) => [p.id, p])),
+    [personas]
+  );
+  const nameOf = (id: string) => byId.get(id)?.name ?? "Persona";
+
+  // The add-persona picker: not-yet-selected personas matching search + filter.
+  const candidates = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return personas.filter((p) => {
+      if (selected.includes(p.id)) return false;
+      if (filter !== "all" && classifySentiment(p.intent) !== filter) return false;
+      if (!q) return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.occupation.toLowerCase().includes(q) ||
+        (p.personality ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [personas, selected, query, filter]);
 
   const post = async (payload: Record<string, unknown>, kind: Loading) => {
     setLoading(kind);
@@ -65,17 +95,20 @@ export default function PersonaInteraction({
     }
   };
 
+  const addPersona = (id: string) =>
+    setSelected((cur) => (cur.length >= MAX || cur.includes(id) ? cur : [...cur, id]));
+  const removePersona = (id: string) =>
+    setSelected((cur) => cur.filter((x) => x !== id));
+
   const start = () => {
-    if (!aId || !bId || aId === bId) {
-      setError("Pick two different personas.");
+    if (selected.length < MIN) {
+      setError(`Add at least ${MIN} personas.`);
       return;
     }
-    void post({ action: "start", personaAId: aId, personaBId: bId, topic }, "start");
+    void post({ action: "start", participantIds: selected, topic }, "start");
   };
-
-  const reply = (speaker: "A" | "B") =>
-    convo && void post({ action: "reply", conversationId: convo.id, speaker }, speaker);
-
+  const reply = (personaId: string) =>
+    convo && void post({ action: "reply", conversationId: convo.id, personaId }, personaId);
   const inject = () => {
     const n = note.trim();
     if (!n || !convo) return;
@@ -83,13 +116,12 @@ export default function PersonaInteraction({
       (ok) => ok && setNote("")
     );
   };
-
   const conclude = () =>
     convo && void post({ action: "conclude", conversationId: convo.id }, "conclude");
 
   const busy = loading !== null;
 
-  // --- Setup (no conversation yet) ------------------------------------------
+  // ===== Setup (no conversation yet) =======================================
   if (!convo) {
     return (
       <section className="mb-4 rounded-lg border border-indigo-100 bg-white p-3 shadow-sm">
@@ -97,62 +129,139 @@ export default function PersonaInteraction({
           <Sparkles className="h-3.5 w-3.5" /> Persona interaction
         </p>
         <p className="mb-2 text-[10px] leading-snug text-neutral-500">
-          Have two personas discuss a topic. You generate each reply turn-by-turn,
-          can add knowledge mid-conversation, and wrap it up into a conclusion.
+          Pick {MIN}–{MAX} personas to discuss a topic. You generate each reply
+          turn-by-turn, can add knowledge mid-conversation, and wrap it up into a
+          conclusion.
         </p>
-        <div className="grid grid-cols-2 gap-2">
-          {(["A", "B"] as const).map((slot) => (
-            <label key={slot} className="text-[10px] font-medium text-neutral-500">
-              Persona {slot}
-              <select
-                value={slot === "A" ? aId : bId}
-                onChange={(e) =>
-                  slot === "A" ? setAId(e.target.value) : setBId(e.target.value)
-                }
-                className="mt-1 w-full rounded-md border border-neutral-200 bg-white px-2 py-1.5 text-[11px] text-neutral-700 outline-none focus:border-indigo-400"
+
+        {/* Selected participants */}
+        <p className="mb-1 text-[10px] font-medium text-neutral-500">
+          In this discussion ({selected.length}/{MAX})
+        </p>
+        <div className="mb-2 flex flex-wrap gap-1">
+          {selected.length === 0 && (
+            <span className="text-[10px] text-neutral-400">None yet — add below.</span>
+          )}
+          {selected.map((id, i) => (
+            <span
+              key={id}
+              className="flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px]"
+              style={{ borderColor: PALETTE[i % PALETTE.length].dot, color: "#404040" }}
+            >
+              <span
+                className="h-1.5 w-1.5 rounded-full"
+                style={{ background: PALETTE[i % PALETTE.length].dot }}
+              />
+              {nameOf(id)}
+              <button
+                type="button"
+                onClick={() => removePersona(id)}
+                className="text-neutral-400 hover:text-neutral-700"
+                aria-label={`Remove ${nameOf(id)}`}
               >
-                {personas.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {Math.round(p.intent * 100)}%
-                  </option>
-                ))}
-              </select>
-            </label>
+                <X className="h-3 w-3" />
+              </button>
+            </span>
           ))}
         </div>
+
+        {/* Searchable / filterable add-persona picker */}
+        {selected.length < MAX && (
+          <div className="mb-2 rounded-lg border border-neutral-200 p-2">
+            <div className="flex items-center gap-1.5">
+              <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+              <input
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search personas by name, job, trait…"
+                className="min-w-0 flex-1 text-[11px] text-neutral-700 outline-none placeholder:text-neutral-400"
+              />
+              <select
+                value={filter}
+                onChange={(e) => setFilter(e.target.value as SentimentFilter)}
+                className="rounded border border-neutral-200 bg-white px-1 py-0.5 text-[10px] text-neutral-600 outline-none"
+              >
+                <option value="all">All</option>
+                <option value="approve">Approve</option>
+                <option value="mixed">Mixed</option>
+                <option value="reject">Reject</option>
+              </select>
+            </div>
+            <div className="mt-1.5 max-h-40 space-y-0.5 overflow-y-auto">
+              {candidates.length === 0 ? (
+                <p className="py-2 text-center text-[10px] text-neutral-400">
+                  No matching personas.
+                </p>
+              ) : (
+                candidates.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => addPersona(p.id)}
+                    className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1 text-left text-[10px] text-neutral-600 hover:bg-indigo-50"
+                  >
+                    <span className="min-w-0 truncate">
+                      <span className="font-medium text-neutral-700">{p.name}</span>{" "}
+                      · {p.occupation}
+                    </span>
+                    <span className="flex shrink-0 items-center gap-1">
+                      <span
+                        className="rounded-full px-1 py-px text-[8px] font-semibold text-white"
+                        style={{
+                          background: SENTIMENT_META[classifySentiment(p.intent)].color,
+                        }}
+                      >
+                        {Math.round(p.intent * 100)}%
+                      </span>
+                      <Plus className="h-3 w-3 text-indigo-500" />
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        )}
+
         <input
           value={topic}
           onChange={(e) => setTopic(e.target.value)}
           placeholder="Topic (optional) — e.g. is the price worth it?"
-          className="mt-2 w-full rounded-lg border border-neutral-200 px-2.5 py-2 text-[11px] text-neutral-700 outline-none focus:border-indigo-400"
+          className="mb-2 w-full rounded-lg border border-neutral-200 px-2.5 py-2 text-[11px] text-neutral-700 outline-none focus:border-indigo-400"
         />
         {error && (
-          <p className="mt-2 rounded-md bg-red-50 px-2 py-1 text-[10px] text-red-600">
+          <p className="mb-2 rounded-md bg-red-50 px-2 py-1 text-[10px] text-red-600">
             {error}
           </p>
         )}
         <button
           type="button"
           onClick={start}
-          disabled={busy || personas.length < 2}
-          className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg bg-indigo-600 py-2 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+          disabled={busy || selected.length < MIN}
+          className="flex w-full items-center justify-center gap-1 rounded-lg bg-indigo-600 py-2 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
         >
           {loading === "start" ? (
             <Loader2 className="h-3.5 w-3.5 animate-spin" />
           ) : (
             <Sparkles className="h-3.5 w-3.5" />
           )}
-          {personas.length < 2 ? "Need 2+ personas" : "Start discussion"}
+          {selected.length < MIN
+            ? `Add ${MIN - selected.length} more`
+            : `Start discussion (${selected.length})`}
         </button>
       </section>
     );
   }
 
-  // --- Active conversation --------------------------------------------------
+  // ===== Active conversation ===============================================
+  const participants = convo.participantIds;
+  const colorIndex = (personaId: string | null) =>
+    personaId ? Math.max(0, participants.indexOf(personaId)) : 0;
+
   return (
     <section className="mb-4 rounded-lg border border-indigo-100 bg-white p-3 shadow-sm">
-      <p className="mb-2 flex items-center gap-1 text-[11px] font-semibold text-indigo-700">
-        <Sparkles className="h-3.5 w-3.5" /> {aName} ↔ {bName}
+      <p className="mb-1 flex items-center gap-1 text-[11px] font-semibold text-indigo-700">
+        <Sparkles className="h-3.5 w-3.5" />
+        {participants.map(nameOf).join(" · ")}
       </p>
       {convo.topic && (
         <p className="mb-2 text-[10px] text-neutral-500">Topic: {convo.topic}</p>
@@ -167,22 +276,23 @@ export default function PersonaInteraction({
           <ul className="space-y-2">
             {convo.messages.map((m, i) => {
               const founder = m.role === "founder";
-              const isA = m.role === "personaA";
+              const tone = PALETTE[colorIndex(m.personaId) % PALETTE.length];
               return (
-                <li
-                  key={i}
-                  className={`flex ${founder ? "justify-center" : isA ? "justify-start" : "justify-end"}`}
-                >
+                <li key={i} className={`flex ${founder ? "justify-center" : "justify-start"}`}>
                   <div
-                    className={`max-w-[88%] rounded-lg px-2.5 py-2 text-[11px] leading-snug ${
+                    className={`max-w-[90%] rounded-lg border px-2.5 py-2 text-[11px] leading-snug ${
                       founder
-                        ? "border border-amber-200 bg-amber-50 text-amber-700"
-                        : isA
-                          ? "border border-indigo-100 bg-indigo-50 text-neutral-700"
-                          : "border border-emerald-100 bg-emerald-50 text-neutral-700"
+                        ? "border-amber-200 bg-amber-50 text-amber-700"
+                        : `${tone.bubble} text-neutral-700`
                     }`}
                   >
                     <div className="mb-0.5 flex items-center gap-1 text-[9px] font-semibold text-neutral-500">
+                      {!founder && (
+                        <span
+                          className="h-1.5 w-1.5 rounded-full"
+                          style={{ background: tone.dot }}
+                        />
+                      )}
                       <span className="truncate">{m.speaker}</span>
                       {typeof m.intentAfter === "number" && (
                         <span className="shrink-0 rounded-full bg-white/70 px-1 text-[8px] text-indigo-600">
@@ -218,32 +328,25 @@ export default function PersonaInteraction({
       )}
 
       {/* Turn controls — one LLM call per click keeps cost bounded. */}
-      <div className="mt-2 grid grid-cols-2 gap-2">
-        <button
-          type="button"
-          onClick={() => reply("A")}
-          disabled={busy}
-          className="flex items-center justify-center gap-1 rounded-lg border border-indigo-200 bg-indigo-50 px-2 py-1.5 text-[10px] font-medium text-indigo-700 hover:bg-indigo-100 disabled:opacity-40"
-        >
-          {loading === "A" ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : null}
-          Reply from {aName}
-        </button>
-        <button
-          type="button"
-          onClick={() => reply("B")}
-          disabled={busy}
-          className="flex items-center justify-center gap-1 rounded-lg border border-emerald-200 bg-emerald-50 px-2 py-1.5 text-[10px] font-medium text-emerald-700 hover:bg-emerald-100 disabled:opacity-40"
-        >
-          {loading === "B" ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : null}
-          Reply from {bName}
-        </button>
+      <div className="mt-2 grid grid-cols-2 gap-1.5">
+        {participants.map((id, i) => {
+          const tone = PALETTE[i % PALETTE.length];
+          return (
+            <button
+              key={id}
+              type="button"
+              onClick={() => reply(id)}
+              disabled={busy}
+              className={`flex items-center justify-center gap-1 rounded-lg border px-2 py-1.5 text-[10px] font-medium disabled:opacity-40 ${tone.btn}`}
+            >
+              {loading === id ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+              Reply from {nameOf(id)}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Founder knowledge injection — both personas see it on their next turn. */}
+      {/* Founder knowledge injection — everyone sees it on their next turn. */}
       <div className="mt-2 flex gap-2">
         <input
           value={note}
@@ -254,7 +357,7 @@ export default function PersonaInteraction({
               inject();
             }
           }}
-          placeholder="Add knowledge both personas will see…"
+          placeholder="Add knowledge everyone will see…"
           className="min-w-0 flex-1 rounded-lg border border-neutral-200 px-2.5 py-2 text-[11px] text-neutral-700 outline-none focus:border-indigo-400"
         />
         <button
@@ -262,7 +365,7 @@ export default function PersonaInteraction({
           onClick={inject}
           disabled={busy || !note.trim()}
           className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-amber-500 text-white hover:bg-amber-400 disabled:opacity-40"
-          title="Inject knowledge for both personas"
+          title="Inject knowledge for all personas"
           aria-label="Inject knowledge"
         >
           {loading === "inject" ? (

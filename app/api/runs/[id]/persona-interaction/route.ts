@@ -9,21 +9,20 @@ import { cohortToWire, personaToWire } from "@/lib/wire";
 
 export const dynamic = "force-dynamic";
 
-// Persona Interaction: two personas discuss a topic. Every action mutates one
+// Persona Interaction: 2-4 personas discuss a topic. Every action mutates one
 // persisted PersonaConversation. Replies are generated ONE message per call —
-// the user clicks "generate reply from X" to advance each turn — so a runaway
-// discussion can't quietly rack up cost.
+// the user clicks "reply from X" to advance each turn — so a runaway discussion
+// can't quietly rack up cost.
 const RequestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("start"),
-    personaAId: z.string(),
-    personaBId: z.string(),
+    participantIds: z.array(z.string()).min(2).max(4),
     topic: z.string().max(2000).default(""),
   }),
   z.object({
     action: z.literal("reply"),
     conversationId: z.string(),
-    speaker: z.enum(["A", "B"]),
+    personaId: z.string(),
   }),
   z.object({
     action: z.literal("inject"),
@@ -46,6 +45,20 @@ function parseMessages(raw: string): PersonaConversationMessage[] {
   }
 }
 
+function parseParticipantIds(row: {
+  participantIds: string;
+  personaAId: string;
+  personaBId: string;
+}): string[] {
+  try {
+    const parsed = JSON.parse(row.participantIds);
+    if (Array.isArray(parsed) && parsed.length >= 2) return parsed as string[];
+  } catch {
+    // fall through to legacy columns
+  }
+  return [row.personaAId, row.personaBId];
+}
+
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -54,32 +67,40 @@ export async function POST(
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
+  // Bind to a local const so TS narrows the discriminated union reliably across
+  // the awaits below (property-access narrowing on body.data gets dropped).
+  const data = body.data;
 
   const run = await prisma.run.findUnique({ where: { id: params.id } });
   if (!run) return NextResponse.json({ error: "run not found" }, { status: 404 });
   const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
 
-  // --- start: create a fresh conversation between two personas --------------
-  if (body.data.action === "start") {
-    const [a, b] = await Promise.all([
-      loadPersona(params.id, body.data.personaAId),
-      loadPersona(params.id, body.data.personaBId),
-    ]);
-    if (!a || !b) {
-      return NextResponse.json({ error: "persona not found" }, { status: 404 });
-    }
-    if (a.id === b.id) {
+  // --- start: create a fresh conversation between 2-4 personas --------------
+  if (data.action === "start") {
+    const ids = Array.from(new Set(data.participantIds));
+    if (ids.length < 2) {
       return NextResponse.json(
-        { error: "pick two different personas" },
+        { error: "pick at least two different personas" },
         { status: 400 }
       );
+    }
+    if (ids.length > 4) {
+      return NextResponse.json(
+        { error: "a discussion can have at most four personas" },
+        { status: 400 }
+      );
+    }
+    const loaded = await Promise.all(ids.map((id) => loadPersona(params.id, id)));
+    if (loaded.some((p) => !p)) {
+      return NextResponse.json({ error: "persona not found" }, { status: 404 });
     }
     const convo = await prisma.personaConversation.create({
       data: {
         runId: params.id,
-        personaAId: a.id,
-        personaBId: b.id,
-        topic: body.data.topic,
+        participantIds: JSON.stringify(ids),
+        personaAId: ids[0],
+        personaBId: ids[1],
+        topic: data.topic,
         messages: "[]",
       },
     });
@@ -88,20 +109,20 @@ export async function POST(
 
   // All other actions operate on an existing conversation.
   const convo = await prisma.personaConversation.findFirst({
-    where: { id: body.data.conversationId, runId: params.id },
+    where: { id: data.conversationId, runId: params.id },
   });
   if (!convo) {
     return NextResponse.json({ error: "conversation not found" }, { status: 404 });
   }
   const messages = parseMessages(convo.messages);
 
-  // --- inject: founder knowledge both personas then reason over -------------
-  if (body.data.action === "inject") {
+  // --- inject: founder knowledge every persona then reasons over ------------
+  if (data.action === "inject") {
     messages.push({
       role: "founder",
       speaker: "You (founder)",
       personaId: null,
-      content: body.data.note,
+      content: data.note,
       intentAfter: null,
       ts: nowIso(),
     });
@@ -112,11 +133,14 @@ export async function POST(
     return NextResponse.json(wire(updated));
   }
 
-  const [personaA, personaB] = await Promise.all([
-    loadPersona(params.id, convo.personaAId),
-    loadPersona(params.id, convo.personaBId),
-  ]);
-  if (!personaA || !personaB) {
+  const participantIds = parseParticipantIds(convo);
+  const loaded = await Promise.all(
+    participantIds.map((id) => loadPersona(params.id, id))
+  );
+  const participants = loaded.filter(
+    (p): p is NonNullable<typeof p> => p !== null
+  );
+  if (participants.length < 2) {
     return NextResponse.json(
       { error: "a participant persona is missing" },
       { status: 404 }
@@ -124,7 +148,7 @@ export async function POST(
   }
 
   // --- conclude: synthesize the discussion into a founder takeaway ----------
-  if (body.data.action === "conclude") {
+  if (data.action === "conclude") {
     if (messages.length === 0) {
       return NextResponse.json(
         { error: "nothing to conclude yet" },
@@ -136,8 +160,7 @@ export async function POST(
       const out = await callPersonaConclusion(
         run.id,
         profile,
-        personaToWire(personaA.row),
-        personaToWire(personaB.row),
+        participants.map((p) => personaToWire(p.row)),
         convo.topic,
         messages
       );
@@ -156,9 +179,17 @@ export async function POST(
   }
 
   // --- reply: generate ONE in-character message from the chosen persona -----
-  const speakerIsA = body.data.speaker === "A";
-  const speaker = speakerIsA ? personaA : personaB;
-  const other = speakerIsA ? personaB : personaA;
+  if (data.action !== "reply") {
+    return NextResponse.json({ error: "unknown action" }, { status: 400 });
+  }
+  const speaker = participants.find((p) => p.id === data.personaId);
+  if (!speaker) {
+    return NextResponse.json(
+      { error: "that persona isn't in this discussion" },
+      { status: 400 }
+    );
+  }
+  const others = participants.filter((p) => p.id !== speaker.id);
 
   let reply;
   try {
@@ -167,7 +198,7 @@ export async function POST(
       profile,
       cohortToWire(speaker.cohort),
       personaToWire(speaker.row),
-      personaToWire(other.row),
+      others.map((p) => personaToWire(p.row)),
       convo.topic,
       messages
     );
@@ -179,7 +210,7 @@ export async function POST(
   }
 
   messages.push({
-    role: speakerIsA ? "personaA" : "personaB",
+    role: "persona",
     speaker: speaker.row.name,
     personaId: speaker.id,
     content: reply.content,
@@ -193,10 +224,7 @@ export async function POST(
 
   // If the exchange genuinely moved the speaker's intent, persist it to the
   // persona and emit so sentiment/charts re-derive (same as 1:1 win-back).
-  if (
-    reply.intentAfter !== null &&
-    reply.intentAfter !== speaker.row.intent
-  ) {
+  if (reply.intentAfter !== null && reply.intentAfter !== speaker.row.intent) {
     const intentOriginal = speaker.row.intentOriginal ?? speaker.row.intent;
     const changedAt = new Date();
     await prisma.persona.update({
@@ -234,6 +262,7 @@ async function loadPersona(runId: string, personaId: string) {
 function wire(c: {
   id: string;
   runId: string;
+  participantIds: string;
   personaAId: string;
   personaBId: string;
   topic: string;
@@ -245,8 +274,7 @@ function wire(c: {
   return {
     id: c.id,
     runId: c.runId,
-    personaAId: c.personaAId,
-    personaBId: c.personaBId,
+    participantIds: parseParticipantIds(c),
     topic: c.topic,
     messages: parseMessages(c.messages),
     conclusion: c.conclusion,

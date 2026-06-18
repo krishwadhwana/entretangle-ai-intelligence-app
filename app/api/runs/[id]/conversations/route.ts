@@ -47,22 +47,36 @@ export async function GET(
     }))
     .filter((p) => p.turns.length > 0);
 
-  // Two-persona interactions started by a persona in this cohort.
+  // Interactions involving ANY persona in this cohort (2-4 participants each).
+  const idSet = new Set(personaIds);
   const rows = await prisma.personaConversation.findMany({
-    where: { runId: params.id, personaAId: { in: personaIds } },
+    where: { runId: params.id },
     orderBy: { updatedAt: "desc" },
   });
-  const interactions = rows.map((r) => ({
-    id: r.id,
-    runId: r.runId,
-    personaAId: r.personaAId,
-    personaBId: r.personaBId,
-    topic: r.topic,
-    messages: safeParse(r.messages),
-    conclusion: r.conclusion,
-    createdAt: r.createdAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
-  }));
+  const interactions = rows
+    .map((r) => {
+      let participantIds: string[];
+      try {
+        const parsed = JSON.parse(r.participantIds);
+        participantIds =
+          Array.isArray(parsed) && parsed.length >= 2
+            ? (parsed as string[])
+            : [r.personaAId, r.personaBId];
+      } catch {
+        participantIds = [r.personaAId, r.personaBId];
+      }
+      return {
+        id: r.id,
+        runId: r.runId,
+        participantIds,
+        topic: r.topic,
+        messages: safeParse(r.messages),
+        conclusion: r.conclusion,
+        createdAt: r.createdAt.toISOString(),
+        updatedAt: r.updatedAt.toISOString(),
+      };
+    })
+    .filter((c) => c.participantIds.some((id) => idSet.has(id)));
 
   return NextResponse.json({ winback, interactions });
 }

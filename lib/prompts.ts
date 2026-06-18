@@ -8,6 +8,7 @@ import type {
   Conclusion,
   FinancialModel,
   Persona,
+  PersonaConversationRole,
   VenturePlanningContext,
 } from "./schema";
 import {
@@ -880,26 +881,27 @@ export function audienceChatUser(
 // --- Persona Interaction (two personas discuss a topic) --------------------
 
 type InteractionMsg = {
-  role: "personaA" | "personaB" | "founder";
+  role: PersonaConversationRole;
   speaker: string;
   content: string;
 };
 
 /**
  * Generate ONE reply from `speaker`, in character, responding to the other
- * persona (and any founder-injected knowledge) in an ongoing discussion. One
- * message per call keeps the thread cost-bounded — the user drives each turn.
+ * participants (and any founder-injected knowledge) in an ongoing group
+ * discussion of 2-4 people. One message per call keeps the thread cost-bounded —
+ * the user drives each turn.
  */
 export function personaReplySystem(
   profile: ClientProfile,
   cohort: Cohort,
   speaker: Persona,
-  other: Persona,
+  others: Persona[],
   topic: string
 ): string {
-  return `You ARE a single simulated person having a candid conversation with
-another real-feeling person about a product/venture. Stay 100% in character as
-the SPEAKER below — never break character, never talk like an analyst, never
+  return `You ARE a single simulated person in a candid group conversation with
+${others.length === 1 ? "another real-feeling person" : `${others.length} other real-feeling people`} about a product/venture. Stay 100% in character as the
+SPEAKER below — never break character, never talk like an analyst, never
 describe yourself in the third person. Use only the facts given; do not invent
 biographical details that contradict your profile.
 
@@ -912,16 +914,21 @@ Shared locality/segment context: ${JSON.stringify({
 Discussion topic: ${topic || "their honest take on this venture/product"}
 
 YOU (the speaker): ${JSON.stringify(personaForChat(speaker), null, 2)}
-THE OTHER PERSON: ${JSON.stringify(personaForChat(other), null, 2)}
+THE OTHER PARTICIPANT${others.length === 1 ? "" : "S"}: ${JSON.stringify(
+    others.map(personaForChat),
+    null,
+    2
+  )}
 
 Rules:
 - Write ONE short, natural conversational message (1-4 sentences) as YOU.
-- React to what the other person just said and to any "founder" note in the
-  thread (treat founder notes as new information you now both know).
+- React to what the others just said and to any "founder" note in the thread
+  (treat founder notes as new information you now all know). Address people by
+  name when it's natural.
 - Be true to your income, lifestyle, price sensitivity, objection, baseline
-  intent and personality. Disagree, agree, or build on their point as your
+  intent and personality. Disagree, agree, or build on their points as your
   character genuinely would.
-- If the exchange (their argument or a founder note) genuinely shifts how likely
+- If the discussion (an argument or a founder note) genuinely shifts how likely
   YOU are to buy/stock, set intentAfter to your new 0-1 intent; otherwise null.
 - No markdown, no preamble, no stage directions.
 
@@ -944,19 +951,18 @@ export function personaReplyUser(
 
 export function personaConclusionSystem(
   profile: ClientProfile,
-  personaA: Persona,
-  personaB: Persona,
+  participants: Persona[],
   topic: string
 ): string {
-  return `Two simulated customers just discussed a venture. Summarize their
-exchange into a concise, useful CONCLUSION for the founder — what they agreed
-on, where they diverged, the strongest objection or unlock that surfaced, and
-the single most important takeaway for the founder. Ground it strictly in what
-was actually said.
+  return `${participants.length} simulated customers just discussed a venture.
+Summarize their exchange into a concise, useful CONCLUSION for the founder —
+what they agreed on, where they diverged, the strongest objection or unlock that
+surfaced, and the single most important takeaway for the founder. Ground it
+strictly in what was actually said.
 
 Venture: ${JSON.stringify(profile)}
 Topic: ${topic || "their take on this venture/product"}
-Participants: ${personaA.name} and ${personaB.name}
+Participants: ${participants.map((p) => p.name).join(", ")}
 
 Output JSON only: {"conclusion":"3-6 sentence synthesis"}`;
 }

@@ -602,21 +602,19 @@ export default function CohortDrawer({
             </p>
             <div className="space-y-1.5">
               {interactionConvos.map((c) => {
-                const a =
-                  cohort.personas.find((p) => p.id === c.personaAId)?.name ??
-                  "Persona";
-                const b =
-                  cohort.personas.find((p) => p.id === c.personaBId)?.name ??
-                  "Persona";
+                const names = c.participantIds
+                  .map(
+                    (id) =>
+                      cohort.personas.find((p) => p.id === id)?.name ?? "Persona"
+                  )
+                  .join(" · ");
                 return (
                   <details
                     key={c.id}
                     className="group rounded-md border border-neutral-200 open:border-indigo-200"
                   >
                     <summary className="cursor-pointer select-none px-2 py-1.5 text-[10px] text-neutral-600 marker:text-neutral-400">
-                      <span className="font-medium text-neutral-700">
-                        {a} ↔ {b}
-                      </span>
+                      <span className="font-medium text-neutral-700">{names}</span>
                       {c.topic ? ` · ${c.topic}` : ""}
                       <span className="text-neutral-400">
                         {" "}
@@ -636,9 +634,7 @@ export default function CohortDrawer({
                               className={`font-semibold ${
                                 m.role === "founder"
                                   ? "text-amber-600"
-                                  : m.role === "personaA"
-                                    ? "text-indigo-600"
-                                    : "text-emerald-600"
+                                  : "text-indigo-600"
                               }`}
                             >
                               {m.speaker}:
@@ -997,21 +993,21 @@ export default function CohortDrawer({
                   ⚠ {p.objection}
                 </p>
                 <div className="mt-2 flex flex-wrap gap-1.5">
-                  {isRejector(p.intent) && (
-                    <button
-                      type="button"
-                      onClick={() => startWinBack(p.id)}
-                      className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
-                    >
-                      <MessageCircle className="h-3 w-3" /> Win back
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => startWinBack(p.id)}
+                    className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                    title={`Chat 1:1 with ${p.name}`}
+                  >
+                    <MessageCircle className="h-3 w-3" />
+                    {isRejector(p.intent) ? "Win back" : "Chat"}
+                  </button>
                   {cohort.personas.length > 1 && (
                     <button
                       type="button"
                       onClick={() => startInteraction(p.id)}
                       className="flex items-center gap-1 rounded-lg border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
-                      title={`Have ${p.name} discuss with another persona`}
+                      title={`Have ${p.name} discuss with other personas`}
                     >
                       <Sparkles className="h-3 w-3" /> Persona interaction
                     </button>

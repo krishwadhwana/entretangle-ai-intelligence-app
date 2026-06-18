@@ -226,19 +226,21 @@ model Persona {
   @@index([cohortId])
 }
 
-// A two-persona conversation ("Persona Interaction"): two simulated personas
-// discuss a topic turn-by-turn. Replies are generated one at a time (the user
-// clicks "generate reply from X") to keep cost bounded; the founder can inject
-// knowledge mid-conversation (a "founder" message both personas then see), and
-// the discussion can be wrapped up into a synthesized conclusion. Persisted so
-// the conversation survives drawer close / reload (lives in the Win Back tab).
+// A "Persona Interaction": 2-4 simulated personas discuss a topic turn-by-turn.
+// Replies are generated one at a time (the user clicks "reply from X") to keep
+// cost bounded; the founder can inject knowledge mid-conversation (a "founder"
+// message every persona then sees), and the discussion can be wrapped up into a
+// synthesized conclusion. Persisted so it survives drawer close / reload.
 model PersonaConversation {
   id         String   @id @default(cuid())
   runId      String   @map("run_id")
+  // Json string[] of the 2-4 participant persona ids (source of truth).
+  participantIds String @default("[]") @map("participant_ids")
+  // Legacy first-two participants, kept populated for back-compat reads.
   personaAId String   @map("persona_a_id")
   personaBId String   @map("persona_b_id")
   topic      String   @default("")
-  // Json: [{ speaker, personaId|null, role: "personaA"|"personaB"|"founder",
+  // Json: [{ speaker, personaId|null, role: "persona"|"founder",
   //          content, intentAfter|null, ts }]
   messages   String   @default("[]")
   conclusion String?

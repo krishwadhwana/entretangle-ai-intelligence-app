@@ -624,10 +624,14 @@ export type AudienceChatOutput = z.infer<typeof AudienceChatOutputSchema>;
 // drives each turn ("generate reply from X"), can inject founder knowledge both
 // personas then see, and can wrap up the thread into a conclusion.
 // ---------------------------------------------------------------------------
+// "persona" = a participant's turn (who is in personaId/speaker); "founder" =
+// injected knowledge everyone sees. personaA/personaB are accepted only so
+// transcripts saved by the original 2-persona version still parse.
 export const PersonaConversationRoleSchema = z.enum([
+  "persona",
+  "founder",
   "personaA",
   "personaB",
-  "founder",
 ]);
 export type PersonaConversationRole = z.infer<
   typeof PersonaConversationRoleSchema
@@ -649,8 +653,7 @@ export type PersonaConversationMessage = z.infer<
 export const PersonaConversationSchema = z.object({
   id: z.string(),
   runId: z.string(),
-  personaAId: z.string(),
-  personaBId: z.string(),
+  participantIds: z.array(z.string()).min(2).max(4),
   topic: z.string().default(""),
   messages: z.array(PersonaConversationMessageSchema).default([]),
   conclusion: z.string().nullable().default(null),

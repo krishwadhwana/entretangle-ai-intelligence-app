@@ -1011,19 +1011,21 @@ export async function callPersonaReply(
   profile: ClientProfile,
   cohort: Cohort,
   speaker: Persona,
-  other: Persona,
+  others: Persona[],
   topic: string,
   history: PersonaConversationMessage[]
 ): Promise<PersonaReplyOutput> {
   if (config.mockMode) {
     return PersonaReplyOutputSchema.parse({
-      content: `[${speaker.name}] (mock) Responding to ${other.name} about ${topic || "the product"}.`,
+      content: `[${speaker.name}] (mock) Responding to ${others
+        .map((o) => o.name)
+        .join(", ")} about ${topic || "the product"}.`,
       intentAfter: null,
     });
   }
   return callJson({
     runId,
-    system: personaReplySystem(profile, cohort, speaker, other, topic),
+    system: personaReplySystem(profile, cohort, speaker, others, topic),
     user: personaReplyUser(
       history.map((m) => ({
         role: m.role,
@@ -1045,19 +1047,20 @@ export async function callPersonaReply(
 export async function callPersonaConclusion(
   runId: string,
   profile: ClientProfile,
-  personaA: Persona,
-  personaB: Persona,
+  participants: Persona[],
   topic: string,
   history: PersonaConversationMessage[]
 ): Promise<PersonaConclusionOutput> {
   if (config.mockMode) {
     return PersonaConclusionOutputSchema.parse({
-      conclusion: `(mock) ${personaA.name} and ${personaB.name} discussed ${topic || "the product"}.`,
+      conclusion: `(mock) ${participants
+        .map((p) => p.name)
+        .join(", ")} discussed ${topic || "the product"}.`,
     });
   }
   return callJson({
     runId,
-    system: personaConclusionSystem(profile, personaA, personaB, topic),
+    system: personaConclusionSystem(profile, participants, topic),
     user: personaConclusionUser(
       history.map((m) => ({
         role: m.role,
