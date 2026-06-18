@@ -1,6 +1,17 @@
 import { prisma } from "./db";
 import { RunEmitter } from "./events";
 
+// A worker renews its lock every LEASE_RENEW_MS while a job runs. If a job sits
+// in "running" with a lock older than LEASE_MS, the worker that held it is
+// presumed dead (crashed / restarted by a deploy) and the job is reclaimable.
+// Without this, a worker restart orphans the in-flight job forever — the run
+// hangs and "Continue run" no-ops because the dead job still looks active.
+export const LEASE_MS = 120_000;
+export const LEASE_RENEW_MS = 30_000;
+// Hard ceiling on reclaims so a genuinely poisonous job can't crash-loop the
+// worker indefinitely — past this it stays put (visible) rather than re-running.
+const MAX_RECLAIM_ATTEMPTS = 5;
+
 export type RunJobType = "execute" | "resume";
 export type RunJobStatus =
   | "queued"
@@ -33,6 +44,23 @@ export async function enqueueRunJob(
   runId: string,
   type: RunJobType
 ): Promise<{ id: string; alreadyQueued: boolean }> {
+  // Release any job orphaned by a dead worker (running but lease expired) so it
+  // no longer masks this run as "active" — otherwise "Continue run" would dedupe
+  // against the zombie and silently do nothing.
+  await prisma.runJob.updateMany({
+    where: {
+      runId,
+      status: "running",
+      lockedAt: { lt: new Date(Date.now() - LEASE_MS) },
+    },
+    data: {
+      status: "failed",
+      error: "worker lease expired (orphaned by worker restart)",
+      finishedAt: new Date(),
+      lockedBy: null,
+    },
+  });
+
   const existing = await prisma.runJob.findFirst({
     where: {
       runId,
@@ -143,13 +171,25 @@ export async function claimNextRunJob(
       SELECT id
       FROM run_jobs
       AS candidate
-      WHERE candidate.status = 'queued'
+      WHERE (
+          candidate.status = 'queued'
+          -- Reclaim a job orphaned by a dead/restarted worker: still 'running'
+          -- but its lease lapsed. Bounded by attempts so a poison job can't loop.
+          OR (
+            candidate.status = 'running'
+            AND candidate.locked_at < now() - interval '120 seconds'
+            AND candidate.attempts < ${MAX_RECLAIM_ATTEMPTS}
+          )
+        )
         AND candidate.cancel_requested = false
         AND NOT EXISTS (
           SELECT 1
           FROM run_jobs AS active
           WHERE active.run_id = candidate.run_id
+            AND active.id <> candidate.id
             AND active.status = 'running'
+            -- Only a LIVE sibling (fresh lease) blocks; a stale one is dead.
+            AND active.locked_at > now() - interval '120 seconds'
         )
       ORDER BY candidate.priority DESC, candidate.created_at ASC
       FOR UPDATE SKIP LOCKED
@@ -167,6 +207,19 @@ export async function claimNextRunJob(
     attempts: row.attempts,
     cancelRequested: row.cancel_requested,
   };
+}
+
+// Keep a running job's lease fresh so the reclaim path doesn't steal it from a
+// worker that's alive but legitimately slow (a long simulation). Scoped to the
+// holder so a stale worker can't renew a lock it no longer owns.
+export async function renewJobLease(
+  jobId: string,
+  workerId: string
+): Promise<void> {
+  await prisma.runJob.updateMany({
+    where: { id: jobId, lockedBy: workerId, status: "running" },
+    data: { lockedAt: new Date() },
+  });
 }
 
 export async function markJobSucceeded(jobId: string): Promise<void> {

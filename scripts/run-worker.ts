@@ -2,10 +2,12 @@ import { randomUUID } from "crypto";
 import {
   claimNextRunJob,
   isRunCancelledError,
+  LEASE_RENEW_MS,
   markJobCancelled,
   markJobFailed,
   markJobSucceeded,
   markRunCancelled,
+  renewJobLease,
   throwIfRunCancelled,
   type ClaimedRunJob,
 } from "../lib/jobs";
@@ -21,7 +23,17 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function runJob(job: ClaimedRunJob): Promise<void> {
-  console.log(`[worker ${workerId}] ${job.type} ${job.runId} (${job.id})`);
+  console.log(
+    `[worker ${workerId}] ${job.type} ${job.runId} (${job.id}) attempt ${job.attempts}`
+  );
+  // Renew the lease while we work so the reclaim path never steals a job from
+  // this live worker; cleared in finally so a dead worker's lease goes stale.
+  const lease = setInterval(() => {
+    renewJobLease(job.id, workerId).catch(() => {
+      // A missed renewal is harmless — the next tick retries.
+    });
+  }, LEASE_RENEW_MS);
+  if (typeof lease.unref === "function") lease.unref();
   try {
     const run = await prisma.run.findUnique({
       where: { id: job.runId },
@@ -40,10 +52,24 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       await markJobSucceeded(job.id);
       return;
     }
-    if (
-      job.type === "execute" &&
-      (run._count.blocks > 0 || run._count.cohorts > 0 || run._count.events > 0)
-    ) {
+    const hasWork =
+      run._count.blocks > 0 ||
+      run._count.cohorts > 0 ||
+      run._count.events > 0;
+    if (job.type === "execute" && hasWork) {
+      // attempts === 1 → a duplicate execute that never started: safe to skip.
+      // attempts > 1 → THIS execute was reclaimed after a worker died mid-run;
+      // finish it via resume (re-runs only unfinished cohorts, reuses the desks)
+      // instead of skipping, which would strand the run "running" forever.
+      if (job.attempts > 1) {
+        console.log(
+          `[worker ${workerId}] reclaimed interrupted execute ${job.runId}; resuming`
+        );
+        await throwIfRunCancelled(job.runId);
+        await resumeRun(job.runId);
+        await markJobSucceeded(job.id);
+        return;
+      }
       console.log(
         `[worker ${workerId}] skipping stale execute ${job.runId}; run already has persisted work`
       );
@@ -68,18 +94,28 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
     }
     await markJobFailed(job, error);
     console.error(`[worker ${workerId}] failed ${job.runId}:`, error);
+  } finally {
+    clearInterval(lease);
   }
 }
 
 async function main(): Promise<void> {
   console.log(`[worker ${workerId}] polling every ${pollMs}ms`);
   while (!shuttingDown) {
-    const job = await claimNextRunJob(workerId);
-    if (!job) {
+    // A transient DB error while claiming must NOT kill the loop — that exits
+    // the process, and after restartPolicyMaxRetries Railway stops restarting
+    // the worker, leaving every run permanently stuck. Log and keep polling.
+    try {
+      const job = await claimNextRunJob(workerId);
+      if (!job) {
+        await sleep(pollMs);
+        continue;
+      }
+      await runJob(job);
+    } catch (error) {
+      console.error(`[worker ${workerId}] poll error:`, error);
       await sleep(pollMs);
-      continue;
     }
-    await runJob(job);
   }
 }
 
@@ -88,6 +124,10 @@ process.on("SIGINT", () => {
 });
 process.on("SIGTERM", () => {
   shuttingDown = true;
+});
+// A stray rejection must not take the worker down (see the loop note above).
+process.on("unhandledRejection", (reason) => {
+  console.error(`[worker ${workerId}] unhandledRejection:`, reason);
 });
 
 main()
