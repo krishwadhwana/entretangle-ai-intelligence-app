@@ -17,6 +17,7 @@ import {
   geoTiersFromLocalities,
   type BenchmarkPriors,
 } from "@/lib/datasources/benchmarks";
+import { getAttentionMomentumPct } from "@/lib/datasources/structured";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -148,6 +149,9 @@ export async function GET(
               // capped — without it the engine converts most of the reachable
               // pool and revenue/orders blow up.
               blendedCac: blendedCac ?? priors.cacInr.mid,
+              // Benchmark seasonality curve; applied only if the scenario has a
+              // stored launchStartMonth (so re-simulation stays deterministic).
+              seasonality: priors.seasonality,
             })
           : (r.result as unknown as LaunchSimRecord["result"]),
       createdAt: r.createdAt.toISOString(),
@@ -191,15 +195,27 @@ export async function POST(
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
   const priors = benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
 
+  // Capture the attention/hype momentum once (frozen into the scenario), and
+  // pin the launch month so seasonality applies deterministically on re-sim.
+  const momentumPct = await getAttentionMomentumPct(
+    productTermForRun(run.clientProfile)
+  ).catch(() => 0);
+  const nowMonth = new Date().getMonth() + 1;
+
   try {
-    const inputs = applyBenchmarkRefund(
-      applyDefaultBusinessModel(body.data.inputs, suggestedBusinessModel),
-      priors
+    const inputs = applyDemandDefaults(
+      applyBenchmarkRefund(
+        applyDefaultBusinessModel(body.data.inputs, suggestedBusinessModel),
+        priors
+      ),
+      momentumPct,
+      nowMonth
     );
     const result = simulateLaunch(personas, inputs, {
       reachableProspectsPerMonth,
       // Benchmark CAC fallback → paid acquisition is always capped (see GET).
       blendedCac: blendedCac ?? priors.cacInr.mid,
+      seasonality: priors.seasonality,
     });
 
     const row = await prisma.launchSimulation.create({
@@ -348,6 +364,31 @@ function applyBenchmarkRefund(
 ): LaunchSimInputs {
   if (inputs.targetRefundRatePct != null) return inputs;
   return { ...inputs, targetRefundRatePct: priors.returnRatePct.mid };
+}
+
+// Freeze the demand tilts into a NEW scenario: launch start month (defaults to
+// the current calendar month) drives benchmark seasonality, and the attention/
+// hype momentum % is captured once. Frozen so GET re-simulates identically.
+function applyDemandDefaults(
+  inputs: LaunchSimInputs,
+  momentumPct: number,
+  nowMonth: number
+): LaunchSimInputs {
+  return {
+    ...inputs,
+    launchStartMonth: inputs.launchStartMonth ?? nowMonth,
+    demandMomentumPct:
+      inputs.demandMomentumPct !== 0 ? inputs.demandMomentumPct : momentumPct,
+  };
+}
+
+function productTermForRun(clientProfile: string): string {
+  try {
+    const p = ClientProfileSchema.safeParse(JSON.parse(clientProfile || "{}"));
+    return p.success ? p.data.product || p.data.category || "" : "";
+  } catch {
+    return "";
+  }
 }
 
 function inferLaunchBusinessModel(run: {

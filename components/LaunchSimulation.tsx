@@ -79,6 +79,8 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   viralityK: 0.15,
   decisionSpeed: null,
   abandonRate: 0.05,
+  launchStartMonth: null, // null → server pins to current month on run
+  demandMomentumPct: 0, // null/0 → server fills from attention/hype momentum
   shippingPerOrder: 120,
   paymentFeePct: 0.02,
   fixedCostsPerMonth: 0,
