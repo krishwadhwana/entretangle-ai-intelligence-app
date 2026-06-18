@@ -27,7 +27,8 @@ import type {
   Segment,
 } from "@/lib/schema";
 import type { CohortWithPersonas } from "./useRunEvents";
-import { SEGMENT_COLORS } from "./segments";
+import { SEGMENT_COLORS, ZONE_COLORS } from "./segments";
+import { regionForLocality } from "@/lib/datasources/politicalGeography";
 import {
   cohortAreaRadiusMeters,
   searchKnownLocalities,
@@ -143,6 +144,7 @@ export default function MapView({
   const [searching, setSearching] = useState(false);
   const [pinMode, setPinMode] = useState(false);
   const [pin, setPin] = useState<Pin | null>(null);
+  const [colorMode, setColorMode] = useState<"segment" | "zone">("segment");
   const [segment, setSegment] = useState<Segment>("middle");
   const [role, setRole] = useState<Role>("consumer");
   const [size, setSize] = useState(30);
@@ -269,7 +271,12 @@ export default function MapView({
         <DropPinLayer enabled={pinMode} onDrop={setPinFromLatLng} />
         {cohorts.map((c) => {
           const selected = c.id === selectedCohortId;
-          const color = SEGMENT_COLORS[c.segment] ?? "#6366f1";
+          const color =
+            colorMode === "zone"
+              ? ZONE_COLORS[
+                  regionForLocality(c.locality, c.country)?.zone ?? "Other"
+                ] ?? ZONE_COLORS.Other
+              : SEGMENT_COLORS[c.segment] ?? "#6366f1";
           return (
             <Circle
               key={c.id}
@@ -325,6 +332,43 @@ export default function MapView({
           </CircleMarker>
         )}
       </MapContainer>
+
+      {/* Colour-mode toggle + legend: by income segment or by GoI region (zone). */}
+      <div className="absolute right-3 top-3 z-[1000] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
+        <div className="flex items-center gap-1 text-[11px]">
+          <span className="text-neutral-400">Colour:</span>
+          {(["segment", "zone"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() => setColorMode(m)}
+              className={`rounded px-1.5 py-0.5 capitalize ${
+                colorMode === m
+                  ? "bg-neutral-900 text-white"
+                  : "text-neutral-600 hover:bg-neutral-100"
+              }`}
+            >
+              {m === "zone" ? "region" : m}
+            </button>
+          ))}
+        </div>
+        <div className="mt-1.5 flex max-w-[200px] flex-wrap gap-x-2 gap-y-1">
+          {Object.entries(colorMode === "zone" ? ZONE_COLORS : SEGMENT_COLORS).map(
+            ([k, v]) => (
+              <span
+                key={k}
+                className="flex items-center gap-1 text-[10px] capitalize text-neutral-600"
+              >
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ background: v }}
+                />
+                {k}
+              </span>
+            )
+          )}
+        </div>
+      </div>
 
       <div className="absolute left-3 top-3 z-[1000] w-[min(360px,calc(100%-24px))] rounded-lg border border-neutral-200 bg-white/95 shadow-lg backdrop-blur">
         <form onSubmit={onSearch} className="flex items-center gap-2 border-b border-neutral-100 p-2">

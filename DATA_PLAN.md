@@ -256,8 +256,9 @@ authoritative + tractable first (same discipline as §3-4).
   are region-aware; `zonesForLocalities` ready for map + aggregation.
 - **[~] Aggregation (Phase 2)** — DONE: `AudienceAggregate.byZone` (GoI zone
   breakdown) computed in `aggregateAudience`, rendered as a "Purchase intent by
-  region (zone)" chart in `InsightsView`. **Phase 2b (deferred):** colour MapView
-  markers by zone (bigger UI; deferred to avoid churn on the reconciled map).
+  region (zone)" chart in `InsightsView`. **Phase 2b DONE:** MapView has a
+  colour-mode toggle (segment ↔ region) that tints cohort markers by GoI zone,
+  with a legend; `ZONE_COLORS` shared via `segments.ts`.
 - **[x] Attention/hype demand signal (Phase 3)** — `attentionSignal()` in
   structured.ts extends the Wikipedia interest proxy with a MOMENTUM read (last 3
   months vs prior 3 → rising/steady/cooling), surfaced in the market-data block as
