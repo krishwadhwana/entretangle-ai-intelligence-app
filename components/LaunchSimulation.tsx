@@ -51,6 +51,7 @@ type Defaults = {
   suggestedAdSpendPerMonth: number | null;
   reachableProspectsPerMonth: number | null;
   availableRegions?: string[];
+  regionShares?: Record<string, number>;
   fixedCostsPerMonth: number | null;
   benchmarks?: {
     suggestedCpm: number;
@@ -363,6 +364,16 @@ export default function LaunchSimulation({
                     </option>
                   ))}
                 </select>
+                {inputs.region && (
+                  <p className="mt-1 max-w-[200px] text-[10px] leading-snug text-neutral-400">
+                    {inputs.region} ≈{" "}
+                    {Math.round(
+                      (defaults?.regionShares?.[inputs.region] ?? 0) * 100
+                    )}
+                    % of the audience — this run uses that share of your reach, ad
+                    spend &amp; fixed costs, so regions add up to the whole.
+                  </p>
+                )}
               </div>
             )}
             <div>

@@ -96,14 +96,14 @@ function scopeToRegion(
   return { personas, share };
 }
 
-// Scale the global reachable market to a regional scenario's share.
-function scaledMonthly(
-  reachableProspectsPerMonth: number | null,
-  share: number
-): number | null {
-  return reachableProspectsPerMonth == null
-    ? null
-    : Math.round(reachableProspectsPerMonth * share);
+// Each region's share of the whole audience (by persona count) — surfaced so the
+// UI can show "this run uses ~X% of your budget" for a regional scenario.
+function regionSharesOf(all: ScopedPersona[]): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (all.length === 0) return out;
+  for (const p of all) out[p.region] = (out[p.region] ?? 0) + 1;
+  for (const k of Object.keys(out)) out[k] = out[k] / all.length;
+  return out;
 }
 
 export async function GET(
@@ -147,6 +147,8 @@ export async function GET(
     reachableProspectsPerMonth,
     // Regions present in this run's audience — powers the launch-sim scope picker.
     availableRegions: regions,
+    // Each region's share of the audience (proportional-slice budget hint).
+    regionShares: regionSharesOf(personas),
     fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
     // Real category × geo priors (INR). Surfaced so the form prefills CPM and
     // shipping with market numbers instead of the universal 250 / 120 defaults.
@@ -184,10 +186,10 @@ export async function GET(
       result:
         scoped.personas.length > 0
           ? simulateLaunch(scoped.personas, inputs, {
-              reachableProspectsPerMonth: scaledMonthly(
-                reachableProspectsPerMonth,
-                scoped.share
-              ),
+              reachableProspectsPerMonth,
+              // Proportional regional slice: the engine scales pool + ad spend +
+              // fixed costs by this share, so regions reconcile with the whole.
+              audienceShare: scoped.share,
               // Fall back to the benchmark CAC so paid acquisition is ALWAYS
               // capped — without it the engine converts most of the reachable
               // pool and revenue/orders blow up.
@@ -265,10 +267,8 @@ export async function POST(
       nowMonth
     );
     const result = simulateLaunch(scoped.personas, inputs, {
-      reachableProspectsPerMonth: scaledMonthly(
-        reachableProspectsPerMonth,
-        scoped.share
-      ),
+      reachableProspectsPerMonth,
+      audienceShare: scoped.share,
       // Benchmark CAC fallback → paid acquisition is always capped (see GET).
       blendedCac: blendedCac ?? priors.cacInr.mid,
       seasonality: priors.seasonality,

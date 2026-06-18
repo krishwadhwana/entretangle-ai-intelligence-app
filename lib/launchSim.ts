@@ -55,6 +55,12 @@ export type LaunchContext = {
   // Applied (normalised) to new-customer conversion when inputs.launchStartMonth
   // is set, so festive months lift demand and the trough dampens it.
   seasonality?: number[] | null;
+  // Fraction of the whole audience this run covers (regional scope). 1 = whole.
+  // A regional run is a PROPORTIONAL SLICE: the auto-sized reachable pool, the ad
+  // spend and the fixed costs are all scaled by this share, so per-region runs
+  // reconcile with the whole-audience run instead of each spending the full
+  // budget against a smaller pool.
+  audienceShare?: number;
 };
 
 // --- deterministic PRNG ----------------------------------------------------
@@ -264,11 +270,16 @@ export function resolveLaunchInputs(
   if (reachablePool == null) {
     const monthly = ctx.reachableProspectsPerMonth ?? null;
     const horizonMonths = Math.max(1, i.horizon / stepsPerMonth);
+    // Regional runs are a proportional slice: scale the auto-sized pool by the
+    // audience share so a region only reaches its part of the market.
+    const share = ctx.audienceShare ?? 1;
     // Unique prospects reachable over the WHOLE launch window. Previously capped
     // at 12 months, which artificially shrank the market (and the order ceiling)
     // for longer sims. This is only a DEFAULT — the founder can set any pool.
     reachablePool =
-      monthly && monthly > 0 ? Math.round(monthly * horizonMonths) : 20000;
+      monthly && monthly > 0
+        ? Math.round(monthly * horizonMonths * share)
+        : Math.round(20000 * share);
   }
 
   // Decision speed: how quickly considerers resolve. A day-step audience decides
@@ -532,6 +543,10 @@ export function simulateLaunch(
 ): LaunchSimResult {
   const inputs = resolveLaunchInputs(rawInputs, personas, ctx);
   const N = personas.length;
+  // Proportional regional slice: scale ad spend + fixed costs (the pool is scaled
+  // in resolveLaunchInputs) so per-region runs reconcile with the whole-audience
+  // run instead of each spending the full budget against a smaller pool. 1 = whole.
+  const audienceShare = ctx.audienceShare ?? 1;
 
   // Seed from the resolved inputs only — NOT the personas (those are fixed for a
   // run). Same inputs ⇒ same seed ⇒ same trajectory.
@@ -685,7 +700,7 @@ export function simulateLaunch(
         : 1;
     const demandMult = seasonFactor * momentumMult;
 
-    const adSpend = inputs.adSpendPerMonth / stepsPerMonth;
+    const adSpend = (inputs.adSpendPerMonth / stepsPerMonth) * audienceShare;
     const channelMedia = channels.map((ch) => {
       const paid =
         ch.kind === "paid" || ch.kind === "marketplace" || ch.kind === "retail";
@@ -963,7 +978,8 @@ export function simulateLaunch(
     const cogs = unitsFulfilled * inputs.costPrice;
     const shippingCost = unitsFulfilled * inputs.shippingPerOrder;
     const paymentFees = revenue * inputs.paymentFeePct;
-    const fixedCosts = inputs.fixedCostsPerMonth / stepsPerMonth;
+    const fixedCosts =
+      (inputs.fixedCostsPerMonth / stepsPerMonth) * audienceShare;
     const netProfit =
       revenue -
       refundedRevenue -
