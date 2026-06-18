@@ -264,10 +264,11 @@ export function resolveLaunchInputs(
   if (reachablePool == null) {
     const monthly = ctx.reachableProspectsPerMonth ?? null;
     const horizonMonths = Math.max(1, i.horizon / stepsPerMonth);
+    // Unique prospects reachable over the WHOLE launch window. Previously capped
+    // at 12 months, which artificially shrank the market (and the order ceiling)
+    // for longer sims. This is only a DEFAULT — the founder can set any pool.
     reachablePool =
-      monthly && monthly > 0
-        ? Math.round(monthly * Math.min(horizonMonths, 12))
-        : 20000;
+      monthly && monthly > 0 ? Math.round(monthly * horizonMonths) : 20000;
   }
 
   // Decision speed: how quickly considerers resolve. A day-step audience decides
@@ -898,7 +899,6 @@ export function simulateLaunch(
     inventory -= unitsFulfilled;
 
     // Attribute fulfilled orders + schedule refunds, per persona.
-    let stepRefundsArrivalUnits = refundArrivals[t]; // refunds landing now
     for (const d of desired) {
       const { p, refundP } = pre[d.idx];
       const first = d.first * fillRate;
@@ -928,8 +928,12 @@ export function simulateLaunch(
     }
 
     // Refunds landing this step: reverse revenue, pay return cost, restock the
-    // resellable share.
-    const refundsLanding = stepRefundsArrivalUnits;
+    // resellable share. Read AFTER scheduling above so a sub-step return window
+    // (returnWindowSteps === 0 → returns realize in the same step, e.g. a 14-day
+    // window on a monthly sim) still lands. Previously those refunds were written
+    // to refundArrivals[t] after it had already been read, so they vanished and
+    // refund counts came out 0 even though the refund RATE was non-zero.
+    const refundsLanding = refundArrivals[t];
     const refundedRevenue = refundsLanding * inputs.salePrice;
     const refundCost =
       refundsLanding *
