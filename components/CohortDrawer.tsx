@@ -600,7 +600,7 @@ export default function CohortDrawer({
             <p className="mb-1.5 text-[10px] font-semibold text-neutral-500">
               Saved discussions
             </p>
-            <ul className="space-y-1">
+            <div className="space-y-1.5">
               {interactionConvos.map((c) => {
                 const a =
                   cohort.personas.find((p) => p.id === c.personaAId)?.name ??
@@ -609,17 +609,12 @@ export default function CohortDrawer({
                   cohort.personas.find((p) => p.id === c.personaBId)?.name ??
                   "Persona";
                 return (
-                  <li key={c.id}>
-                    <button
-                      type="button"
-                      onClick={() => setResumeConvo(c)}
-                      className={`w-full rounded-md border px-2 py-1.5 text-left text-[10px] ${
-                        resumeConvo?.id === c.id
-                          ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                          : "border-neutral-200 text-neutral-600 hover:border-indigo-300"
-                      }`}
-                    >
-                      <span className="font-medium">
+                  <details
+                    key={c.id}
+                    className="group rounded-md border border-neutral-200 open:border-indigo-200"
+                  >
+                    <summary className="cursor-pointer select-none px-2 py-1.5 text-[10px] text-neutral-600 marker:text-neutral-400">
+                      <span className="font-medium text-neutral-700">
                         {a} ↔ {b}
                       </span>
                       {c.topic ? ` · ${c.topic}` : ""}
@@ -628,11 +623,48 @@ export default function CohortDrawer({
                         · {c.messages.length} msgs
                         {c.conclusion ? " · concluded" : ""}
                       </span>
-                    </button>
-                  </li>
+                    </summary>
+                    <div className="space-y-1.5 border-t border-neutral-100 px-2 py-2">
+                      {c.messages.length === 0 ? (
+                        <p className="text-[10px] text-neutral-400">
+                          No messages yet.
+                        </p>
+                      ) : (
+                        c.messages.map((m, i) => (
+                          <div key={i} className="text-[10px] leading-snug">
+                            <span
+                              className={`font-semibold ${
+                                m.role === "founder"
+                                  ? "text-amber-600"
+                                  : m.role === "personaA"
+                                    ? "text-indigo-600"
+                                    : "text-emerald-600"
+                              }`}
+                            >
+                              {m.speaker}:
+                            </span>{" "}
+                            <span className="text-neutral-600">{m.content}</span>
+                          </div>
+                        ))
+                      )}
+                      {c.conclusion && (
+                        <p className="rounded bg-indigo-50 px-2 py-1 text-[10px] leading-snug text-indigo-700">
+                          <span className="font-semibold">Conclusion: </span>
+                          {c.conclusion}
+                        </p>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => setResumeConvo(c)}
+                        className="mt-1 rounded-md border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                      >
+                        Resume this discussion
+                      </button>
+                    </div>
+                  </details>
                 );
               })}
-            </ul>
+            </div>
           </div>
         )}
 
@@ -678,27 +710,51 @@ export default function CohortDrawer({
             </div>
 
             {chatMode === "customer" && savedWinback.length > 0 && (
-              <div className="mt-2">
-                <p className="mb-1 text-[10px] font-medium text-neutral-400">
+              <div className="mt-2 space-y-1.5">
+                <p className="text-[10px] font-medium text-neutral-400">
                   Saved win-back conversations
                 </p>
-                <div className="flex flex-wrap gap-1">
-                  {savedWinback.map((w) => (
-                    <button
+                {savedWinback.map((w) => {
+                  const msgCount = w.turns.reduce(
+                    (n, t) => n + 1 + t.messages.length,
+                    0
+                  );
+                  return (
+                    <details
                       key={w.personaId}
-                      type="button"
-                      onClick={() => selectWinbackPersona(w.personaId)}
-                      className={`rounded-full border px-2 py-0.5 text-[10px] ${
-                        selectedPersonaId === w.personaId
-                          ? "border-indigo-300 bg-indigo-50 text-indigo-700"
-                          : "border-neutral-200 text-neutral-600 hover:border-indigo-300"
-                      }`}
-                      title={`${w.turns.length} message${w.turns.length === 1 ? "" : "s"} · now ${Math.round(w.intent * 100)}% intent`}
+                      className="rounded-md border border-neutral-200 open:border-indigo-200"
                     >
-                      {w.name} · {w.turns.length}
-                    </button>
-                  ))}
-                </div>
+                      <summary className="cursor-pointer select-none px-2 py-1.5 text-[10px] text-neutral-600 marker:text-neutral-400">
+                        <span className="font-medium text-neutral-700">
+                          {w.name}
+                        </span>
+                        <span className="text-neutral-400">
+                          {" "}
+                          · {w.turns.length} exchange
+                          {w.turns.length === 1 ? "" : "s"} · now{" "}
+                          {Math.round(w.intent * 100)}% intent
+                        </span>
+                      </summary>
+                      <div className="border-t border-neutral-100 px-2 py-2">
+                        <ul className="space-y-2">
+                          {flattenTurns(w).map((message) => (
+                            <ChatBubble key={message.id} message={message} />
+                          ))}
+                        </ul>
+                        <button
+                          type="button"
+                          onClick={() => selectWinbackPersona(w.personaId)}
+                          className="mt-2 rounded-md border border-indigo-200 px-2 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50"
+                        >
+                          Continue this chat
+                        </button>
+                        <span className="ml-1 text-[9px] text-neutral-400">
+                          ({msgCount} messages)
+                        </span>
+                      </div>
+                    </details>
+                  );
+                })}
               </div>
             )}
 
