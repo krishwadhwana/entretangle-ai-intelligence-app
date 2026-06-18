@@ -798,6 +798,14 @@ export function simulateLaunch(
       const abandon = considering[k] * inputs.abandonRate;
       considering[k] = Math.max(0, considering[k] - firstBuyers - abandon);
       const oldActive = active[k];
+      // Repeat orders come from PREVIOUSLY-acquired customers only (the prior,
+      // already cap-corrected active pool). Customers acquired this step do not
+      // reorder in the same step — and crucially this keeps repeat off the
+      // uncapped same-step acquisition spike (which is trimmed by the CAC cap
+      // below), so repeat can't balloon past realistic new-customer volume.
+      const repeatBuyers =
+        oldActive * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
+
       active[k] += firstBuyers;
       if (active[k] > 0 && firstBuyers > 0) {
         activeRepeatMult[k] =
@@ -805,9 +813,6 @@ export function simulateLaunch(
             consideringRepeatMult[k] * firstBuyers) /
           active[k];
       }
-
-      const repeatBuyers =
-        active[k] * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
 
       const mi = scaleFactor;
       const first = firstBuyers * mi;

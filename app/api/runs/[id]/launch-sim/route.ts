@@ -144,7 +144,10 @@ export async function GET(
         personas.length > 0
           ? simulateLaunch(personas, inputs, {
               reachableProspectsPerMonth,
-              blendedCac,
+              // Fall back to the benchmark CAC so paid acquisition is ALWAYS
+              // capped — without it the engine converts most of the reachable
+              // pool and revenue/orders blow up.
+              blendedCac: blendedCac ?? priors.cacInr.mid,
             })
           : (r.result as unknown as LaunchSimRecord["result"]),
       createdAt: r.createdAt.toISOString(),
@@ -195,7 +198,8 @@ export async function POST(
     );
     const result = simulateLaunch(personas, inputs, {
       reachableProspectsPerMonth,
-      blendedCac,
+      // Benchmark CAC fallback → paid acquisition is always capped (see GET).
+      blendedCac: blendedCac ?? priors.cacInr.mid,
     });
 
     const row = await prisma.launchSimulation.create({
