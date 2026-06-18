@@ -1,6 +1,6 @@
 import { prisma } from "./db";
 import { config } from "./config";
-import { RunEmitter } from "./events";
+import { RunEmitter, startHeartbeat } from "./events";
 import { executeBlock } from "./blocks";
 import {
   callPlannerV2,
@@ -315,6 +315,7 @@ async function persistRunToProject(
  */
 export async function executeRun(runId: string): Promise<void> {
   const emitter = await RunEmitter.create(runId);
+  const stopHeartbeat = startHeartbeat(emitter);
   let profileForSnapshot: ClientProfile | null = null;
   try {
     const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
@@ -692,6 +693,8 @@ export async function executeRun(runId: string): Promise<void> {
     } catch {
       // Even error reporting failed; nothing left to do.
     }
+  } finally {
+    stopHeartbeat();
   }
 }
 
@@ -713,6 +716,7 @@ export async function resumeRun(runId: string): Promise<void> {
   }
   resumingRuns.add(runId);
   const emitter = await RunEmitter.create(runId);
+  const stopHeartbeat = startHeartbeat(emitter);
   let profileForSnapshot: ClientProfile | null = null;
   try {
     const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
@@ -824,6 +828,7 @@ export async function resumeRun(runId: string): Promise<void> {
       // nothing left to do
     }
   } finally {
+    stopHeartbeat();
     resumingRuns.delete(runId);
   }
 }

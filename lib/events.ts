@@ -53,6 +53,35 @@ export class RunEmitter {
   }
 }
 
+/**
+ * Liveness heartbeat. Audience cohort sims run AUDIENCE_CONCURRENCY (default
+ * 10) at a time, each a multi-second mini-model call, and the only "real" event
+ * is emitted when a cohort *finishes* — so a busy, healthy run can go 90s+
+ * without emitting anything. That trips the dashboard's stall detector, which
+ * wrongly offers "Continue run". A periodic heartbeat keeps lastEventTs fresh so
+ * the detector only fires on a GENUINE hang. Returns a function to stop it.
+ */
+export function startHeartbeat(
+  emitter: RunEmitter,
+  everyMs = 30_000
+): () => void {
+  let busy = false;
+  const timer = setInterval(async () => {
+    if (busy) return; // never let heartbeats pile up if a DB write is slow
+    busy = true;
+    try {
+      await emitter.emit({ type: "heartbeat" });
+    } catch {
+      // A missed heartbeat is harmless — the next tick retries.
+    } finally {
+      busy = false;
+    }
+  }, everyMs);
+  // Don't keep the worker process alive solely to emit heartbeats.
+  if (typeof timer.unref === "function") timer.unref();
+  return () => clearInterval(timer);
+}
+
 export async function loadPersistedEvents(runId: string): Promise<RunEvent[]> {
   const rows = await prisma.runEvent.findMany({
     where: { runId },

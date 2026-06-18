@@ -354,6 +354,14 @@ export const RunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("cost_used"),
     costUsd: z.number(),
   }),
+  // Liveness ping. Carries no canvas state — its only job is to refresh the
+  // dashboard's lastEventTs so the stall detector ("Continue run") doesn't
+  // false-fire during long, event-silent stretches (e.g. 10 cohort sims in
+  // flight, each a multi-second LLM call). A no-op in the reducer.
+  z.object({
+    ...eventBase,
+    type: z.literal("heartbeat"),
+  }),
   z.object({
     ...eventBase,
     type: z.literal("cohort_spawned"),

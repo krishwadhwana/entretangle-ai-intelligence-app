@@ -278,6 +278,7 @@ const EVENT_TYPES = [
   "final_report",
   "tokens_used",
   "cost_used",
+  "heartbeat",
   "cohort_spawned",
   "cohort_simulated",
   "cohort_failed",
