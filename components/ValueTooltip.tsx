@@ -3,7 +3,7 @@
 import { useCallback, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 
-type Point = { x: number; y: number };
+type Point = { x: number; y: number; flipX: boolean; flipY: boolean };
 
 /**
  * Lightweight hover tooltip for visually-encoded data (bars, heatmap cells,
@@ -29,16 +29,17 @@ export function ValueTooltip({
   const [pos, setPos] = useState<Point | null>(null);
 
   const place = useCallback((e: { clientX: number; clientY: number }) => {
-    // Offset from the cursor, clamped so the tip stays on-screen near edges.
-    const PAD = 14;
-    const W = 260; // matches max-w below; used only for edge flipping
-    let x = e.clientX + PAD;
-    let y = e.clientY + PAD;
-    if (typeof window !== "undefined") {
-      if (x + W > window.innerWidth) x = e.clientX - PAD - W;
-      if (y + 80 > window.innerHeight) y = e.clientY - PAD - 28;
-    }
-    setPos({ x, y });
+    // Anchor the box to the cursor and flip SIDES near an edge via a CSS
+    // transform (below) — never guess the box width, which used to shove the
+    // tip hundreds of px away from short labels near the right/bottom edge.
+    const vw = typeof window !== "undefined" ? window.innerWidth : 1920;
+    const vh = typeof window !== "undefined" ? window.innerHeight : 1080;
+    setPos({
+      x: e.clientX,
+      y: e.clientY,
+      flipX: e.clientX > vw * 0.65,
+      flipY: e.clientY > vh - 90,
+    });
   }, []);
 
   const hide = useCallback(() => setPos(null), []);
@@ -64,6 +65,10 @@ export function ValueTooltip({
                 zIndex: 10000,
                 pointerEvents: "none",
                 maxWidth: 260,
+                // Glue the box edge ~14px from the cursor; flip side near an edge.
+                transform: `translate(${
+                  pos.flipX ? "calc(-100% - 14px)" : "14px"
+                }, ${pos.flipY ? "calc(-100% - 14px)" : "14px"})`,
               }}
               className="rounded-md bg-neutral-900/95 px-2 py-1 text-[11px] font-medium leading-snug text-white shadow-lg ring-1 ring-white/10"
             >
