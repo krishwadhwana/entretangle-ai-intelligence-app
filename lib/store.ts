@@ -585,6 +585,18 @@ export async function getProjectLean(id: string): Promise<ProjectFull | null> {
   return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
 }
 
+// Owner Dashboard only needs the small owner_dashboard JSON — NOT the giant
+// simulation_runs snapshot embedded on the project row. Select just that column
+// so Postgres never ships (and we never parse) megabytes of run/persona data;
+// loading the whole project here was timing the Owner tab out.
+export async function getOwnerDashboard(id: string): Promise<unknown | null> {
+  const row = await prisma.project.findUnique({
+    where: { id },
+    select: { ownerDashboard: true },
+  });
+  return row ? (row.ownerDashboard ?? null) : null;
+}
+
 export async function listProjectPreviews(): Promise<ProjectFull[]> {
   const rows = await prisma.project.findMany({
     orderBy: { updatedAt: "desc" },

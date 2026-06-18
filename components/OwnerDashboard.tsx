@@ -47,13 +47,15 @@ export default function OwnerDashboard({
     }
     (async () => {
       try {
-        const res = await fetch(`/api/projects/${projectId}`);
+        // Lean endpoint: just the owner_dashboard blob, not the whole project
+        // (whose embedded run snapshots were timing this fetch out).
+        const res = await fetch(`/api/projects/${projectId}/owner-dashboard`);
         if (res.ok) {
-          const { project } = await res.json();
+          const { ownerDashboard } = await res.json();
           if (!cancelled) {
-            setBrandSocial(project?.ownerDashboard?.brandSocial ?? null);
-            setFinancials(project?.ownerDashboard?.financials ?? null);
-            setInspiration(project?.ownerDashboard?.inspiration ?? null);
+            setBrandSocial(ownerDashboard?.brandSocial ?? null);
+            setFinancials(ownerDashboard?.financials ?? null);
+            setInspiration(ownerDashboard?.inspiration ?? null);
           }
         }
       } catch {
