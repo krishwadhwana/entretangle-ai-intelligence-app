@@ -298,7 +298,11 @@ Result on a representative apparel run (₹200k/mo ad spend, ₹1499 AOV): reven
 the base builds. Determinism suite + financials smoke still pass.
 
 **What the launch sim now consumes from the deployed data:** benchmark CAC
-(acquisition cap), benchmark returns/RTO (refund anchor, §-earlier), benchmark
-CPM + shipping (form prefills). Not yet wired: festive **seasonality** (needs a
-launch-start-month input) and the attention/hype momentum — available as a
-focused follow-up.
+(acquisition cap), benchmark returns/RTO (refund anchor), benchmark CPM +
+shipping (form prefills), benchmark **seasonality** (festive demand curve keyed
+by a stored `launchStartMonth`), and the **attention/hype momentum** (Wikipedia
+interest trend → a bounded `demandMomentumPct`, frozen per scenario at run time).
+Both demand tilts scale the budget-bound acquisition cap (festive / high-attention
+months convert the same ad spend into more customers) and are stored inputs, so
+GET re-simulation stays deterministic. Verified: seasonality yields an Oct/Nov
+festive ramp; rerun-equality + determinism suite + financials smoke all pass.

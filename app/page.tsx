@@ -409,14 +409,15 @@ function IntakePageInner() {
         return;
       }
 
-      // Interview complete — persist profile + transcript, then launch.
-      setLaunching(true);
+      // Interview complete — persist profile + transcript, then hand off to the
+      // launch composer so the user can choose their audience size before the
+      // simulation runs (rather than silently launching on a default).
       const closing: ChatMessage[] = [
         ...history,
         {
           role: "assistant",
           content:
-            "Got everything I need. Spawning your research desks and audience…",
+            "Got everything I need. Choose how many agents to simulate below, then launch when you're ready.",
         },
       ];
       setMessages(closing);
@@ -454,18 +455,6 @@ function IntakePageInner() {
           body: JSON.stringify({ ventureProfile: result.profile }),
         }),
       ]);
-      const runRes = await fetch("/api/runs", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          brief: result.brief,
-          clientProfile: result.profile,
-          projectId,
-        }),
-      });
-      if (!runRes.ok) throw new Error(`Run creation failed (${runRes.status})`);
-      const { runId } = await runRes.json();
-      router.push(`/runs/${runId}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong");
       setLaunching(false);

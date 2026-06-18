@@ -150,6 +150,17 @@ async function attentionSignal(term: string): Promise<AttentionSignal | null> {
   }
 }
 
+/**
+ * Bounded attention/hype momentum (%) for a product term, for the launch sim's
+ * demand tilt. Clamped to ±25 (a proxy, not a hard demand multiplier); 0 when
+ * the signal is unavailable. Frozen into a scenario at run time by the caller.
+ */
+export async function getAttentionMomentumPct(term: string): Promise<number> {
+  const sig = await attentionSignal(term);
+  if (!sig) return 0;
+  return Math.max(-25, Math.min(25, sig.momentumPct));
+}
+
 // --- Dispatch -------------------------------------------------------------
 
 const GDP_PC = "NY.GDP.PCAP.CD"; // GDP per capita (current US$)

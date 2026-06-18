@@ -1202,6 +1202,13 @@ export const LaunchSimInputsSchema = z.object({
   // --- conversion dynamics ---
   decisionSpeed: z.number().min(0).max(1).nullable().default(null), // per-step fraction of considerers who decide
   abandonRate: z.number().min(0).max(1).default(0.05), // per-step fraction who drop out of consideration
+  // Launch calendar month (1=Jan…12=Dec). When set with a benchmark seasonality
+  // curve, new-customer conversion is tilted by the month's festive multiplier.
+  // null → seasonality off. Stored, so GET re-simulates identically.
+  launchStartMonth: z.number().int().min(1).max(12).nullable().default(null),
+  // Category attention/hype momentum as a bounded demand tilt (%). Frozen at run
+  // time from the Wikipedia-interest momentum signal; 0 → neutral.
+  demandMomentumPct: z.number().min(-25).max(25).default(0),
 
   // --- costs ---
   shippingPerOrder: z.number().nonnegative().default(120),

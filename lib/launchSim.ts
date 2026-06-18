@@ -51,6 +51,10 @@ export type LaunchContext = {
   // Optional financial-model CAC. When present, paid first-time orders are
   // bounded by ad spend ÷ CAC so CPM reach cannot imply impossible acquisition.
   blendedCac?: number | null;
+  // Optional benchmark seasonality curve (12 monthly multipliers, Jan→Dec).
+  // Applied (normalised) to new-customer conversion when inputs.launchStartMonth
+  // is set, so festive months lift demand and the trough dampens it.
+  seasonality?: number[] | null;
 };
 
 // --- deterministic PRNG ----------------------------------------------------
@@ -546,6 +550,15 @@ export function simulateLaunch(
     inputs.decisionSpeed ?? (inputs.granularity === "day" ? 0.1 : 0.5);
   const blendedCac =
     ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
+  // Demand tilts: benchmark seasonality (normalised around its own mean, so the
+  // average month is 1.0) keyed by the launch start month, and a bounded
+  // attention/hype momentum tilt. Both default to neutral (no effect).
+  const seasonality =
+    ctx.seasonality && ctx.seasonality.length === 12 ? ctx.seasonality : null;
+  const seasonMean = seasonality
+    ? seasonality.reduce((s, x) => s + x, 0) / 12 || 1
+    : 1;
+  const momentumMult = 1 + clamp(inputs.demandMomentumPct ?? 0, -25, 25) / 100;
 
   const funded = new Set(inputs.adPlatforms.map((p) => p.toLowerCase()));
   const homeCountry = modal(personas.map((p) => p.country));
@@ -657,6 +670,19 @@ export function simulateLaunch(
 
     // One seeded jitter per step (the only randomness). Centred on 1.
     const jitter = 1 + (rng() * 2 - 1) * inputs.jitterAmplitude;
+
+    // Per-step demand tilt = seasonality (this calendar month, normalised) ×
+    // attention momentum. Neutral (1.0) unless launchStartMonth + a seasonality
+    // curve are supplied / momentum is non-zero.
+    const monthIndex =
+      inputs.granularity === "month" ? t : Math.floor(t / 30);
+    const seasonFactor =
+      seasonality && inputs.launchStartMonth
+        ? seasonality[
+            (inputs.launchStartMonth - 1 + monthIndex) % 12
+          ] / seasonMean
+        : 1;
+    const demandMult = seasonFactor * momentumMult;
 
     const adSpend = inputs.adSpendPerMonth / stepsPerMonth;
     const channelMedia = channels.map((ch) => {
@@ -790,7 +816,7 @@ export function simulateLaunch(
       }
 
       const decideRate = clamp(
-        buyProb * consideringTrust[k] * decisionSpeed * jitter,
+        buyProb * consideringTrust[k] * decisionSpeed * jitter * demandMult,
         0,
         1
       );
@@ -846,9 +872,12 @@ export function simulateLaunch(
     }
 
     // If the financial model has a CAC, paid first-time acquisition cannot
-    // exceed the number of new customers this step's ad budget can buy.
+    // exceed the number of new customers this step's ad budget can buy. The
+    // demand tilt (seasonality × momentum) scales the cap: in festive / high-
+    // attention months the same ad spend converts better (effectively cheaper
+    // CAC), so it acquires proportionally more customers.
     if (blendedCac && adSpend > 0 && stepNewOrders > 0) {
-      const paidNewCustomerCap = adSpend / blendedCac;
+      const paidNewCustomerCap = (adSpend / blendedCac) * demandMult;
       const firstScale = Math.min(1, paidNewCustomerCap / stepNewOrders);
       if (firstScale < 1) {
         for (const d of desired) {
