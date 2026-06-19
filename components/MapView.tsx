@@ -43,6 +43,24 @@ type AudienceBatchResult = {
   costUsd?: number;
 };
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Parse a response body that MIGHT not be JSON (e.g. a serverless timeout/crash
+// page) without throwing the cryptic "Unexpected token … is not valid JSON".
+async function readBody(
+  res: Response
+): Promise<{ error?: string; [k: string]: unknown }> {
+  const text = await res.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as { error?: string };
+  } catch {
+    return { error: text.slice(0, 160) };
+  }
+}
+
 type Props = {
   runId: string;
   cohorts: CohortWithPersonas[];
@@ -243,10 +261,32 @@ export default function MapView({
           weightPct: Math.max(0.5, Math.min(8, size / 20)),
         }),
       });
-      const data = await res.json();
+      const data = await readBody(res);
       if (!res.ok) throw new Error(data?.error ?? `batch failed (${res.status})`);
-      onAudienceBatchAdded(data as AudienceBatchResult);
-      onSelectCohort((data as AudienceBatchResult).cohort.id);
+
+      // The cohort is simulated on the worker (no serverless timeout); poll the
+      // cohort until it lands, then fold it into the canvas.
+      const cohortId = (data.cohort as Cohort).id;
+      let result: AudienceBatchResult | null = null;
+      for (let i = 0; i < 150; i++) {
+        await sleep(2500);
+        const pollRes = await fetch(
+          `/api/runs/${runId}/audience-locality?cohortId=${cohortId}`
+        );
+        const poll = await readBody(pollRes);
+        if (!pollRes.ok) continue; // transient — keep polling
+        if (poll.state === "failed") {
+          throw new Error("audience batch failed to simulate");
+        }
+        if (poll.state === "done") {
+          result = poll as unknown as AudienceBatchResult;
+          break;
+        }
+      }
+      if (!result) throw new Error("still simulating — check back in a moment");
+
+      onAudienceBatchAdded(result);
+      onSelectCohort(cohortId);
       setPin(null);
       setPinMode(false);
       setResults([]);

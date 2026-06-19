@@ -12,7 +12,7 @@ import {
   type ClaimedRunJob,
 } from "../lib/jobs";
 import { prisma } from "../lib/db";
-import { executeRun, resumeRun } from "../lib/orchestrator";
+import { executeRun, resumeRun, addPendingCohorts } from "../lib/orchestrator";
 
 const workerId = process.env.WORKER_ID ?? `run-worker-${randomUUID()}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "2000", 10);
@@ -45,7 +45,12 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
     if (!run) {
       throw new Error(`run not found: ${job.runId}`);
     }
-    if (["complete", "failed", "capped", "cancelled"].includes(run.status)) {
+    // add_cohort runs ON a finished run (adding an audience to it), so don't
+    // skip it for terminal status — only execute/resume are skipped there.
+    if (
+      job.type !== "add_cohort" &&
+      ["complete", "failed", "capped", "cancelled"].includes(run.status)
+    ) {
       console.log(
         `[worker ${workerId}] skipping ${job.type} ${job.runId}; run is ${run.status}`
       );
@@ -81,6 +86,8 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       await executeRun(job.runId);
     } else if (job.type === "resume") {
       await resumeRun(job.runId);
+    } else if (job.type === "add_cohort") {
+      await addPendingCohorts(job.runId);
     } else {
       throw new Error(`unknown job type: ${job.type}`);
     }

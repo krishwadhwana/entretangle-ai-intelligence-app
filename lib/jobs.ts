@@ -12,7 +12,7 @@ export const LEASE_RENEW_MS = 30_000;
 // worker indefinitely — past this it stays put (visible) rather than re-running.
 const MAX_RECLAIM_ATTEMPTS = 5;
 
-export type RunJobType = "execute" | "resume";
+export type RunJobType = "execute" | "resume" | "add_cohort";
 export type RunJobStatus =
   | "queued"
   | "running"

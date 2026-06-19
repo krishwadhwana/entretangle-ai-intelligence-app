@@ -28,6 +28,7 @@ import {
 import {
   spawnCohorts,
   simulateAllCohorts,
+  simulateCohort,
   aggregateAudience,
   copyAudienceFrom,
 } from "./audience";
@@ -49,6 +50,7 @@ import {
   type AudienceAggregate,
   type ClientProfile,
   type Conclusion,
+  type RunStatus,
 } from "./schema";
 import {
   addEdge,
@@ -830,6 +832,85 @@ export async function resumeRun(runId: string): Promise<void> {
   } finally {
     stopHeartbeat();
     resumingRuns.delete(runId);
+  }
+}
+
+// Currency for a manually-added cohort: reuse what the run's existing personas
+// priced in; default INR.
+async function inferRunCurrency(runId: string): Promise<string> {
+  const persona = await prisma.persona.findFirst({
+    where: { cohort: { runId } },
+    select: { wtpCurrency: true },
+    orderBy: { id: "desc" },
+  });
+  return persona?.wtpCurrency || "INR";
+}
+
+/**
+ * Simulate every `pending` cohort on a finished run — the "Add audience" path.
+ * Runs on the WORKER (no serverless timeout): manual batches of up to 120
+ * personas are multi-call LLM work that timed out when run inline in the API
+ * route. Emits the usual cohort/aggregate/spend events; the map polls the new
+ * cohort until it lands.
+ */
+export async function addPendingCohorts(runId: string): Promise<void> {
+  const emitter = await RunEmitter.create(runId);
+  const stopHeartbeat = startHeartbeat(emitter);
+  try {
+    const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
+    const previousStatus = run.status as RunStatus;
+    const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
+    const pending = await prisma.cohort.findMany({
+      where: { runId, state: "pending" },
+      orderBy: { id: "asc" },
+    });
+    if (pending.length === 0) return;
+
+    const currency = await inferRunCurrency(runId);
+    await setStatus(emitter, "running", `Adding audience: ${pending[0].locality}`);
+
+    for (const c of pending) {
+      await throwIfRunCancelled(runId);
+      const roleLabel = c.role.replace("_", " ");
+      const focus = {
+        focusQuestion: run.focusQuestion,
+        additionalContext: [
+          run.additionalContext,
+          `Manual audience batch pinned to ${c.locality}, ${c.country} (${c.lat.toFixed(5)}, ${c.lng.toFixed(5)}). Segment: ${c.segment}. Role: ${roleLabel}. Treat this as a precise local neighborhood audience, not a broad city average.`,
+        ]
+          .filter(Boolean)
+          .join("\n\n"),
+      };
+      await simulateCohort(emitter, c.id, profile, currency, focus);
+    }
+
+    await aggregateAudience(emitter);
+    const [tokensUsed, costUsd] = await Promise.all([
+      getTokensUsed(runId),
+      getCostUsd(runId),
+    ]);
+    await emitter.emit({ type: "tokens_used", tokensUsed });
+    await emitter.emit({ type: "cost_used", costUsd });
+
+    await setStatus(
+      emitter,
+      previousStatus === "capped" ? "capped" : "complete",
+      previousStatus === "capped"
+        ? "Audience batch added; run remains capped"
+        : "World model ready"
+    );
+  } catch (e) {
+    if (isRunCancelledError(e)) {
+      await markRunCancelled(runId);
+      throw e;
+    }
+    // Never leave the run stuck "running" — return it to a terminal status.
+    await setStatus(emitter, "complete", "World model ready").catch(
+      () => undefined
+    );
+    throw e;
+  } finally {
+    stopHeartbeat();
   }
 }
 

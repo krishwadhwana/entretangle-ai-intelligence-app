@@ -2,14 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
-import { aggregateAudience, simulateCohort } from "@/lib/audience";
+import { enqueueRunJob } from "@/lib/jobs";
 import { getCostUsd, getTokensUsed } from "@/lib/usage";
-import {
-  ClientProfileSchema,
-  RoleSchema,
-  SegmentSchema,
-  type RunStatus,
-} from "@/lib/schema";
+import { RoleSchema, SegmentSchema, type AudienceAggregate } from "@/lib/schema";
 import { cohortToWire, personaToWire } from "@/lib/wire";
 
 export const dynamic = "force-dynamic";
@@ -25,40 +20,33 @@ const AddAudienceLocalitySchema = z.object({
   weightPct: z.number().min(0.1).max(20).default(1),
 });
 
-const ACTIVE_RUN_STATUSES = new Set(["interviewing", "planning", "running", "cancelling"]);
+const ACTIVE_RUN_STATUSES = new Set([
+  "interviewing",
+  "planning",
+  "running",
+  "cancelling",
+]);
 
-async function setRunStatus(
-  emitter: RunEmitter,
-  status: RunStatus,
-  phaseLabel: string
-) {
-  await prisma.run.update({ where: { id: emitter.runId }, data: { status } });
-  await emitter.emit({ type: "run_status", status, phaseLabel });
-}
-
-async function inferCurrency(runId: string): Promise<string> {
-  const persona = await prisma.persona.findFirst({
-    where: { cohort: { runId } },
-    select: { wtpCurrency: true },
-    orderBy: { id: "desc" },
+async function latestAggregate(
+  runId: string
+): Promise<AudienceAggregate | null> {
+  const ev = await prisma.runEvent.findFirst({
+    where: { runId, type: "audience_aggregated" },
+    orderBy: { seq: "desc" },
+    select: { payload: true },
   });
-  if (persona?.wtpCurrency) return persona.wtpCurrency;
-
-  const cohort = await prisma.cohort.findFirst({
-    where: { runId, stats: { not: null } },
-    select: { stats: true },
-  });
-  if (cohort?.stats) {
-    try {
-      const parsed = JSON.parse(cohort.stats) as { wtpCurrency?: string };
-      if (parsed.wtpCurrency) return parsed.wtpCurrency;
-    } catch {
-      // fall through
-    }
+  if (!ev) return null;
+  try {
+    return (JSON.parse(ev.payload) as { aggregate: AudienceAggregate })
+      .aggregate;
+  } catch {
+    return null;
   }
-  return "INR";
 }
 
+// POST: queue a new cohort to be simulated on the WORKER (not inline — a batch
+// of up to 120 personas is multi-call LLM work that times out in a serverless
+// function). Returns the pending cohort immediately; the client polls GET below.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
@@ -77,15 +65,11 @@ export async function POST(
     );
   }
 
-  const emitter = await RunEmitter.create(run.id);
-  const previousStatus = run.status as RunStatus;
-  const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
   const input = body.data;
   const roleLabel = input.role.replace("_", " ");
   const label = `${input.locality} · ${input.segment} · ${roleLabel}`;
 
   try {
-    await setRunStatus(emitter, "running", `Adding audience: ${input.locality}`);
     const cohort = await prisma.cohort.create({
       data: {
         runId: run.id,
@@ -101,61 +85,53 @@ export async function POST(
         state: "pending",
       },
     });
+    const emitter = await RunEmitter.create(run.id);
     await emitter.emit({ type: "cohort_spawned", cohort: cohortToWire(cohort) });
 
-    const currency = await inferCurrency(run.id);
-    const focus = {
-      focusQuestion: run.focusQuestion,
-      additionalContext: [
-        run.additionalContext,
-        `Manual audience batch pinned to ${input.locality}, ${input.country} (${input.lat.toFixed(5)}, ${input.lng.toFixed(5)}). Segment: ${input.segment}. Role: ${roleLabel}. Treat this as a precise local neighborhood audience, not a broad city average.`,
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
-    };
+    // The worker picks this up and simulates every pending cohort
+    // (orchestrator.addPendingCohorts) — no serverless timeout.
+    const job = await enqueueRunJob(run.id, "add_cohort");
 
-    const ok = await simulateCohort(emitter, cohort.id, profile, currency, focus);
-    const aggregate = await aggregateAudience(emitter);
-    const [tokensUsed, costUsd] = await Promise.all([
-      getTokensUsed(run.id),
-      getCostUsd(run.id),
-    ]);
-    await emitter.emit({ type: "tokens_used", tokensUsed });
-    await emitter.emit({ type: "cost_used", costUsd });
-
-    const full = await prisma.cohort.findUniqueOrThrow({
-      where: { id: cohort.id },
-      include: { personas: true },
-    });
-    await setRunStatus(
-      emitter,
-      previousStatus === "capped" ? "capped" : "complete",
-      previousStatus === "capped" ? "Audience batch added; run remains capped" : "World model ready"
+    return NextResponse.json(
+      { cohort: cohortToWire(cohort), jobId: job.id, pending: true },
+      { status: 202 }
     );
-
-    if (!ok) {
-      return NextResponse.json(
-        { error: "audience batch failed", cohortId: cohort.id },
-        { status: 502 }
-      );
-    }
-
-    return NextResponse.json({
-      cohort: cohortToWire(full),
-      personas: full.personas.map(personaToWire),
-      aggregate,
-      tokensUsed,
-      costUsd,
-    });
   } catch (e) {
-    await setRunStatus(
-      emitter,
-      previousStatus === "capped" ? "capped" : "complete",
-      previousStatus === "capped" ? "Audience batch failed; run remains capped" : "World model ready"
-    ).catch(() => undefined);
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "audience batch failed" },
       { status: 500 }
     );
   }
+}
+
+// GET ?cohortId=… : poll a queued cohort until it finishes. Returns the cohort
+// (with personas once done), the refreshed audience aggregate, and live spend.
+export async function GET(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const cohortId = req.nextUrl.searchParams.get("cohortId");
+  if (!cohortId) {
+    return NextResponse.json({ error: "cohortId required" }, { status: 400 });
+  }
+  const cohort = await prisma.cohort.findFirst({
+    where: { id: cohortId, runId: params.id },
+    include: { personas: true },
+  });
+  if (!cohort) {
+    return NextResponse.json({ error: "cohort not found" }, { status: 404 });
+  }
+  const [aggregate, tokensUsed, costUsd] = await Promise.all([
+    latestAggregate(params.id),
+    getTokensUsed(params.id),
+    getCostUsd(params.id),
+  ]);
+  return NextResponse.json({
+    state: cohort.state, // "pending" | "simulating" | "done" | "failed"
+    cohort: cohortToWire(cohort),
+    personas: cohort.personas.map(personaToWire),
+    aggregate,
+    tokensUsed,
+    costUsd,
+  });
 }
