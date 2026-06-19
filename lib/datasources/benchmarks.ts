@@ -213,12 +213,57 @@ const SEASONALITY: number[] = [
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 // ---------------------------------------------------------------------------
+// MARKETS: the venture's country dimension. The audience/sim currency already
+// follows the planner (cohortPlan.currency), so a US venture runs in USD — but
+// the benchmark priors were India-only. "US" carries USD, US-realistic per-
+// industry economics (no COD/RTO, BFCM seasonality) and ALSO serves as the
+// generic USD/Western baseline for any non-India (cross-border) venture until a
+// dedicated per-country table exists. Add more markets by adding a table here.
+// All values below are MODEL ESTIMATES (see PROVENANCE note above).
+// ---------------------------------------------------------------------------
+export type Market = "IN" | "US";
+
+// US D2C per-category economics (USD). aovInr/cacInr field names are retained to
+// avoid a codebase-wide rename — the VALUES are in the market's currency.
+const US_CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
+  apparel: { grossMarginPct: r(50, 60, 68), aovInr: r(55, 85, 140), landingCvrPct: r(1.8, 2.6, 3.6), repeatRatePct: r(25, 38, 52), returnRatePct: r(20, 28, 38), cacInr: r(22, 40, 75) },
+  footwear: { grossMarginPct: r(45, 55, 64), aovInr: r(75, 110, 170), landingCvrPct: r(1.5, 2.3, 3.2), repeatRatePct: r(20, 30, 42), returnRatePct: r(18, 26, 36), cacInr: r(28, 50, 90) },
+  beauty: { grossMarginPct: r(62, 74, 84), aovInr: r(35, 55, 90), landingCvrPct: r(2.5, 3.6, 5.0), repeatRatePct: r(35, 50, 65), returnRatePct: r(4, 8, 14), cacInr: r(18, 35, 65) },
+  food_beverage: { grossMarginPct: r(45, 58, 68), aovInr: r(35, 55, 95), landingCvrPct: r(2.5, 3.8, 5.2), repeatRatePct: r(45, 60, 75), returnRatePct: r(2, 4, 8), cacInr: r(18, 35, 65) },
+  furniture: { grossMarginPct: r(40, 52, 60), aovInr: r(350, 800, 2000), landingCvrPct: r(0.6, 1.1, 1.8), repeatRatePct: r(8, 16, 26), returnRatePct: r(5, 10, 18), cacInr: r(70, 160, 360) },
+  home_decor: { grossMarginPct: r(50, 60, 70), aovInr: r(55, 110, 220), landingCvrPct: r(1.0, 1.7, 2.6), repeatRatePct: r(20, 32, 44), returnRatePct: r(6, 12, 20), cacInr: r(25, 55, 110) },
+  electronics: { grossMarginPct: r(15, 25, 35), aovInr: r(90, 220, 600), landingCvrPct: r(1.0, 1.7, 2.6), repeatRatePct: r(12, 20, 30), returnRatePct: r(8, 14, 22), cacInr: r(35, 80, 180) },
+  jewellery: { grossMarginPct: r(35, 52, 68), aovInr: r(120, 320, 1100), landingCvrPct: r(0.8, 1.4, 2.2), repeatRatePct: r(15, 26, 38), returnRatePct: r(5, 10, 18), cacInr: r(45, 110, 260) },
+  services: { grossMarginPct: r(55, 70, 85), aovInr: r(60, 180, 600), landingCvrPct: r(2.0, 3.5, 5.5), repeatRatePct: r(30, 48, 65), returnRatePct: r(2, 4, 8), cacInr: r(35, 90, 260) },
+  general: { grossMarginPct: r(45, 57, 68), aovInr: r(45, 90, 180), landingCvrPct: r(1.6, 2.6, 3.8), repeatRatePct: r(20, 32, 45), returnRatePct: r(6, 12, 20), cacInr: r(25, 55, 110) },
+};
+
+// US channel CPMs (USD).
+const US_CHANNEL_CPM: Record<ChannelKey, Range> = {
+  meta: r(7, 12, 20),
+  google_search: r(18, 35, 70),
+  youtube: r(6, 11, 20),
+  marketplace_ads: r(12, 25, 45),
+  influencer: r(15, 35, 80),
+};
+
+// US demand: Black-Friday/Cyber-Monday (Nov) + December holidays peak; January
+// post-holiday dip; a late-summer back-to-school bump.
+const US_SEASONALITY: number[] = [
+  0.9, 0.88, 0.92, 0.95, 1.0, 0.95, 0.95, 1.05, 1.0, 1.05, 1.55, 1.45,
+];
+const US_SHIPPING_USD = 8;
+
+// ---------------------------------------------------------------------------
 // Resolved priors for one (category × geo-tiers) lookup.
 // ---------------------------------------------------------------------------
 export type BenchmarkPriors = {
   category: CategoryKey;
+  market: Market;
   geoTiers: GeoTier[];
-  currency: "INR";
+  // ISO-ish currency code; all monetary fields below are in this currency
+  // (field names keep the legacy `Inr`/`Usd` suffix to avoid a wide rename).
+  currency: string;
   grossMarginPct: Range;
   /** sourced = saved filing+page+quote; reported = company primary disclosure; estimate = model prior. */
   grossMarginProvenance: "sourced" | "reported" | "estimate";
@@ -260,33 +305,41 @@ function avg(nums: number[]): number {
  */
 export function resolveBenchmarks(
   category: CategoryKey,
-  geoTiers: GeoTier[]
+  geoTiers: GeoTier[],
+  market: Market = "IN"
 ): BenchmarkPriors {
-  const cat = CATEGORY[category] ?? CATEGORY.general;
+  const isUS = market === "US";
+  const table = isUS ? US_CATEGORY : CATEGORY;
+  const channelTable = isUS ? US_CHANNEL_CPM : CHANNEL_CPM;
+  const cat = table[category] ?? table.general;
   const tiers = geoTiers.length ? Array.from(new Set(geoTiers)) : ["tier2" as GeoTier];
-  const mods = tiers.map((t) => GEO[t] ?? GEO.tier2);
+  // India scales the metro baseline by city-tier modifiers; the US table is
+  // already a national baseline (no COD/RTO), so it isn't geo-scaled here.
+  const mods = isUS ? [] : tiers.map((t) => GEO[t] ?? GEO.tier2);
 
-  const cpmMult = avg(mods.map((m) => m.cpmMult));
-  const cvrMult = avg(mods.map((m) => m.cvrMult));
-  const aovMult = avg(mods.map((m) => m.aovMult));
-  const rtoMult = avg(mods.map((m) => m.rtoMult));
-  const codSharePct = Math.round(avg(mods.map((m) => m.codSharePct)));
-  const shippingPerOrderInr = Math.round(avg(mods.map((m) => m.shippingInr)));
+  const cpmMult = isUS ? 1 : avg(mods.map((m) => m.cpmMult));
+  const cvrMult = isUS ? 1 : avg(mods.map((m) => m.cvrMult));
+  const aovMult = isUS ? 1 : avg(mods.map((m) => m.aovMult));
+  const rtoMult = isUS ? 1 : avg(mods.map((m) => m.rtoMult));
+  const codSharePct = isUS ? 0 : Math.round(avg(mods.map((m) => m.codSharePct)));
+  const shippingPerOrderInr = isUS
+    ? US_SHIPPING_USD
+    : Math.round(avg(mods.map((m) => m.shippingInr)));
 
   const cpmByChannelInr = Object.fromEntries(
-    (Object.keys(CHANNEL_CPM) as ChannelKey[]).map((k) => [
+    (Object.keys(channelTable) as ChannelKey[]).map((k) => [
       k,
-      scaleRange(CHANNEL_CPM[k], cpmMult),
+      scaleRange(channelTable[k], cpmMult),
     ])
   ) as Record<ChannelKey, Range>;
 
-  const hasInternational = tiers.includes("international");
+  const hasInternational = !isUS && tiers.includes("international");
 
-  // Gross margin provenance ladder: a SOURCED figure (saved filing + page +
-  // quote) wins; else a REPORTED figure (company primary disclosure, not
-  // transcribed); else the category estimate.
-  const vgm = VERIFIED_GROSS_MARGIN_PCT[category];
-  const rgm = REPORTED_GROSS_MARGIN_PCT[category];
+  // Gross margin provenance ladder: a SOURCED figure (saved filing + quote)
+  // wins; else a REPORTED figure; else the category estimate. The verified
+  // figures + Comtrade imports are INDIA-specific, so US uses the estimate.
+  const vgm = isUS ? undefined : VERIFIED_GROSS_MARGIN_PCT[category];
+  const rgm = isUS ? undefined : REPORTED_GROSS_MARGIN_PCT[category];
   const gm = vgm ?? rgm;
   const grossMarginPct = gm
     ? { low: gm.low, mid: gm.mid, high: gm.high }
@@ -297,7 +350,7 @@ export function resolveBenchmarks(
       ? "reported"
       : "estimate";
 
-  const imports = COMTRADE_IMPORTS[category];
+  const imports = isUS ? undefined : COMTRADE_IMPORTS[category];
   const marketImportsUsdMn = imports
     ? { value: imports.usdMn, year: imports.year, desc: imports.desc }
     : null;
@@ -311,10 +364,16 @@ export function resolveBenchmarks(
       : []),
   ];
 
+  const currency = isUS ? "USD" : "INR";
+  const seasonality = isUS ? US_SEASONALITY : SEASONALITY;
   const notes: string[] = [
-    "Rate priors (CPM, CAC, CVR, AOV, returns/RTO, repeat) are MODEL ESTIMATES — no free primary source (DATA_PLAN §3); treat as ranges, not facts.",
-    "All monetary figures are INR; convert with live FX for other currencies.",
+    "Rate priors (CPM, CAC, CVR, AOV, returns, repeat) are MODEL ESTIMATES — no free primary source (DATA_PLAN §3); treat as ranges, not facts.",
+    `All monetary figures are ${currency}; convert with live FX for other currencies.`,
   ];
+  if (isUS)
+    notes.push(
+      "US market: prepaid (no COD/RTO); returns are category-driven (apparel/footwear highest). Also used as the USD/Western baseline for non-India ventures until a per-country table exists — refine with a web-search enrichment for the specific market."
+    );
   if (!sources.length)
     notes.push("No verified source for this category yet — every figure here is an estimate.");
   if (hasInternational)
@@ -333,8 +392,9 @@ export function resolveBenchmarks(
 
   return {
     category,
+    market,
     geoTiers: tiers,
-    currency: "INR",
+    currency,
     grossMarginPct,
     grossMarginProvenance,
     aovInr: scaleRange(cat.aovInr, aovMult),
@@ -346,8 +406,9 @@ export function resolveBenchmarks(
     cpmInr: cpmByChannelInr.meta,
     codSharePct,
     shippingPerOrderInr,
-    seasonality: SEASONALITY,
-    peakMonths: SEASONALITY.map((m, i) => ({ m, i }))
+    seasonality,
+    peakMonths: seasonality
+      .map((m, i) => ({ m, i }))
       .filter((x) => x.m >= 1.3)
       .map((x) => MONTHS[x.i]),
     marketImportsUsdMn,
@@ -355,6 +416,30 @@ export function resolveBenchmarks(
     sources,
     notes,
   };
+}
+
+// --- Market detection from a venture's countries / geography ----------------
+const INDIA_RE = /\bindia\b/i;
+
+/** Pick a market from a set of country strings. Non-India → US (USD baseline). */
+export function marketFromCountries(
+  countries: (string | null | undefined)[]
+): Market {
+  let india = 0;
+  let other = 0;
+  for (const c of countries) {
+    const s = (c ?? "").trim();
+    if (!s) continue;
+    if (INDIA_RE.test(s)) india++;
+    else other++;
+  }
+  if (other > india) return "US";
+  if (india > 0) return "IN";
+  return "IN";
+}
+
+export function marketFromGeography(geography?: string[] | null): Market {
+  return marketFromCountries(geography ?? []);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,26 +558,35 @@ function rng(x: Range): string {
 
 export function formatBenchmarks(p: BenchmarkPriors): string {
   const gm = `[${p.grossMarginProvenance}]`;
-  return `BENCHMARK PRIORS for Indian D2C (INR). Each line is tagged [sourced]
+  const cur = p.currency;
+  const isUS = p.market === "US";
+  const marketLabel = isUS ? "US D2C" : "Indian D2C";
+  const seasonNote = isUS
+    ? "Nov BFCM + Dec holidays peak, Jan trough"
+    : "Oct–Nov festive, Jun monsoon trough";
+  const returnsLine = isUS
+    ? `- Returns % (blended): ${rng(p.returnRatePct)} (prepaid; no COD/RTO) [estimate]`
+    : `- Returns + RTO % (blended): ${rng(p.returnRatePct)} | COD share ~${p.codSharePct}% [estimate]`;
+  return `BENCHMARK PRIORS for ${marketLabel} (${cur}). Each line is tagged [sourced]
 (saved document + page + quote), [reported] (a company's own primary disclosure,
 corroborated but not transcribed), or [estimate] (model prior, no public source —
 DATA_PLAN §3). Anchor your assumptions to these unless the research conclusions
 give better, more specific numbers; do not output figures wildly outside an
 [estimate] range without saying why, and do not treat [estimate] as fact:
-Category: ${p.category} | Geo tiers: ${p.geoTiers.join(", ")} | confidence ${(p.confidence * 100).toFixed(0)}%
+Category: ${p.category} | Market: ${p.market} | Geo tiers: ${p.geoTiers.join(", ")} | confidence ${(p.confidence * 100).toFixed(0)}%
 - Gross margin %: ${rng(p.grossMarginPct)} ${gm}
-- AOV (INR): ${rng(p.aovInr)} [estimate]
+- AOV (${cur}): ${rng(p.aovInr)} [estimate]
 - Landing→order CVR %: ${rng(p.landingCvrPct)} [estimate]
 - Annual repeat-purchase %: ${rng(p.repeatRatePct)} [estimate]
-- Returns + RTO % (blended): ${rng(p.returnRatePct)} | COD share ~${p.codSharePct}% [estimate]
-- Blended new-customer CAC (INR): ${rng(p.cacInr)} [estimate]
-- CPM by channel (INR): Meta ${rng(p.cpmByChannelInr.meta)}, Search ${rng(p.cpmByChannelInr.google_search)}, YouTube ${rng(p.cpmByChannelInr.youtube)}, Marketplace ${rng(p.cpmByChannelInr.marketplace_ads)}, Influencer ${rng(p.cpmByChannelInr.influencer)} [estimate]
-- Shipping per order (INR): ~${p.shippingPerOrderInr} [estimate]${
+${returnsLine}
+- Blended new-customer CAC (${cur}): ${rng(p.cacInr)} [estimate]
+- CPM by channel (${cur}): Meta ${rng(p.cpmByChannelInr.meta)}, Search ${rng(p.cpmByChannelInr.google_search)}, YouTube ${rng(p.cpmByChannelInr.youtube)}, Marketplace ${rng(p.cpmByChannelInr.marketplace_ads)}, Influencer ${rng(p.cpmByChannelInr.influencer)} [estimate]
+- Shipping per order (${cur}): ~${p.shippingPerOrderInr} [estimate]${
     p.marketImportsUsdMn
       ? `\n- India category imports: ≈ US$${p.marketImportsUsdMn.value}M/yr (${p.marketImportsUsdMn.desc}) — demand + import-served-share signal [sourced]`
       : ""
   }
-- Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (Oct–Nov festive, Jun monsoon trough) [estimate]
+- Seasonality peak months: ${p.peakMonths.join(", ") || "n/a"} (${seasonNote}) [estimate]
 Sources (sourced/reported only): ${p.sources.length ? p.sources.join("; ") : "none yet for this category — all figures are estimates"}
 Notes: ${p.notes.join(" ")}
 END BENCHMARK PRIORS.`;
@@ -505,6 +599,7 @@ export function benchmarksForProfile(profile: ClientProfile): {
 } {
   const category = categoryKeyFromProfile(profile);
   const geoTiers = geoTiersFromGeography(profile.geography);
-  const priors = resolveBenchmarks(category, geoTiers);
+  const market = marketFromGeography(profile.geography);
+  const priors = resolveBenchmarks(category, geoTiers, market);
   return { priors, block: formatBenchmarks(priors) };
 }

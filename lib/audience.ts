@@ -4,6 +4,7 @@ import { callCohortSim } from "./llm";
 import {
   categoryKeyFromProfile,
   geoTierFromPlace,
+  marketFromCountries,
   resolveBenchmarks,
 } from "./datasources/benchmarks";
 import { cohortCalibrationBlock } from "./datasources/personaCalibration";
@@ -343,7 +344,8 @@ export async function simulateCohort(
     const calibration = cohortCalibrationBlock(
       resolveBenchmarks(
         categoryKeyFromProfile(profile),
-        [geoTierFromPlace(cohort.locality, cohort.country)]
+        [geoTierFromPlace(cohort.locality, cohort.country)],
+        marketFromCountries([cohort.country])
       ),
       cohort.segment
     );

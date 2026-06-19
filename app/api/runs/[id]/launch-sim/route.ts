@@ -12,6 +12,7 @@ import {
 } from "@/lib/schema";
 import {
   resolveBenchmarks,
+  marketFromCountries,
   categoryKeyFromProfile,
   categoryKeyFromBusinessModel,
   geoTiersFromLocalities,
@@ -338,7 +339,10 @@ function benchmarkPriorsForRun(
   const geoTiers = geoTiersFromLocalities(
     personas.map((p) => ({ name: p.locality, country: p.country }))
   );
-  return resolveBenchmarks(category, geoTiers);
+  // Country dimension: a US (or any non-India) audience gets US/USD benchmarks
+  // instead of India/INR — matching the planner-set sim currency.
+  const market = marketFromCountries(personas.map((p) => p.country));
+  return resolveBenchmarks(category, geoTiers, market);
 }
 
 function safeJsonArray(s: string): string[] {
