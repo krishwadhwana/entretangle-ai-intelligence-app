@@ -15,6 +15,7 @@ import {
   FolderOpen,
   Loader2,
   Play,
+  Sparkles,
   Trash2,
   Upload,
   XCircle,
@@ -25,6 +26,7 @@ import type {
   InterviewTranscript,
   PendingQuestion,
   SimulationRunRecord,
+  WebsiteAnalysis,
 } from "@/lib/schema";
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
@@ -88,6 +90,7 @@ type ProjectData = {
   interviewTranscript: InterviewTranscript;
   ventureProfile: ClientProfile | null;
   simulationRuns: SimulationRunRecord[];
+  websiteAnalysis?: WebsiteAnalysis | null;
 };
 
 type ProjectSummary = {
@@ -125,6 +128,13 @@ function IntakePageInner() {
   const [done, setDone] = useState(false);
   const [brief, setBrief] = useState<string | undefined>(undefined);
   const [profile, setProfile] = useState<ClientProfile | null>(null);
+  // Website-analysis bootstrap: pre-fills the intake (ask only gaps) and feeds
+  // the consumer-opinion brief into the simulation.
+  const [websiteAnalysis, setWebsiteAnalysis] = useState<WebsiteAnalysis | null>(
+    null
+  );
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [analyzing, setAnalyzing] = useState(false);
   const [simRuns, setSimRuns] = useState<SimulationRunRecord[]>([]);
   const [documents, setDocuments] = useState<DocSummary[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -141,6 +151,9 @@ function IntakePageInner() {
   const [additionalContext, setAdditionalContext] = useState("");
   const [mode, setMode] = useState<"full" | "scoped">("full");
   const [agentCount, setAgentCount] = useState(6000); // audience size for this run
+  // Text buffer for the audience-size field so it can be cleared/typed freely
+  // (the bound number snaps to a floor otherwise, making it read as stuck text).
+  const [agentCountText, setAgentCountText] = useState("6000");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function toProjectSummary(p: ProjectData): ProjectSummary {
@@ -176,6 +189,9 @@ function IntakePageInner() {
     setDone(t.done);
     setBrief(t.brief);
     setProfile(proj.ventureProfile);
+    setWebsiteAnalysis(proj.websiteAnalysis ?? null);
+    setWebsiteUrl(proj.websiteAnalysis?.url ?? "");
+    setAnalyzing(false);
     setSimRuns(proj.simulationRuns ?? []);
     setDocuments([]);
     setSelected(new Set());
@@ -350,6 +366,53 @@ function IntakePageInner() {
     applyProject(target, true);
   }
 
+  // Analyse the founder's website + online consumer opinion, then seed the
+  // interview with a correctable summary so it only asks the gaps.
+  async function analyzeWebsite() {
+    const url = websiteUrl.trim();
+    if (!url || !projectId || analyzing || busy) return;
+    setAnalyzing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/analyze-website`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(data?.error ?? `Analysis failed (${res.status})`);
+      const analysis = data.analysis as WebsiteAnalysis;
+      setWebsiteAnalysis(analysis);
+
+      const summaryMsg = [
+        `Here's what I gathered from your site:`,
+        analysis.summary,
+        analysis.consumerOpinion
+          ? `\nWhat customers say online (${analysis.sentiment}): ${analysis.consumerOpinion}`
+          : "",
+        `\nI'll only ask about what I couldn't work out. If anything above is off, just tell me — otherwise reply "looks good" and answer the few questions next.`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const seeded: ChatMessage[] = [
+        ...messages,
+        { role: "assistant", content: summaryMsg },
+      ];
+      setMessages(seeded);
+      void persistTranscript(projectId, {
+        messages: seeded,
+        pending: null,
+        answeredQuestions,
+        done: false,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Website analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
+
   async function submitAnswer(content: string) {
     if (submittingRef.current || !content.trim() || busy || launching || !projectId)
       return;
@@ -382,7 +445,17 @@ function IntakePageInner() {
       const res = await fetch("/api/intake", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: history }),
+        body: JSON.stringify({
+          messages: history,
+          // Skip questions the website analysis already answered.
+          prefill: websiteAnalysis
+            ? {
+                draftProfile: websiteAnalysis.draftProfile,
+                knownFields: websiteAnalysis.knownFields,
+                consumerOpinion: websiteAnalysis.consumerOpinion,
+              }
+            : undefined,
+        }),
       });
       if (!res.ok) throw new Error(`Intake failed (${res.status})`);
       const result = await res.json();
@@ -479,6 +552,18 @@ function IntakePageInner() {
     if (!projectId || !profile || launching) return;
     const fq = focusQuestion.trim();
     const ctx = additionalContext.trim();
+    // Seed the simulation with real online consumer opinion from the website
+    // analysis so the synthetic audience reflects what actual customers say.
+    const opinion = websiteAnalysis?.consumerOpinion?.trim();
+    const composedContext =
+      [
+        opinion
+          ? `Real online consumer opinion about this brand/category (treat as ground truth when simulating the audience): ${opinion}`
+          : "",
+        ctx,
+      ]
+        .filter(Boolean)
+        .join("\n\n") || "";
     // A scoped run needs a prior run to reuse; fall back to full otherwise.
     const effectiveMode =
       mode === "scoped" && latestAudienceRunId ? "scoped" : "full";
@@ -497,7 +582,7 @@ function IntakePageInner() {
           clientProfile: profile,
           projectId,
           focusQuestion: fq || undefined,
-          additionalContext: ctx || undefined,
+          additionalContext: composedContext || undefined,
           mode: effectiveMode,
           sourceRunId:
             effectiveMode === "scoped" ? latestAudienceRunId : undefined,
@@ -776,6 +861,52 @@ function IntakePageInner() {
               <h2 className="text-base font-semibold leading-snug text-neutral-900">
                 {pending?.question ?? GREETING.content}
               </h2>
+
+              {!pending &&
+                !done &&
+                !launching &&
+                messages.length <= 1 &&
+                !websiteAnalysis && (
+                  <div className="mt-4 rounded-lg border border-indigo-100 bg-indigo-50/50 p-3">
+                    <p className="flex items-center gap-1.5 text-[11px] font-medium text-indigo-700">
+                      <Sparkles className="h-3.5 w-3.5" /> Have a website? I&apos;ll
+                      read your site + what customers say online, pre-fill what I
+                      can, and only ask what&apos;s missing.
+                    </p>
+                    <div className="mt-2 flex gap-2">
+                      <input
+                        value={websiteUrl}
+                        onChange={(e) => setWebsiteUrl(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") {
+                            e.preventDefault();
+                            void analyzeWebsite();
+                          }
+                        }}
+                        placeholder="yourbrand.com"
+                        disabled={analyzing}
+                        className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 disabled:opacity-60"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void analyzeWebsite()}
+                        disabled={analyzing || !websiteUrl.trim()}
+                        className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                      >
+                        {analyzing ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Sparkles className="h-4 w-4" />
+                        )}
+                        {analyzing ? "Analyzing…" : "Analyze"}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-[10px] text-neutral-400">
+                      Reads real reviews &amp; sentiment about your brand. Or just
+                      start typing below to describe your venture.
+                    </p>
+                  </div>
+                )}
 
               {pending && pending.options.length > 0 && !busy && !launching && (
                 <div className="mt-4 space-y-3">
@@ -1318,27 +1449,41 @@ function IntakePageInner() {
                       max={MAX_AGENTS}
                       step={100}
                       value={agentCount}
-                      onChange={(e) => setAgentCount(Number(e.target.value))}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setAgentCount(v);
+                        setAgentCountText(String(v));
+                      }}
                       disabled={launching || mode === "scoped"}
                       className="min-w-0 flex-1 accent-indigo-600 disabled:opacity-40"
                     />
                     <input
                       type="number"
+                      inputMode="numeric"
                       min={0}
                       max={MAX_AGENTS}
                       step={100}
-                      value={agentCount}
-                      onChange={(e) =>
-                        setAgentCount(
-                          Math.max(
-                            0,
-                            Math.min(
-                              MAX_AGENTS,
-                              Math.round(Number(e.target.value) || 0)
-                            )
-                          )
-                        )
-                      }
+                      value={agentCountText}
+                      placeholder="6000"
+                      onChange={(e) => {
+                        const raw = e.target.value;
+                        setAgentCountText(raw);
+                        const n = Number(raw);
+                        if (raw !== "" && Number.isFinite(n)) {
+                          setAgentCount(
+                            Math.max(0, Math.min(MAX_AGENTS, Math.round(n)))
+                          );
+                        }
+                      }}
+                      onBlur={() => {
+                        const n = Number(agentCountText);
+                        const v =
+                          agentCountText === "" || !Number.isFinite(n)
+                            ? 0
+                            : Math.max(0, Math.min(MAX_AGENTS, Math.round(n)));
+                        setAgentCount(v);
+                        setAgentCountText(String(v));
+                      }}
                       disabled={launching || mode === "scoped"}
                       className="w-20 rounded-lg border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-indigo-500 disabled:opacity-40"
                     />

@@ -135,6 +135,55 @@ export const ClientProfileSchema = z.object({
 });
 export type ClientProfile = z.infer<typeof ClientProfileSchema>;
 
+// ---------------------------------------------------------------------------
+// Website analysis: a web-grounded pass over the founder's site + online
+// consumer opinion that bootstraps the venture profile and seeds the intake so
+// it only asks what couldn't be inferred. `knownFields` lists the ClientProfile
+// keys the analysis is confident about (the intake skips those).
+// ---------------------------------------------------------------------------
+export const WebsiteDraftProfileSchema = z.object({
+  product: z.string().optional(),
+  category: z.string().optional(),
+  priceBand: z.string().optional(),
+  geography: z.array(z.string()).optional(),
+  targetAudience: z.string().optional(),
+  styleKeywords: z.array(z.string()).default([]),
+  heroProducts: z.array(z.string()).default([]),
+  differentiation: z.string().optional(),
+});
+export type WebsiteDraftProfile = z.infer<typeof WebsiteDraftProfileSchema>;
+
+export const WebsiteAnalysisOutputSchema = z.object({
+  draftProfile: WebsiteDraftProfileSchema,
+  // ClientProfile field names the analysis is confident about (intake skips them).
+  knownFields: z.array(z.string()).default([]),
+  // 3-6 sentence brief on what real customers say online (grounds the sim).
+  consumerOpinion: z.string().default(""),
+  sentiment: z
+    .enum(["positive", "mixed", "negative", "unknown"])
+    .default("unknown"),
+  // Founder-facing recap of everything inferred, to confirm/correct in one tap.
+  summary: z.string().default(""),
+  sources: z.array(z.string()).default([]),
+});
+export type WebsiteAnalysisOutput = z.infer<typeof WebsiteAnalysisOutputSchema>;
+
+// Stored form (output + the url + when analysed). Defaulted leniently so older
+// rows / partial saves still parse.
+export const WebsiteAnalysisSchema = WebsiteAnalysisOutputSchema.extend({
+  url: z.string().default(""),
+  analyzedAt: z.string().default(""),
+});
+export type WebsiteAnalysis = z.infer<typeof WebsiteAnalysisSchema>;
+
+// What the intake route accepts to skip already-known fields.
+export const IntakePrefillSchema = z.object({
+  draftProfile: WebsiteDraftProfileSchema,
+  knownFields: z.array(z.string()).default([]),
+  consumerOpinion: z.string().default(""),
+});
+export type IntakePrefill = z.infer<typeof IntakePrefillSchema>;
+
 export const RunSchema = z.object({
   id: z.string(),
   brief: z.string(),

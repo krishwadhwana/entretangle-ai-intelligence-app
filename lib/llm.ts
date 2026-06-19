@@ -17,6 +17,9 @@ import {
   type PersonaConclusionOutput,
   type PersonaConversationMessage,
   IntakeOutputSchema,
+  WebsiteAnalysisOutputSchema,
+  type WebsiteAnalysisOutput,
+  type IntakePrefill,
   CohortSimOutputSchema,
   BrandKitSchema,
   InspirationKitSchema,
@@ -62,6 +65,9 @@ import {
   ENTANGLER_V2_SYSTEM,
   entanglerUser,
   INTAKE_SYSTEM,
+  WEBSITE_ANALYSIS_SYSTEM,
+  websiteAnalysisUser,
+  intakePrefillBlock,
   QUERY_SYSTEM,
   queryV2User,
   FINAL_REPORT_SYSTEM,
@@ -704,7 +710,8 @@ export async function callEntangler(
 // Intake interview (Shot 8). No run exists yet, so usage is not metered
 // against a run. Mock mode walks a fixed product-first script.
 export async function callIntake(
-  messages: ChatMessage[]
+  messages: ChatMessage[],
+  prefill?: IntakePrefill | null
 ): Promise<IntakeOutput> {
   if (config.mockMode) {
     const answers = messages.filter((m) => m.role === "user");
@@ -859,6 +866,7 @@ export async function callIntake(
           role: "system",
           content:
             INTAKE_SYSTEM +
+            (prefill ? intakePrefillBlock(prefill) : "") +
             (questionsAsked >= 10
               ? "\nYou have asked 10 questions. You MUST output done:true now."
               : "") +
@@ -1143,6 +1151,64 @@ export async function callBrandKit(
       user: brandKitUser(profile, conclusions, aggregate),
       schema: BrandKitSchema,
       maxCompletionTokens: 16000,
+    });
+  }
+}
+
+/**
+ * Bootstrap a venture from the founder's website + online consumer opinion.
+ * Web-grounded (reads the site and searches real reviews/sentiment); on web or
+ * parse failure it falls back to an ungrounded JSON pass from the URL alone.
+ * No runId — this runs at project creation, before any run exists.
+ */
+export async function callWebsiteAnalysis(
+  url: string
+): Promise<WebsiteAnalysisOutput> {
+  if (config.mockMode) {
+    return WebsiteAnalysisOutputSchema.parse({
+      draftProfile: {
+        product: `(mock) product from ${url}`,
+        category: "apparel & fashion",
+        priceBand: "premium",
+        styleKeywords: ["minimal", "contemporary"],
+        heroProducts: [],
+      },
+      knownFields: ["product", "category", "priceBand"],
+      consumerOpinion:
+        "(mock) Customers like the fit and fabric; some flag pricing and delivery times.",
+      sentiment: "mixed",
+      summary: `(mock) Inferred a premium contemporary apparel brand from ${url}.`,
+      sources: [url],
+    });
+  }
+  try {
+    const response = await client().responses.create({
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: WEBSITE_ANALYSIS_SYSTEM },
+        { role: "user", content: websiteAnalysisUser(url) },
+      ],
+      max_output_tokens: 6000,
+      reasoning: { effort: "low" },
+    });
+    const parsed = WebsiteAnalysisOutputSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (parsed.success) return parsed.data;
+    throw new Error(
+      `website analysis (web) failed validation: ${JSON.stringify(
+        parsed.error.issues
+      )}`
+    );
+  } catch (e) {
+    console.error(`[website-analysis] web path failed, falling back:`, e);
+    return callJson({
+      runId: null,
+      system: WEBSITE_ANALYSIS_SYSTEM,
+      user: websiteAnalysisUser(url),
+      schema: WebsiteAnalysisOutputSchema,
+      maxCompletionTokens: 6000,
     });
   }
 }

@@ -7,6 +7,7 @@ import type {
   Cohort,
   Conclusion,
   FinancialModel,
+  IntakePrefill,
   Persona,
   PersonaConversationRole,
   VenturePlanningContext,
@@ -934,6 +935,16 @@ Rules:
 - React to what the others just said and to any "founder" note in the thread
   (treat founder notes as new information you now all know). Address people by
   name when it's natural.
+- You and the others are all FELLOW CUSTOMERS/SHOPPERS, peers — none of you is
+  the brand, the founder, a seller, a stylist or anyone who works for the
+  venture. You can ONLY share your own honest opinions, taste and experience and
+  try to talk each other into or out of buying. You CANNOT send, supply, ship,
+  arrange, gift or show each other anything: no lookbooks, photos, samples,
+  fittings, stylist visits, discounts, SKUs, availability or deliveries. Never
+  offer to "get something over to you", "arrange a sample-fit", "send fit
+  photos" or otherwise act on the brand's behalf — you have none of that to
+  give. If you want the other person to see or try something, you can only urge
+  THEM to go check it out themselves (visit the store, the website, etc.).
 - Be true to your income, lifestyle, price sensitivity, objection, baseline
   intent and personality. Disagree, agree, or build on their points as your
   character genuinely would.${
@@ -987,6 +998,45 @@ Output JSON only: {"conclusion":"3-6 sentence synthesis"}`;
 
 export function personaConclusionUser(history: InteractionMsg[]): string {
   return JSON.stringify({ conversation: history }, null, 2);
+}
+
+// --- Website analysis (bootstrap a venture from the founder's URL) ----------
+
+export const WEBSITE_ANALYSIS_SYSTEM = `You bootstrap a founder's venture profile by analysing their website AND what real customers say about the brand online.
+
+Use web search to:
+1. Read the founder's website at the given URL — what they sell, the category, price band, hero products, the style/aesthetic, who it's for, the geography it serves, and its differentiation.
+2. Find REAL online consumer opinion about this brand/product: reviews, ratings, social comments, marketplace feedback, press. Capture what customers actually praise and complain about, and what triggers a purchase. If you cannot find brand-specific opinion, fall back to category-level sentiment and SAY so.
+
+Only fill draftProfile fields you are genuinely confident about from the evidence; leave the rest empty. List the confident fields in knownFields using EXACTLY these keys when known: product, category, priceBand, geography, targetAudience, styleKeywords, heroProducts, differentiation.
+
+consumerOpinion: a tight 3-6 sentence brief of real customer sentiment (praise + objections + buying triggers), grounded in what you found; put source URLs in sources. sentiment: overall positive | mixed | negative | unknown. summary: a short, plain-English founder-facing recap of everything you inferred, so they can confirm or correct it in one line.
+
+Output JSON only:
+{"draftProfile":{"product":"...","category":"...","priceBand":"...","geography":["..."],"targetAudience":"...","styleKeywords":["..."],"heroProducts":["..."],"differentiation":"..."},
+"knownFields":["product","category"],
+"consumerOpinion":"...","sentiment":"mixed","summary":"...","sources":["https://..."]}`;
+
+export function websiteAnalysisUser(url: string): string {
+  return `Founder website to analyse: ${url}
+
+Search the web — read the site itself AND look for real customer opinion about the brand — then output JSON only.`;
+}
+
+// Appended to the intake system prompt when a website analysis pre-filled the
+// venture: the interview then asks ONLY what's still missing.
+export function intakePrefillBlock(prefill: IntakePrefill): string {
+  return `
+
+PRE-FILLED FROM THE FOUNDER'S WEBSITE + ONLINE CONSUMER RESEARCH — treat all of this as ALREADY KNOWN; do NOT re-ask it:
+Known fields: ${prefill.knownFields.length ? prefill.knownFields.join(", ") : "(none)"}
+Draft profile: ${JSON.stringify(prefill.draftProfile)}
+Online consumer opinion: ${prefill.consumerOpinion || "(none found)"}
+
+Rules given this pre-fill:
+- Do NOT ask about anything already covered by the known fields / draft profile — treat those as answered.
+- Ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, founder experience, and any financial targets. Aim for 2-4 questions; ask fewer when the site was rich.
+- On done:true, MERGE the draft profile into the final profile (the founder's chat answers override the draft on any conflict) and fold the consumer opinion into your read of targetAudience.`;
 }
 
 export function queryUser(

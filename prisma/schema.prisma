@@ -27,6 +27,11 @@ model Project {
   // JSONB: Owner Dashboard state — extensible container of owner-facing tools.
   // Today: { brandSocial: { kit, checks, generatedAt, sourceRunId } }
   ownerDashboard      Json?    @map("owner_dashboard")
+  // JSONB: result of analysing the founder's website + online consumer opinion
+  // at project creation — { url, draftProfile, knownFields, consumerOpinion,
+  // sentiment, summary, sources, analyzedAt }. Pre-fills the intake + seeds the
+  // simulation with real consumer sentiment.
+  websiteAnalysis     Json?    @map("website_analysis")
 
   runs      Run[]
   documents Document[]

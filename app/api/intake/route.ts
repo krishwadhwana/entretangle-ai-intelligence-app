@@ -1,12 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { callIntake } from "@/lib/llm";
-import { ChatMessageSchema } from "@/lib/schema";
+import { ChatMessageSchema, IntakePrefillSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
 const IntakeRequestSchema = z.object({
   messages: z.array(ChatMessageSchema).min(1),
+  // Optional website-analysis pre-fill: the interview then asks only the gaps.
+  prefill: IntakePrefillSchema.nullable().optional(),
 });
 
 // Conversational intake (Shot 8): returns the next interview question or
@@ -17,7 +19,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
   try {
-    return NextResponse.json(await callIntake(body.data.messages));
+    return NextResponse.json(
+      await callIntake(body.data.messages, body.data.prefill ?? null)
+    );
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "intake failed" },

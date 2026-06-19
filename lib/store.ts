@@ -7,6 +7,8 @@ import {
   FinancialsSectionSchema,
   InspirationSectionSchema,
   InterviewTranscriptSchema,
+  WebsiteAnalysisSchema,
+  type WebsiteAnalysis,
   type BrandKit,
   type ClientProfile,
   type FinancialModel,
@@ -49,6 +51,7 @@ export type ProjectFull = ProjectSummary & {
   audienceConfig: unknown | null;
   simulationRuns: SimulationRunRecord[];
   ownerDashboard: OwnerDashboard | null;
+  websiteAnalysis: WebsiteAnalysis | null;
 };
 
 // Default state for a freshly-initialised owner dashboard.
@@ -114,10 +117,14 @@ function toFull(row: {
   audienceConfig: Prisma.JsonValue | null;
   simulationRuns: Prisma.JsonValue;
   ownerDashboard: Prisma.JsonValue | null;
+  websiteAnalysis?: Prisma.JsonValue | null;
 }): ProjectFull {
   const transcript = InterviewTranscriptSchema.safeParse(
     row.interviewTranscript
   );
+  const website = row.websiteAnalysis
+    ? WebsiteAnalysisSchema.safeParse(row.websiteAnalysis)
+    : null;
   return {
     ...toSummary(row),
     interviewTranscript: transcript.success
@@ -131,6 +138,7 @@ function toFull(row: {
     ownerDashboard: row.ownerDashboard
       ? parseOwnerDashboard(row.ownerDashboard)
       : null,
+    websiteAnalysis: website && website.success ? website.data : null,
   };
 }
 
@@ -342,6 +350,16 @@ export async function saveVentureProfile(
   await prisma.project.update({
     where: { id },
     data: { ventureProfile: profile as unknown as Prisma.InputJsonValue },
+  });
+}
+
+export async function saveWebsiteAnalysis(
+  id: string,
+  analysis: WebsiteAnalysis
+): Promise<void> {
+  await prisma.project.update({
+    where: { id },
+    data: { websiteAnalysis: analysis as unknown as Prisma.InputJsonValue },
   });
 }
 

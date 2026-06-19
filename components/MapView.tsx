@@ -167,6 +167,10 @@ export default function MapView({
   const [segment, setSegment] = useState<Segment>("middle");
   const [role, setRole] = useState<Role>("consumer");
   const [size, setSize] = useState(30);
+  // Text buffer so the persona-count field can be emptied/typed freely while the
+  // parent keeps a number. Without it, clearing snaps back to the floor and that
+  // number acts like un-deletable text instead of a placeholder.
+  const [sizeText, setSizeText] = useState("30");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -528,13 +532,32 @@ export default function MapView({
               </select>
               <input
                 type="number"
+                inputMode="numeric"
                 min={5}
                 max={120}
-                value={size}
-                onChange={(e) =>
-                  setSize(Math.max(5, Math.min(120, Number(e.target.value) || 5)))
-                }
-                className="rounded-md border border-neutral-200 px-2 py-1.5 text-xs text-neutral-800 outline-none focus:border-indigo-400"
+                value={sizeText}
+                placeholder="30"
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setSizeText(raw);
+                  // Commit a valid number to the parent while typing; leave the
+                  // raw text alone so partial/empty input keeps the caret.
+                  const n = Number(raw);
+                  if (raw !== "" && Number.isFinite(n)) {
+                    setSize(Math.max(5, Math.min(120, Math.round(n))));
+                  }
+                }}
+                onBlur={() => {
+                  // Normalise display to the clamped value (default 30 if empty).
+                  const n = Number(sizeText);
+                  const v =
+                    sizeText === "" || !Number.isFinite(n)
+                      ? 30
+                      : Math.max(5, Math.min(120, Math.round(n)));
+                  setSize(v);
+                  setSizeText(String(v));
+                }}
+                className="w-20 rounded-md border border-neutral-200 px-2 py-1.5 text-xs text-neutral-800 outline-none focus:border-indigo-400"
                 title="Persona count"
               />
             </div>
