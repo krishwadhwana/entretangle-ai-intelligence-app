@@ -36,7 +36,11 @@ import {
 import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
 import { downloadDossier, slug, type DossierSection } from "./pdf";
-import type { LaunchSimInputs, LaunchSimRecord } from "@/lib/schema";
+import type {
+  AssumptionUpdate,
+  LaunchSimInputs,
+  LaunchSimRecord,
+} from "@/lib/schema";
 
 // ---------------------------------------------------------------------------
 // Launch Simulation view. Feed cost / sale price / ad spend, fast-forward the
@@ -267,6 +271,17 @@ export default function LaunchSimulation({
     key: K,
     value: LaunchSimInputs[K]
   ) => setInputs((cur) => ({ ...cur, [key]: value }));
+
+  // A knowledge-driven re-run produced a new scenario — surface it like any run.
+  const onRerun = useCallback(
+    (record: LaunchSimRecord) => {
+      setScenarios((s) => [record, ...s]);
+      setActive(record);
+      setInputs(record.inputs);
+      setName(nextName([record, ...scenarios]));
+    },
+    [scenarios]
+  );
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50">
@@ -657,7 +672,9 @@ export default function LaunchSimulation({
           </div>
         </section>
 
-        {active && <Results record={active} fmt={fmt} runId={runId} />}
+        {active && (
+          <Results record={active} fmt={fmt} runId={runId} onRerun={onRerun} />
+        )}
 
         <OutcomeCapture
           runId={runId}
@@ -901,10 +918,12 @@ function Results({
   record,
   fmt,
   runId,
+  onRerun,
 }: {
   record: LaunchSimRecord;
   fmt: Formatters;
   runId: string;
+  onRerun: (record: LaunchSimRecord) => void;
 }) {
   const { result } = record;
   const { summary: s, timeline, breakdowns: b } = result;
@@ -919,6 +938,70 @@ function Results({
   useEffect(() => {
     setFollowUp(record.followUp ?? []);
   }, [record.id, record.followUp]);
+  // Knowledge-driven re-run: add a real fact → propose justified deltas → approve
+  // → merge into THIS scenario's inputs → deterministic re-run as a new scenario.
+  const [knowledge, setKnowledge] = useState("");
+  const [proposing, setProposing] = useState(false);
+  const [proposal, setProposal] = useState<AssumptionUpdate | null>(null);
+  const [accepted, setAccepted] = useState<Set<number>>(new Set());
+  const [rerunning, setRerunning] = useState(false);
+  const [kError, setKError] = useState<string | null>(null);
+
+  const propose = async () => {
+    const k = knowledge.trim();
+    if (!k || proposing) return;
+    setProposing(true);
+    setKError(null);
+    setProposal(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/launch-sim/propose`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenarioId: record.id, knowledge: k }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `propose failed (${res.status})`);
+      const update = data.update as AssumptionUpdate;
+      setProposal(update);
+      setAccepted(new Set(update.changes.map((_, i) => i))); // default: accept all
+    } catch (e) {
+      setKError(e instanceof Error ? e.message : "propose failed");
+    } finally {
+      setProposing(false);
+    }
+  };
+
+  const applyAndRerun = async () => {
+    if (!proposal || rerunning) return;
+    setRerunning(true);
+    setKError(null);
+    try {
+      const mergedInputs: LaunchSimInputs = { ...record.inputs };
+      proposal.changes.forEach((c, i) => {
+        if (accepted.has(i)) {
+          (mergedInputs as Record<string, unknown>)[c.field] = c.proposedValue;
+        }
+      });
+      const res = await fetch(`/api/runs/${runId}/launch-sim`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          inputs: mergedInputs,
+          name: `${record.name} + knowledge`,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `re-run failed (${res.status})`);
+      onRerun(data as LaunchSimRecord);
+      setProposal(null);
+      setKnowledge("");
+    } catch (e) {
+      setKError(e instanceof Error ? e.message : "re-run failed");
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   const ask = async () => {
     const question = q.trim();
     if (!question || asking) return;
@@ -1083,6 +1166,122 @@ function Results({
           </button>
         </div>
         {qaError && <p className="mt-1 text-[11px] text-red-600">{qaError}</p>}
+      </div>
+
+      {/* Add knowledge & re-run */}
+      <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-3">
+        <p className="mb-1 flex items-center gap-1.5 text-xs font-semibold text-neutral-800">
+          <Settings2 className="h-3.5 w-3.5 text-indigo-600" /> Add knowledge &amp; re-run
+        </p>
+        <p className="mb-2 text-[11px] text-neutral-500">
+          Tell the model something it didn&apos;t know (e.g. &ldquo;essential everyday
+          wear, customers rebuy every ~4 months, our real return rate is ~9%&rdquo;). It
+          proposes justified assumption changes — you approve before it re-runs.
+        </p>
+        <div className="flex gap-2">
+          <textarea
+            value={knowledge}
+            onChange={(e) => setKnowledge(e.target.value)}
+            rows={2}
+            placeholder="What's true about this product that the simulation didn't capture?"
+            className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
+          />
+          <button
+            onClick={() => void propose()}
+            disabled={proposing || !knowledge.trim()}
+            className="flex shrink-0 items-center gap-1.5 self-start rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {proposing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Propose updates
+          </button>
+        </div>
+
+        {proposal && (
+          <div className="mt-3 space-y-2">
+            {proposal.summary && (
+              <p className="text-[11px] text-neutral-600">{proposal.summary}</p>
+            )}
+            {proposal.changes.length === 0 ? (
+              <p className="text-[11px] text-neutral-500">
+                No assumption changes are justified by this — the current result stands.
+              </p>
+            ) : (
+              <ul className="space-y-1.5">
+                {proposal.changes.map((c, i) => (
+                  <li
+                    key={i}
+                    className="rounded-lg border border-neutral-200 bg-white p-2"
+                  >
+                    <label className="flex items-start gap-2">
+                      <input
+                        type="checkbox"
+                        checked={accepted.has(i)}
+                        onChange={(e) =>
+                          setAccepted((prev) => {
+                            const next = new Set(prev);
+                            if (e.target.checked) next.add(i);
+                            else next.delete(i);
+                            return next;
+                          })
+                        }
+                        className="mt-0.5"
+                      />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-medium text-neutral-800">
+                          {c.label}:{" "}
+                          <span className="tabular-nums text-neutral-500">
+                            {c.currentValue ?? "—"}
+                          </span>
+                          {" → "}
+                          <span className="tabular-nums font-semibold text-indigo-700">
+                            {c.proposedValue}
+                          </span>
+                          <span className="ml-1 text-[10px] font-normal text-neutral-400">
+                            ({Math.round(c.confidence * 100)}% conf)
+                          </span>
+                        </p>
+                        <p className="mt-0.5 text-[10px] leading-snug text-neutral-500">
+                          {c.rationale}
+                        </p>
+                      </div>
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {proposal.caveats.length > 0 && (
+              <ul className="space-y-0.5 text-[10px] text-amber-700">
+                {proposal.caveats.map((cv, i) => (
+                  <li key={i}>⚠ {cv}</li>
+                ))}
+              </ul>
+            )}
+            {proposal.changes.length > 0 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => void applyAndRerun()}
+                  disabled={rerunning || accepted.size === 0}
+                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {rerunning ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RotateCcw className="h-3.5 w-3.5" />
+                  )}
+                  Re-run with {accepted.size} change{accepted.size === 1 ? "" : "s"}
+                </button>
+                <button
+                  onClick={() => setProposal(null)}
+                  disabled={rerunning}
+                  className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-neutral-400 disabled:opacity-50"
+                >
+                  Discard
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+        {kError && <p className="mt-1 text-[11px] text-red-600">{kError}</p>}
       </div>
 
       {/* Headline stat cards */}

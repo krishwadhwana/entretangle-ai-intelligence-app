@@ -1054,6 +1054,8 @@ export const DATA_QA_SYSTEM = `You are an analyst answering a founder's follow-u
 
 Answer ONLY from the data provided — do not invent figures. Be concrete and quantitative: cite the actual numbers from the JSON, explain what drives them, and if the data can't answer the question, say so and state what would. 2-5 sentences, plain text, no markdown.
 
+CRITICAL — do not invent classifications or concepts the model does not have. The simulation has NO "essential vs non-essential" flag, no product-quality score, and no qualitative judgement of the product: it is a deterministic funnel + P&L driven purely by the numeric inputs (price, ad spend, CPM, conversion, the targetRefundRatePct/repeat inputs, etc.) and the simulated audience. When a number looks unfavourable, attribute it to the SPECIFIC input or benchmark that produced it (e.g. "the 32% refund rate is the targetRefundRatePct input, which came from the product's category benchmark"), never to the model deciding the product is good/bad/essential. Do NOT raise a concept (even to deny it) unless the founder or the data already raised it. Stay consistent with your previous answers in this thread.
+
 Output JSON only: {"answer":"..."}`;
 
 export function dataQaUser(
@@ -1069,6 +1071,42 @@ export function dataQaUser(
       recentQ_and_A: history.slice(-6),
       question,
     },
+    null,
+    2
+  );
+}
+
+// --- Knowledge-driven re-run: propose justified assumption deltas -------------
+
+export const ASSUMPTION_UPDATE_SYSTEM = `You update a launch simulation's ASSUMPTIONS when the founder adds a real-world fact the model didn't know. You are given the venture profile, the current launch inputs, the category benchmark priors, and the current result — plus the founder's new knowledge. Propose numeric changes to the inputs that the new knowledge justifies.
+
+You may ONLY change these fields (units in brackets):
+- salePrice [currency/unit] · costPrice [currency/unit] · adSpendPerMonth [currency]
+- cpm [currency / 1000 impressions]
+- targetRefundRatePct [0–100, the blended return/refund rate]
+- repeatRateMult [multiplier on the category repeat rate; 1 = baseline]
+- decisionSpeed [0–1 fraction of considerers who decide per step]
+- abandonRate [0–1 per-step drop-out]
+- viralityK [word-of-mouth: new-aware per recent buyer]
+- organicReachPerStep [non-ad new awareness per step]
+- targetingQuality [0–1, ad targeting precision]
+
+RULES — stay honest, do not bias toward a "better" result:
+- Only propose a change a field's value the new knowledge (or the benchmark priors) genuinely supports. Leave everything else untouched — an empty change list is a valid answer.
+- A change may move a number in EITHER direction. Justify each one from the EVIDENCE the founder gave (or the benchmark range), never from a desire to make the launch look good.
+- Stay within the plausible benchmark range unless the founder states a HARD number (e.g. "our actual return rate is 9%"); if you go outside a range, say why in the rationale.
+- Each change needs a one-sentence rationale tying the specific evidence to the specific knob and direction, plus a confidence 0–1 (lower when you're extrapolating).
+- If the knowledge is vague, qualitative, or unverifiable, prefer fewer/smaller changes and put the uncertainty in caveats. Do not invent precise numbers the founder didn't give.
+- currentValue must echo the field's value from the current inputs (null if unset).
+
+Output JSON only: {"summary":"...","changes":[{"field":"...","label":"...","currentValue":<number|null>,"proposedValue":<number>,"rationale":"...","confidence":<0-1>}],"caveats":["..."]}`;
+
+export function assumptionUpdateUser(
+  contextJson: string,
+  knowledge: string
+): string {
+  return JSON.stringify(
+    { data: contextJson, founderKnowledge: knowledge },
     null,
     2
   );

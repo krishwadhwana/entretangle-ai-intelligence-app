@@ -309,7 +309,19 @@ export function resolveLaunchInputs(
         : i.organicReachPerStep;
     const firstMonthReach = Math.min(reachablePool, paidReach + organicReach);
     const decisionCoverage = 1 - Math.pow(1 - decisionSpeed, stepsPerMonth);
-    const estMonthlyOrders = firstMonthReach * meanBuy * decisionCoverage;
+    let estMonthlyOrders = firstMonthReach * meanBuy * decisionCoverage;
+    // CRITICAL: the main loop caps paid first-time orders at what the ad budget
+    // can actually buy at the benchmark CAC (the `paidNewCustomerCap` below). The
+    // raw reach × buy-prob estimate above ignores that cap and the engagement →
+    // visit → checkout attrition, so it can over-estimate first-month demand by
+    // 100×+ — pre-buying mountains of inventory that never sells (runaway
+    // deadstock). Size inventory to the SAME binding constraint the loop enforces.
+    const cac =
+      ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
+    if (cac && i.adSpendPerMonth > 0) {
+      const cacCappedMonthlyOrders = i.adSpendPerMonth / cac;
+      estMonthlyOrders = Math.min(estMonthlyOrders, cacCappedMonthlyOrders);
+    }
     initialInventoryUnits =
       estMonthlyOrders > 0
         ? Math.max(10, Math.ceil(estMonthlyOrders * preset.inventoryBuffer))

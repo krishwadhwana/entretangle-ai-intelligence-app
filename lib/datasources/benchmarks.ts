@@ -44,6 +44,7 @@ export type CategoryKey =
   | "apparel"
   | "footwear"
   | "beauty"
+  | "personal_care"
   | "food_beverage"
   | "furniture"
   | "home_decor"
@@ -115,6 +116,17 @@ const CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
     repeatRatePct: r(35, 48, 60),
     returnRatePct: r(8, 14, 22),
     cacInr: r(250, 450, 900),
+  },
+  // Personal-care / hygiene ESSENTIALS (menstrual care, intimate hygiene,
+  // sanitary, baby/incontinence). Replenished, so high repeat; hygiene products
+  // see low returns (often non-returnable) — NOT fashion-apparel economics.
+  personal_care: {
+    grossMarginPct: r(55, 65, 75),
+    aovInr: r(600, 1100, 2000),
+    landingCvrPct: r(1.5, 2.5, 3.6),
+    repeatRatePct: r(35, 50, 65),
+    returnRatePct: r(6, 10, 16),
+    cacInr: r(250, 500, 1000),
   },
   food_beverage: {
     grossMarginPct: r(50, 60, 70),
@@ -229,6 +241,7 @@ const US_CATEGORY: Record<CategoryKey, CategoryBenchmark> = {
   apparel: { grossMarginPct: r(50, 60, 68), aovInr: r(55, 85, 140), landingCvrPct: r(1.8, 2.6, 3.6), repeatRatePct: r(25, 38, 52), returnRatePct: r(20, 28, 38), cacInr: r(22, 40, 75) },
   footwear: { grossMarginPct: r(45, 55, 64), aovInr: r(75, 110, 170), landingCvrPct: r(1.5, 2.3, 3.2), repeatRatePct: r(20, 30, 42), returnRatePct: r(18, 26, 36), cacInr: r(28, 50, 90) },
   beauty: { grossMarginPct: r(62, 74, 84), aovInr: r(35, 55, 90), landingCvrPct: r(2.5, 3.6, 5.0), repeatRatePct: r(35, 50, 65), returnRatePct: r(4, 8, 14), cacInr: r(18, 35, 65) },
+  personal_care: { grossMarginPct: r(58, 70, 80), aovInr: r(20, 38, 70), landingCvrPct: r(2.2, 3.4, 4.8), repeatRatePct: r(35, 52, 68), returnRatePct: r(5, 9, 15), cacInr: r(15, 32, 60) },
   food_beverage: { grossMarginPct: r(45, 58, 68), aovInr: r(35, 55, 95), landingCvrPct: r(2.5, 3.8, 5.2), repeatRatePct: r(45, 60, 75), returnRatePct: r(2, 4, 8), cacInr: r(18, 35, 65) },
   furniture: { grossMarginPct: r(40, 52, 60), aovInr: r(350, 800, 2000), landingCvrPct: r(0.6, 1.1, 1.8), repeatRatePct: r(8, 16, 26), returnRatePct: r(5, 10, 18), cacInr: r(70, 160, 360) },
   home_decor: { grossMarginPct: r(50, 60, 70), aovInr: r(55, 110, 220), landingCvrPct: r(1.0, 1.7, 2.6), repeatRatePct: r(20, 32, 44), returnRatePct: r(6, 12, 20), cacInr: r(25, 55, 110) },
@@ -461,6 +474,10 @@ export function marketFromGeography(geography?: string[] | null): Market {
 const CATEGORY_KEYWORDS: [CategoryKey, RegExp][] = [
   ["footwear", /\b(footwear|shoe|shoes|sneaker|sandal|sandals|heels|loafer)\b/i],
   ["jewellery", /\b(jewellery|jewelry|jewel|gold|silver|diamond|earring|necklace|kundan|polki)\b/i],
+  // Hygiene/menstrual essentials FIRST — "period pants/underwear" must not fall
+  // through to the apparel regex (it matches "pants"/"wear") and inherit fashion
+  // return rates. These are high-repeat, low-return replenishment products.
+  ["personal_care", /\b(menstrual|period\s*(care|pant|pants|panty|panties|underwear|wear)|sanitary\s*(pad|pads|napkin|napkins)|tampon|tampons|intimate\s*(care|hygiene|wash)|feminine\s*(care|hygiene)|incontinence|diaper|diapers|nappy|nappies)\b/i],
   ["beauty", /\b(beauty|cosmetic|skincare|skin care|makeup|make-up|fragrance|perfume|haircare|grooming|personal care)\b/i],
   ["food_beverage", /\b(food|beverage|drink|snack|supplement|nutrition|protein|coffee|tea|grocery|gourmet|confection|bakery|wellness|nutraceutical)\b/i],
   ["furniture", /\b(furniture|sofa|chair|table|bed|mattress|wardrobe|cabinet|desk|recliner)\b/i],

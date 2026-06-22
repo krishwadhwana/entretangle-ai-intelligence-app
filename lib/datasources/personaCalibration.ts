@@ -25,6 +25,10 @@ const QUALITATIVE: Record<CategoryKey, { objections: string; discovery: string }
     objections: "skin/hair suitability; authenticity (fear of fakes); will it actually work; ingredient/safety",
     discovery: "Instagram + YouTube tutorials/reviews for discovery; Nykaa + marketplace for intent",
   },
+  personal_care: {
+    objections: "does it actually work/leak-proof; sizing & comfort; hygiene/skin safety; embarrassment or taboo about discussing; switching from a trusted habit",
+    discovery: "Instagram + creator/educator content and word-of-mouth for discovery; brand D2C + marketplace for repeat replenishment",
+  },
   food_beverage: {
     objections: "freshness/shelf-life; taste vs expectation; price vs local alternative; trust in ingredients",
     discovery: "Instagram/food creators for discovery; quick-commerce + kirana for repeat",

@@ -1531,6 +1531,49 @@ export const LaunchSimRecordSchema = z.object({
 export type LaunchSimRecord = z.infer<typeof LaunchSimRecordSchema>;
 
 // ---------------------------------------------------------------------------
+// Knowledge-driven re-run: the founder adds a real-world fact about the product
+// ("essential everyday wear, rebuy every few months, ~9% returns") and an LLM
+// proposes JUSTIFIED deltas to the launch assumptions — which the founder then
+// approves (or not) before the deterministic engine re-runs. Unbiased by design:
+// changes can move EITHER way, each carries a rationale + confidence, and nothing
+// is applied silently.
+// ---------------------------------------------------------------------------
+
+// The numeric launch knobs an assumption update is allowed to touch. Each maps
+// 1:1 to a LaunchSimInputs field so the UI can merge an approved change directly.
+export const AssumptionFieldSchema = z.enum([
+  "salePrice",
+  "costPrice",
+  "adSpendPerMonth",
+  "cpm",
+  "targetRefundRatePct",
+  "repeatRateMult",
+  "decisionSpeed",
+  "abandonRate",
+  "viralityK",
+  "organicReachPerStep",
+  "targetingQuality",
+]);
+export type AssumptionField = z.infer<typeof AssumptionFieldSchema>;
+
+export const ProposedAssumptionSchema = z.object({
+  field: AssumptionFieldSchema,
+  label: z.string(), // human-readable knob name
+  currentValue: z.number().nullable(),
+  proposedValue: z.number(),
+  rationale: z.string(), // why THIS evidence moves THIS knob, this direction
+  confidence: z.number().min(0).max(1),
+});
+export type ProposedAssumption = z.infer<typeof ProposedAssumptionSchema>;
+
+export const AssumptionUpdateSchema = z.object({
+  summary: z.string(),
+  changes: z.array(ProposedAssumptionSchema).max(12).default([]),
+  caveats: z.array(z.string()).default([]),
+});
+export type AssumptionUpdate = z.infer<typeof AssumptionUpdateSchema>;
+
+// ---------------------------------------------------------------------------
 // Export viability (Phase 3): deterministic landed-cost / export-pricing engine.
 // Takes a home-market unit COGS and builds it up to a destination-market shelf
 // price across one or more fulfillment paths, then scores the required price

@@ -52,6 +52,8 @@ import {
   type Persona,
   type Block,
   type AudienceAggregate,
+  AssumptionUpdateSchema,
+  type AssumptionUpdate,
 } from "./schema";
 import {
   VENTURE_CONTEXT_SYSTEM,
@@ -73,6 +75,8 @@ import {
   marketDataUser,
   DATA_QA_SYSTEM,
   dataQaUser,
+  ASSUMPTION_UPDATE_SYSTEM,
+  assumptionUpdateUser,
   intakePrefillBlock,
   QUERY_SYSTEM,
   queryV2User,
@@ -1181,6 +1185,33 @@ export async function callDataQuestion(
     maxCompletionTokens: 700,
   });
   return out.answer;
+}
+
+/**
+ * Knowledge-driven re-run: given the founder's new fact about the product plus
+ * the current launch context, propose justified numeric deltas to the launch
+ * assumptions (never applied here — the founder approves them first). Returns an
+ * empty change list when the knowledge doesn't justify any change.
+ */
+export async function callAssumptionUpdate(
+  runId: string,
+  contextJson: string,
+  knowledge: string
+): Promise<AssumptionUpdate> {
+  if (config.mockMode) {
+    return AssumptionUpdateSchema.parse({
+      summary: `(mock) considered: ${knowledge.slice(0, 60)}`,
+      changes: [],
+      caveats: ["mock mode — no changes proposed"],
+    });
+  }
+  return callJson({
+    runId,
+    system: ASSUMPTION_UPDATE_SYSTEM,
+    user: assumptionUpdateUser(contextJson, knowledge),
+    schema: AssumptionUpdateSchema,
+    maxCompletionTokens: 1400,
+  });
 }
 
 /**
