@@ -18,7 +18,9 @@ import {
   type PersonaConversationMessage,
   IntakeOutputSchema,
   WebsiteAnalysisOutputSchema,
+  MarketDataOutputSchema,
   type WebsiteAnalysisOutput,
+  type MarketDataOutput,
   type IntakePrefill,
   CohortSimOutputSchema,
   BrandKitSchema,
@@ -67,6 +69,8 @@ import {
   INTAKE_SYSTEM,
   WEBSITE_ANALYSIS_SYSTEM,
   websiteAnalysisUser,
+  MARKET_DATA_SYSTEM,
+  marketDataUser,
   intakePrefillBlock,
   QUERY_SYSTEM,
   queryV2User,
@@ -1153,6 +1157,45 @@ export async function callBrandKit(
       maxCompletionTokens: 16000,
     });
   }
+}
+
+/**
+ * Source current, cited market benchmarks for one country × category to refine
+ * the curated priors. Web-grounded; on web/parse failure, throws (the caller
+ * keeps the curated priors). No runId — runs at project setup.
+ */
+export async function callMarketData(
+  country: string,
+  category: string
+): Promise<MarketDataOutput> {
+  if (config.mockMode) {
+    return MarketDataOutputSchema.parse({
+      currency: "USD",
+      aov: { low: 60, mid: 90, high: 150 },
+      returnRatePct: { low: 18, mid: 25, high: 35 },
+      notes: `(mock) ${country} ${category} benchmarks`,
+      sources: ["mock://market-data"],
+    });
+  }
+  const response = await client().responses.create({
+    model: config.model,
+    tools: [{ type: "web_search" } as never],
+    input: [
+      { role: "system", content: MARKET_DATA_SYSTEM },
+      { role: "user", content: marketDataUser(country, category) },
+    ],
+    max_output_tokens: 4000,
+    reasoning: { effort: "low" },
+  });
+  const parsed = MarketDataOutputSchema.safeParse(
+    JSON.parse(stripFences(response.output_text ?? ""))
+  );
+  if (!parsed.success) {
+    throw new Error(
+      `market data failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  }
+  return parsed.data;
 }
 
 /**

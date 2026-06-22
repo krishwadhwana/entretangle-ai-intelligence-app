@@ -29,6 +29,7 @@ import {
   Loader2,
   ChevronDown,
   Settings2,
+  Globe,
   Trash2,
 } from "lucide-react";
 import { SEGMENT_COLORS } from "./segments";
@@ -130,8 +131,37 @@ export default function LaunchSimulation({
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [name, setName] = useState("Scenario 1");
+  // Live market-data sourcing (web-grounded, cited): refreshes the benchmark
+  // priors for this venture's country × category. Applied on the next run.
+  const [sourcing, setSourcing] = useState(false);
+  const [sourced, setSourced] = useState<string | null>(null);
 
   const currency = inputs.currency || defaults?.currency || "INR";
+
+  const sourceMarketData = useCallback(async () => {
+    if (!projectId || sourcing) return;
+    setSourcing(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/market-data`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `sourcing failed (${res.status})`);
+      const n = data?.datum?.sources?.length ?? 0;
+      setSourced(
+        n > 0
+          ? `Sourced ${data.datum.country} ${data.datum.category} data (${n} source${n === 1 ? "" : "s"}) — re-run to apply.`
+          : "No new figures found; keeping curated priors."
+      );
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "market data sourcing failed");
+    } finally {
+      setSourcing(false);
+    }
+  }, [projectId, sourcing]);
   const fmt = useMemo(() => makeFormatters(currency), [currency]);
 
   // Load defaults + saved scenarios once.
@@ -602,7 +632,26 @@ export default function LaunchSimulation({
               )}
               {busy ? "Simulating…" : active ? "Run new scenario" : "Run simulation"}
             </button>
+            {projectId && (
+              <button
+                type="button"
+                onClick={() => void sourceMarketData()}
+                disabled={sourcing}
+                title="Web-search current, cited benchmarks for this venture's market & category, then apply them to the priors"
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-60"
+              >
+                {sourcing ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Globe className="h-3.5 w-3.5" />
+                )}
+                {sourcing ? "Sourcing…" : "Source live market data"}
+              </button>
+            )}
             {error && <span className="text-[11px] text-red-600">{error}</span>}
+            {sourced && !error && (
+              <span className="text-[11px] text-emerald-600">{sourced}</span>
+            )}
           </div>
         </section>
 

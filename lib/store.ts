@@ -9,6 +9,7 @@ import {
   InterviewTranscriptSchema,
   WebsiteAnalysisSchema,
   type WebsiteAnalysis,
+  type MarketDatum,
   type BrandKit,
   type ClientProfile,
   type FinancialModel,
@@ -360,6 +361,35 @@ export async function saveWebsiteAnalysis(
   await prisma.project.update({
     where: { id },
     data: { websiteAnalysis: analysis as unknown as Prisma.InputJsonValue },
+  });
+}
+
+// Web-sourced market benchmark overrides, keyed "<market>:<category>". Read with
+// a lean column select (never drags in the heavy simulation_runs blob).
+export async function getMarketData(
+  id: string
+): Promise<Record<string, MarketDatum>> {
+  const row = await prisma.project.findUnique({
+    where: { id },
+    select: { marketData: true },
+  });
+  const raw = row?.marketData;
+  return raw && typeof raw === "object"
+    ? (raw as Record<string, MarketDatum>)
+    : {};
+}
+
+export async function saveMarketDatum(
+  id: string,
+  key: string,
+  datum: MarketDatum
+): Promise<void> {
+  const current = await getMarketData(id);
+  await prisma.project.update({
+    where: { id },
+    data: {
+      marketData: { ...current, [key]: datum } as unknown as Prisma.InputJsonValue,
+    },
   });
 }
 

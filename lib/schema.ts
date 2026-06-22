@@ -176,6 +176,39 @@ export const WebsiteAnalysisSchema = WebsiteAnalysisOutputSchema.extend({
 });
 export type WebsiteAnalysis = z.infer<typeof WebsiteAnalysisSchema>;
 
+// --- Web-sourced market benchmark data (refines curated priors) -------------
+const MarketRangeSchema = z.object({
+  low: z.number(),
+  mid: z.number(),
+  high: z.number(),
+});
+
+// What the web-grounded pass returns for one market × category. All monetary
+// fields are in the market's currency (USD for the US). Any field may be null
+// when the search couldn't find a credible figure (the curated prior is kept).
+export const MarketDataOutputSchema = z.object({
+  currency: z.string().default("USD"),
+  aov: MarketRangeSchema.nullable().default(null),
+  grossMarginPct: MarketRangeSchema.nullable().default(null),
+  landingCvrPct: MarketRangeSchema.nullable().default(null),
+  repeatRatePct: MarketRangeSchema.nullable().default(null),
+  returnRatePct: MarketRangeSchema.nullable().default(null),
+  cac: MarketRangeSchema.nullable().default(null),
+  cpmMeta: MarketRangeSchema.nullable().default(null),
+  notes: z.string().default(""),
+  sources: z.array(z.string()).default([]),
+});
+export type MarketDataOutput = z.infer<typeof MarketDataOutputSchema>;
+
+// Stored per "<market>:<category>" with provenance (country, category, asOf).
+export const MarketDatumSchema = MarketDataOutputSchema.extend({
+  market: z.string(),
+  category: z.string(),
+  country: z.string().default(""),
+  asOf: z.string().default(""),
+});
+export type MarketDatum = z.infer<typeof MarketDatumSchema>;
+
 // What the intake route accepts to skip already-known fields.
 export const IntakePrefillSchema = z.object({
   draftProfile: WebsiteDraftProfileSchema,

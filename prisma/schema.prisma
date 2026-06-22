@@ -32,6 +32,10 @@ model Project {
   // sentiment, summary, sources, analyzedAt }. Pre-fills the intake + seeds the
   // simulation with real consumer sentiment.
   websiteAnalysis     Json?    @map("website_analysis")
+  // JSONB: web-sourced market benchmark overrides, keyed "<market>:<category>"
+  // (e.g. "US:apparel") → { ranges + sources + asOf }. Refines the curated
+  // benchmark priors with current, cited figures for the venture's market.
+  marketData          Json?    @map("market_data")
 
   runs      Run[]
   documents Document[]

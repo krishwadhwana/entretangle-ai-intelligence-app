@@ -1023,6 +1023,32 @@ export function websiteAnalysisUser(url: string): string {
 Search the web — read the site itself AND look for real customer opinion about the brand — then output JSON only.`;
 }
 
+// --- Market data sourcing (refine curated benchmark priors per country) ------
+
+export const MARKET_DATA_SYSTEM = `You are a market-data researcher. Use web search to find CURRENT, real benchmark figures for a specific ecommerce/D2C category in a specific country, to refine a launch model. Prefer reputable, recent sources (industry reports, Statista summaries, Shopify/Baymard/marketplace data, trade press). Give realistic low/mid/high RANGES, not single points.
+
+Return ONLY figures you can ground in what you found; set a field to null if you cannot find a credible source for it (the model keeps its own prior). All monetary values must be in the country's currency.
+
+Fields (all ranges {low,mid,high} or null):
+- aov: average order value
+- grossMarginPct: typical gross margin %
+- landingCvrPct: storefront visit→order conversion %
+- repeatRatePct: annual repeat-purchase %
+- returnRatePct: product return rate %
+- cac: blended new-customer acquisition cost
+- cpmMeta: Meta (Instagram/Facebook) CPM
+List the source URLs you used in "sources" and a one-line "notes" on data quality/recency.
+
+Output JSON only:
+{"currency":"USD","aov":{"low":0,"mid":0,"high":0},"grossMarginPct":null,"landingCvrPct":null,"repeatRatePct":null,"returnRatePct":null,"cac":null,"cpmMeta":null,"notes":"...","sources":["https://..."]}`;
+
+export function marketDataUser(country: string, category: string): string {
+  return `Country/market: ${country}
+Category: ${category}
+
+Search the web for current ${country} benchmarks for this category, then output JSON only.`;
+}
+
 // Appended to the intake system prompt when a website analysis pre-filled the
 // venture: the interview then asks ONLY what's still missing.
 export function intakePrefillBlock(prefill: IntakePrefill): string {

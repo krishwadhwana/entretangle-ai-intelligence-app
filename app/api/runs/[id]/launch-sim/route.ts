@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { getFinancialModel } from "@/lib/store";
+import { getFinancialModel, getMarketData } from "@/lib/store";
 import { simulateLaunch, type LaunchPersona } from "@/lib/launchSim";
 import {
   ClientProfileSchema,
@@ -9,6 +9,7 @@ import {
   type LaunchBusinessModel,
   type LaunchSimInputs,
   type LaunchSimRecord,
+  type MarketDatum,
 } from "@/lib/schema";
 import {
   resolveBenchmarks,
@@ -131,7 +132,7 @@ export async function GET(
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
-  const priors = benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
+  const priors = await benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
   const defaults = {
     currency: model?.currency ?? currency,
     suggestedBusinessModel,
@@ -249,7 +250,7 @@ export async function POST(
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
-  const priors = benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
+  const priors = await benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
 
   // Capture the attention/hype momentum once (frozen into the scenario), and
   // pin the launch month so seasonality applies deterministically on re-sim.
@@ -318,11 +319,11 @@ export async function DELETE(
 
 // Resolve benchmark priors for a run: category from its profile (fall back to
 // the inferred business model) × geo tiers from the actual simulated localities.
-function benchmarkPriorsForRun(
-  run: { clientProfile: string },
+async function benchmarkPriorsForRun(
+  run: { clientProfile: string; projectId: string | null },
   businessModel: LaunchBusinessModel,
   personas: { locality: string; country: string }[]
-): BenchmarkPriors {
+): Promise<BenchmarkPriors> {
   let category;
   try {
     const parsed = ClientProfileSchema.safeParse(
@@ -342,7 +343,47 @@ function benchmarkPriorsForRun(
   // Country dimension: a US (or any non-India) audience gets US/USD benchmarks
   // instead of India/INR — matching the planner-set sim currency.
   const market = marketFromCountries(personas.map((p) => p.country));
-  return resolveBenchmarks(category, geoTiers, market);
+  const priors = resolveBenchmarks(category, geoTiers, market);
+
+  // Apply web-sourced overrides for this market × category when present, so the
+  // priors reflect current, cited figures instead of the curated estimate.
+  if (run.projectId) {
+    try {
+      const datum = (await getMarketData(run.projectId))[`${market}:${category}`];
+      if (datum) return applyMarketDatum(priors, datum);
+    } catch {
+      // sourcing is best-effort — keep the curated priors on any failure
+    }
+  }
+  return priors;
+}
+
+// Overlay web-sourced figures onto the curated priors (only the fields the
+// search actually found), upgrading provenance + confidence and citing sources.
+function applyMarketDatum(p: BenchmarkPriors, d: MarketDatum): BenchmarkPriors {
+  const next: BenchmarkPriors = { ...p };
+  if (d.aov) next.aovInr = d.aov;
+  if (d.grossMarginPct) {
+    next.grossMarginPct = d.grossMarginPct;
+    next.grossMarginProvenance = "reported";
+  }
+  if (d.landingCvrPct) next.landingCvrPct = d.landingCvrPct;
+  if (d.repeatRatePct) next.repeatRatePct = d.repeatRatePct;
+  if (d.returnRatePct) next.returnRatePct = d.returnRatePct;
+  if (d.cac) next.cacInr = d.cac;
+  if (d.cpmMeta) {
+    next.cpmInr = d.cpmMeta;
+    next.cpmByChannelInr = { ...p.cpmByChannelInr, meta: d.cpmMeta };
+  }
+  next.sources = [...p.sources, ...(d.sources ?? [])];
+  next.notes = [
+    ...p.notes,
+    `Web-sourced ${d.country || d.market} ${d.category} figures applied${
+      d.asOf ? ` (${d.asOf.slice(0, 10)})` : ""
+    }${d.notes ? `: ${d.notes}` : ""}.`,
+  ];
+  if (d.sources?.length) next.confidence = Math.min(0.85, p.confidence + 0.15);
+  return next;
 }
 
 function safeJsonArray(s: string): string[] {
