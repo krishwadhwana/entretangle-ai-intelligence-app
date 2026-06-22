@@ -575,7 +575,10 @@ export default function FinancialsSection({
                       align="right"
                       wrapperStyle={{ fontSize: 11, paddingBottom: 8 }}
                     />
-                    <Bar dataKey="revenue" name="Revenue/mo" radius={[3, 3, 0, 0]}>
+                    {/* fill drives the Legend swatch; per-Cell fills override the
+                        actual bars (base tier highlighted). Without it the legend
+                        defaults to black while the bars are indigo. */}
+                    <Bar dataKey="revenue" name="Revenue/mo" radius={[3, 3, 0, 0]} fill="#a5b4fc">
                       {tierChart.map((d, i) => (
                         <Cell key={i} fill={d.isBase ? "#4f46e5" : "#a5b4fc"} />
                       ))}

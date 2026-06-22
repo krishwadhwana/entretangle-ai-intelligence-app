@@ -211,6 +211,13 @@ export default function LaunchSimulation({
             data.defaults.benchmarks
               ? data.defaults.benchmarks.suggestedShippingPerOrder
               : cur.shippingPerOrder,
+          // Prefill the refund rate from the category benchmark so the field
+          // shows a real number (e.g. ~10% for hygiene) instead of an empty
+          // target the server silently fills. Founder edits it directly.
+          targetRefundRatePct:
+            cur.targetRefundRatePct == null && data.defaults.benchmarks
+              ? data.defaults.benchmarks.returnRatePct
+              : cur.targetRefundRatePct,
         }));
         if (data.scenarios[0]) {
           setActive(data.scenarios[0]);
@@ -600,12 +607,18 @@ export default function LaunchSimulation({
                   small
                 />
                 <NumField
-                  label="Refund rate ×"
-                  unit="multiplier"
-                  help="Scales persona refund risk. 1.0 = model baseline; 0.5 = half as many refunds; 2.0 = twice as many."
-                  value={inputs.refundRateMult}
-                  onChange={(v) => set("refundRateMult", v)}
-                  step={0.1}
+                  label="Refund rate %"
+                  unit="%"
+                  help="Share of orders refunded/returned — the engine calibrates to exactly this. Anchored to the category benchmark; set it to your real rate (e.g. ~0 for non-returnable hygiene products like period underwear)."
+                  value={
+                    inputs.targetRefundRatePct ??
+                    defaults?.benchmarks?.returnRatePct ??
+                    10
+                  }
+                  onChange={(v) =>
+                    set("targetRefundRatePct", Math.max(0, Math.min(100, v)))
+                  }
+                  step={1}
                   small
                 />
                 <NumField

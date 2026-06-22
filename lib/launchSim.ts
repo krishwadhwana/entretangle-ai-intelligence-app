@@ -614,8 +614,21 @@ export function simulateLaunch(
       wSum > 0
         ? wRefund / wSum
         : personas.reduce((s, p) => s + refundPropensity(p, homeCountry, 1), 0) / N;
-    return meanBase > 0
-      ? inputs.targetRefundRatePct / 100 / meanBase
+    // At realization each order's refund is also scaled by its channel's
+    // refundMultiplier (consideringRefundMult). Only paid channels drive awareness
+    // here, so fold their spend-weighted average refundMultiplier into the base —
+    // otherwise the realized rate lands at target × that factor (e.g. 10% → ~12%).
+    const paidCh = inputs.channels.filter(
+      (c) => c.kind === "paid" || c.kind === "marketplace" || c.kind === "retail"
+    );
+    const paidShare = paidCh.reduce((s, c) => s + c.spendPct, 0);
+    const channelRefundMult =
+      paidShare > 0
+        ? paidCh.reduce((s, c) => s + c.spendPct * c.refundMultiplier, 0) / paidShare
+        : 1;
+    const effBase = meanBase * channelRefundMult;
+    return effBase > 0
+      ? inputs.targetRefundRatePct / 100 / effBase
       : inputs.refundRateMult;
   })();
 
