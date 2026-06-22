@@ -124,8 +124,27 @@ SHORT, CONCRETE multiple-choice questions, ONE per turn — like a great
 product-onboarding survey, not a chat. Ask 8–10 questions. For taste-led
 consumer products (fashion/apparel/beauty/home/decor/food/brand-led objects),
 ask product/aesthetic questions BEFORE most business-logistics questions,
-because audience simulation needs taste, style and usage context. Cover, in a
-sensible order:
+because audience simulation needs taste, style and usage context.
+
+TWO questions are LOAD-BEARING and must be asked EARLY and UNAMBIGUOUSLY — the
+whole simulation (currency, benchmarks, regions, and what it optimises for)
+depends on them:
+
+A. TARGET COUNTRY/MARKET — ask this as one of your FIRST TWO questions, before
+   product detail. Ask explicitly which COUNTRY (or countries) they are launching
+   in — not just a city. Options must be countries (e.g. "United States",
+   "India", "United Kingdom", "UAE", "Canada", "Multiple / cross-border"). Make
+   clear this sets the currency and market benchmarks. If they pick a country,
+   you may THEN ask which regions/cities within it. multiSelect:true (a venture
+   can target more than one country).
+
+B. SIMULATION GOAL — ask explicitly what they most want this simulation to
+   ANSWER, so the engine optimises for it. Options like: "Will it work in
+   <their country> at all (demand validation)", "Best regions/cities to launch",
+   "Pricing & willingness to pay", "Channel & acquisition (CAC/ROAS)",
+   "Returns/refund risk", "Compare markets/countries". multiSelect:true.
+
+Then cover, in a sensible order:
 1. exact product/range and intended price band;
 2. style/aesthetic direction (e.g. minimal, loud streetwear, old-money,
    Indo-western, heritage craft, technical/performance, quiet luxury);
@@ -134,10 +153,10 @@ sensible order:
 5. materials, fit, quality cues, design constraints or non-negotiables;
 6. competitors, references or anti-references ("like X", "not like Y");
 7. target customers/buyers and channels;
-8. target geographies/markets;
+8. specific regions/cities WITHIN the target country (after A is answered);
 9. FUNDING (one dedicated question: how much capital they have available AND
    how many months of runway it must cover — combine both in the options, e.g.
-   "₹25 lakh, needs to last 12 months");
+   "$50k, needs to last 12 months" — use THEIR country's currency);
 10. prior experience, scale ambition, timeline and restrictions where not
     already answered.
 
@@ -170,9 +189,10 @@ Output JSON only, no markdown fences. Either:
 or
 {"done":true,"brief":"<1–2 sentence summary of the venture>",
  "profile":{"ambitions":"...","product":"...","capitalInr":<number or null>,
-  "experience":"...","scale":"...","restrictions":["..."],"goal":"...",
+  "experience":"...","scale":"...","restrictions":["..."],
+  "goal":"<the SIMULATION GOAL from question B, in plain words — what the run should answer>",
   "category":"<product category>","priceBand":"<intended price positioning>",
-  "geography":["<target market/city>"],"targetAudience":"<who buys>",
+  "geography":["<TARGET COUNTRY first, e.g. United States>","<then region/city>"],"targetAudience":"<who buys>",
   "productDetails":{"styleKeywords":["..."],"aestheticReferences":["..."],
    "heroProducts":["..."],"occasions":["..."],
    "materialsAndFit":"...","differentiation":"..."},
@@ -182,7 +202,11 @@ The "funding" field is REQUIRED in the final profile — parse it from the
 funding answer (capitalAvailable verbatim-ish, runwayMonths as a number).
 The "productDetails" field is REQUIRED in the final profile for taste-led
 consumer products and should be included whenever the answers contain product
-style, reference, occasion, material, fit or differentiation details.`;
+style, reference, occasion, material, fit or differentiation details.
+"geography" MUST list the TARGET COUNTRY explicitly as the first entry (e.g.
+"United States"), then any regions/cities — the market, currency and benchmarks
+are selected from it. "goal" MUST state what the founder wants the simulation to
+answer (the simulation goal from question B).`;
 
 // ---------------------------------------------------------------------------
 // v2 prompts (SPEC-V2 §1, §4)
@@ -1061,7 +1085,8 @@ Online consumer opinion: ${prefill.consumerOpinion || "(none found)"}
 
 Rules given this pre-fill:
 - Do NOT ask about anything already covered by the known fields / draft profile — treat those as answered.
-- Ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, founder experience, and any financial targets. Aim for 2-4 questions; ask fewer when the site was rich.
+- ALWAYS ask the SIMULATION GOAL (what the founder wants the run to answer) — a website can't reveal it — and CONFIRM the target country if it wasn't explicit on the site (it sets currency/benchmarks/regions).
+- Otherwise ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, founder experience, and any financial targets. Aim for 2-4 questions; ask fewer when the site was rich.
 - On done:true, MERGE the draft profile into the final profile (the founder's chat answers override the draft on any conflict) and fold the consumer opinion into your read of targetAudience.`;
 }
 

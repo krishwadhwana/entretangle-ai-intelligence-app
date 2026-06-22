@@ -438,8 +438,20 @@ export function marketFromCountries(
   return "IN";
 }
 
+// Geography is free text that may be cities, not countries — so require an
+// EXPLICIT non-India country signal to switch to the US/USD baseline; otherwise
+// default to the home market (India). (The launch sim routes off persona.country
+// via marketFromCountries, which is reliable; this guards research grounding +
+// market-data sourcing from a bare city name misrouting the market.)
+const NON_INDIA_MARKET_RE =
+  /\b(united states|u\.?s\.?a?|america|united kingdom|u\.?k\.?|canada|australia|uae|emirates|singapore|europe|european|germany|france|usd|gbp|eur)\b/i;
+
 export function marketFromGeography(geography?: string[] | null): Market {
-  return marketFromCountries(geography ?? []);
+  const g = (geography ?? []).join(" ");
+  if (!g.trim()) return "IN";
+  if (INDIA_RE.test(g)) return "IN";
+  if (NON_INDIA_MARKET_RE.test(g)) return "US";
+  return "IN";
 }
 
 // ---------------------------------------------------------------------------
