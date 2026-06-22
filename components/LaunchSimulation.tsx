@@ -103,6 +103,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   initialInventoryUnits: null,
   reorderLeadTimeDays: 30,
   reorderEnabled: true,
+  minOrderQtyUnits: null,
   repeatRateMult: 1,
   jitterAmplitude: 0.06,
   channels: [],
@@ -590,6 +591,16 @@ export default function LaunchSimulation({
                   help="Days between placing replenishment and receiving sellable inventory."
                   value={inputs.reorderLeadTimeDays}
                   onChange={(v) => set("reorderLeadTimeDays", Math.round(v))}
+                  small
+                />
+                <NumField
+                  label="Min order qty"
+                  unit="units/batch"
+                  help="Manufacturer minimum order quantity. Reorders are placed in whole batches, so you end holding a leftover partial batch (realistic deadstock). 0 = auto (~1 month of demand); 1 = continuous/JIT reordering."
+                  value={inputs.minOrderQtyUnits ?? 0}
+                  onChange={(v) =>
+                    set("minOrderQtyUnits", v ? Math.round(v) : null)
+                  }
                   small
                 />
               </AdvancedGroup>

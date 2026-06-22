@@ -328,6 +328,16 @@ export function resolveLaunchInputs(
         : 0;
   }
 
+  // Minimum order quantity: default to ~1 month of demand so reorders are
+  // realistically lumpy (sawtooth inventory; the leftover partial batch is the
+  // deadstock). Founders can set their manufacturer's real MOQ, or 1 for JIT.
+  const minOrderQtyUnits =
+    i.minOrderQtyUnits ??
+    Math.max(
+      50,
+      Math.round((initialInventoryUnits || 0) / Math.max(1, preset.inventoryBuffer))
+    );
+
   return {
     ...i,
     reachablePool,
@@ -335,6 +345,7 @@ export function resolveLaunchInputs(
     channels,
     returnShippingPerOrder,
     initialInventoryUnits,
+    minOrderQtyUnits,
     refundRateMult: i.refundRateMult * preset.refundMult,
     repeatRateMult: i.repeatRateMult * preset.repeatMult,
     abandonRate: clamp(i.abandonRate * preset.abandonMult, 0, 1),
@@ -995,7 +1006,11 @@ export function simulateLaunch(
       // capital and left "phantom" paid units that deadstock (= on-hand) never
       // counted, so a real over-buy could read as ~0 leftover.
       if (gap > 0 && t + reorderLeadSteps < inputs.horizon) {
-        const qty = Math.ceil(gap);
+        // Order in whole MOQ batches (realistic procurement): inventory follows a
+        // sawtooth and the run ends holding a leftover partial batch, instead of
+        // a continuous trickle that converges to ~0 deadstock.
+        const moq = Math.max(1, inputs.minOrderQtyUnits ?? 1);
+        const qty = Math.ceil(gap / moq) * moq;
         onOrder += qty;
         unitsPurchased += qty;
         reorderCashOut = qty * inputs.costPrice;
@@ -1029,7 +1044,11 @@ export function simulateLaunch(
     // are. Add COGS back, subtract the reorder cash outflow.
     cumulativeCash += netProfit + cogs - reorderCashOut;
     if (cumulativeCash < minCash) minCash = cumulativeCash;
-    if (breakEvenStep === null && cumulativeNetProfit >= 0) breakEvenStep = t;
+    // Break-even = CASH payback: the step cumulative cash first climbs back to ≥0,
+    // i.e. you've recovered the inventory + ad outlay. (Accrual profit can be
+    // positive from order 1 while you're still deep in working-capital debt, which
+    // is why this used to read "Day 1".)
+    if (breakEvenStep === null && cumulativeCash >= 0 && t > 0) breakEvenStep = t;
 
     lastStepNewBuyers = stepNewOrders * fillRate;
 

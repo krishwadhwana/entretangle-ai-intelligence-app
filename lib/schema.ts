@@ -1399,6 +1399,10 @@ export const LaunchSimInputsSchema = z.object({
   initialInventoryUnits: z.number().int().nonnegative().nullable().default(null), // null → derived from demand
   reorderLeadTimeDays: z.number().int().min(0).max(180).default(30),
   reorderEnabled: z.boolean().default(true),
+  // Minimum order quantity: reorders are placed in whole MOQ batches (realistic
+  // procurement → sawtooth inventory + a leftover partial batch as deadstock).
+  // null → derived (~1 month of demand). Set 1 for continuous/JIT reordering.
+  minOrderQtyUnits: z.number().int().nonnegative().nullable().default(null),
 
   // --- repeat purchase ---
   repeatRateMult: z.number().nonnegative().default(1), // scales the per-segment annual repeat rate
