@@ -1499,6 +1499,10 @@ export const LaunchSimResultSchema = z.object({
     netMarginPct: z.number(),
     deadstockUnits: z.number(),
     deadstockValue: z.number(),
+    // Inventory reconciliation: total units paid for, and units still in transit
+    // (paid, undelivered) at the horizon. Default 0 for results saved before these.
+    unitsPurchased: z.number().default(0),
+    unitsInTransitEnd: z.number().default(0),
     peakCapitalNeeded: z.number(), // worst cumulative cash trough (working capital)
     breakEvenStep: z.number().nullable(), // step index cumulative net profit first ≥ 0
     breakEvenLabel: z.string().nullable(),

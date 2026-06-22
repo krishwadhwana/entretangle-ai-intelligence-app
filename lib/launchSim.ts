@@ -666,6 +666,9 @@ export function simulateLaunch(
 
   let inventory = inputs.initialInventoryUnits ?? 0;
   let onOrder = 0;
+  // Total units the founder has PAID for (opening batch + every reorder placed) —
+  // lets the summary reconcile purchased = sold + leftover + in-transit.
+  let unitsPurchased = inputs.initialInventoryUnits ?? 0;
   let emaDemand = 0;
   let lastStepNewBuyers = 0;
 
@@ -986,9 +989,15 @@ export function simulateLaunch(
     if (inputs.reorderEnabled) {
       const target = emaDemand * (reorderLeadSteps + 1.5);
       const gap = target - inventory - onOrder;
-      if (gap > 0) {
+      // Only reorder stock that can actually ARRIVE before the horizon ends.
+      // An order placed in the final lead-time window would land after the sim
+      // (clamped, never delivered) yet still be paid for — that inflated working
+      // capital and left "phantom" paid units that deadstock (= on-hand) never
+      // counted, so a real over-buy could read as ~0 leftover.
+      if (gap > 0 && t + reorderLeadSteps < inputs.horizon) {
         const qty = Math.ceil(gap);
         onOrder += qty;
+        unitsPurchased += qty;
         reorderCashOut = qty * inputs.costPrice;
         const arriveAt = Math.min(
           t + reorderLeadSteps,
@@ -1085,6 +1094,10 @@ export function simulateLaunch(
   const grossProfit = netRevenue - totalCogs;
   const deadstockUnits = Math.max(0, inventory);
   const deadstockValue = deadstockUnits * inputs.costPrice;
+  // Inventory reconciliation: units paid for, and units still in transit (paid but
+  // not delivered) at the horizon. With the in-time reorder guard this should be ~0;
+  // a non-zero value flags capital sunk in undelivered stock.
+  const unitsInTransitEnd = Math.max(0, onOrder);
   const summary = {
     totalImpressions: count(sum((s) => s.impressions)),
     totalReached: count(totalReached),
@@ -1121,6 +1134,8 @@ export function simulateLaunch(
       netRevenue > 0 ? round((netProfit / netRevenue) * 100, 1) : 0,
     deadstockUnits: count(deadstockUnits),
     deadstockValue: money(deadstockValue),
+    unitsPurchased: count(unitsPurchased),
+    unitsInTransitEnd: count(unitsInTransitEnd),
     peakCapitalNeeded: money(Math.max(0, -minCash)),
     breakEvenStep,
     breakEvenLabel:
