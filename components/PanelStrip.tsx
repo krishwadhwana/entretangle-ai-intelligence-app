@@ -14,10 +14,12 @@ import {
   BookOpen,
   LayoutDashboard,
   ChevronDown,
+  FileDown,
 } from "lucide-react";
 import type { Block, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { DOMAIN_META, DOMAIN_ORDER } from "./domains";
+import { downloadDossier, slug, type Dossier, type DossierSection } from "./pdf";
 
 function StateDot({ state }: { state: Block["state"] }) {
   if (state === "concluded")
@@ -391,6 +393,69 @@ export function ConclusionWorkspace({
   }
 
   const agg = state.aggregate;
+
+  // --- PDF dossier export -------------------------------------------------
+  const [pdfOpen, setPdfOpen] = useState(false);
+  const conclusionDossier = (): Dossier => {
+    const meta: string[] = [];
+    if (state.worldModel)
+      meta.push(
+        `${state.worldModel.conclusionCount} conclusions · ${state.worldModel.blockCount} desks`
+      );
+    if (agg)
+      meta.push(`${agg.totalPersonas.toLocaleString()} personas · ${agg.totalCohorts} cohorts`);
+    meta.push(new Date().toLocaleDateString());
+    const sections: DossierSection[] = [];
+    if (report) {
+      if (report.verdict) sections.push({ heading: "Verdict", body: report.verdict });
+      if (report.executiveSummary)
+        sections.push({ heading: "Executive summary", body: report.executiveSummary });
+      for (const s of report.sections)
+        sections.push({ heading: s.title, body: s.summary, bullets: s.bullets });
+      if (report.nextActions.length)
+        sections.push({ heading: "Next actions", bullets: report.nextActions });
+      if (report.risks.length)
+        sections.push({ heading: "Risks to validate", bullets: report.risks });
+    }
+    return {
+      title: report?.title ?? "Conclusion dossier",
+      subtitle: report?.verdict ? undefined : state.phaseLabel,
+      meta,
+      sections,
+    };
+  };
+  const followUpSections = (): DossierSection[] =>
+    history.map((t, i) => ({
+      heading: `${i + 1}. ${t.question}`,
+      body: t.answer,
+    }));
+  const baseName = slug(report?.title ?? "conclusion");
+  // One PDF: conclusion with the follow-up Q&A appended as a supplement.
+  const exportSupplement = () => {
+    const d = conclusionDossier();
+    const fu = followUpSections();
+    if (fu.length)
+      d.sections.push({ heading: "Follow-up — Q&A" }, ...fu);
+    downloadDossier(d, `${baseName}-dossier`);
+    setPdfOpen(false);
+  };
+  // Two PDFs: the conclusion, and the follow-up Q&A as its own file.
+  const exportSeparate = () => {
+    downloadDossier(conclusionDossier(), `${baseName}-dossier`);
+    const fu = followUpSections();
+    if (fu.length)
+      downloadDossier(
+        {
+          title: "Follow-up Q&A",
+          subtitle: report?.title ?? undefined,
+          meta: [`${fu.length} question${fu.length === 1 ? "" : "s"}`, new Date().toLocaleDateString()],
+          sections: fu,
+        },
+        `${baseName}-followup`
+      );
+    setPdfOpen(false);
+  };
+
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/60 p-6">
       <div className="mx-auto max-w-7xl">
@@ -419,6 +484,43 @@ export function ConclusionWorkspace({
                     ? "Regenerate with financials"
                     : "Generate final report"}
               </button>
+            )}
+            {report && (
+              <div className="relative inline-block">
+                <button
+                  onClick={() => setPdfOpen((o) => !o)}
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-400"
+                >
+                  <FileDown className="h-3.5 w-3.5" /> Create PDF
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+                {pdfOpen && (
+                  <div className="absolute z-20 mt-1 w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg">
+                    <button
+                      onClick={exportSupplement}
+                      className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100"
+                    >
+                      <span className="font-medium">Conclusion + follow-up</span>
+                      <span className="block text-[10px] text-neutral-400">
+                        One PDF — Q&amp;A appended as a supplement
+                        {history.length ? ` (${history.length})` : ""}
+                      </span>
+                    </button>
+                    <button
+                      onClick={exportSeparate}
+                      disabled={history.length === 0}
+                      className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100 disabled:opacity-40"
+                    >
+                      <span className="font-medium">Follow-up as a separate PDF</span>
+                      <span className="block text-[10px] text-neutral-400">
+                        {history.length
+                          ? "Two files: conclusion + follow-up"
+                          : "No follow-up Q&A yet"}
+                      </span>
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
 

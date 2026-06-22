@@ -10,6 +10,7 @@ import {
   Scale,
   Wallet,
   Target,
+  FileDown,
 } from "lucide-react";
 import {
   ResponsiveContainer,
@@ -32,6 +33,7 @@ import type {
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { ValueTooltip } from "./ValueTooltip";
+import { downloadDossier, type DossierSection } from "./pdf";
 
 // Provenance dot — the visible signal of "hybrid by stage": ai estimates firm
 // up to founder/data numbers over the journey.
@@ -227,6 +229,65 @@ export default function FinancialsSection({
 
   const currency = model?.currency ?? "INR";
 
+  const exportPdf = () => {
+    if (!model) return;
+    const m = model;
+    const money = (n: FinNum | null | undefined) =>
+      n && Number.isFinite(n.value) ? fmt(n.value, currency) : "—";
+    const plain = (n: FinNum | null | undefined) =>
+      n && Number.isFinite(n.value) ? String(n.value) : "—";
+    const sections: DossierSection[] = [];
+    if (m.runwayFit.verdict)
+      sections.push({ heading: "Verdict", body: m.runwayFit.verdict });
+    sections.push({
+      heading: "Unit economics",
+      bullets: [
+        `Blended CAC: ${money(m.unitEconomics.blendedCac)}`,
+        `LTV: ${money(m.unitEconomics.ltv)}`,
+        `LTV : CAC: ${plain(m.unitEconomics.ltvCacRatio)}`,
+      ],
+    });
+    sections.push({
+      heading: "Break-even",
+      bullets: [
+        `Units / month: ${plain(m.breakEven.breakEvenUnitsPerMonth)}`,
+        `Months to break-even: ${plain(m.breakEven.monthsToBreakEven)}`,
+        `Revenue / month at break-even: ${money(m.breakEven.breakEvenRevenuePerMonth)}`,
+      ],
+    });
+    sections.push({
+      heading: "Runway",
+      bullets: [`Runway: ${plain(m.runwayFit.runwayMonths)} months`],
+    });
+    if (m.priceTiers.length)
+      sections.push({
+        heading: "Price tiers",
+        bullets: m.priceTiers.map(
+          (t) => `${t.label}: ${money(t.price)} · ${plain(t.grossMarginPct)}% margin`
+        ),
+      });
+    if (m.costStructure.length)
+      sections.push({
+        heading: "Cost structure (per unit)",
+        bullets: m.costStructure.map((c) => `${c.label}: ${money(c.amount)}`),
+      });
+    // Follow-up: the run's whole-model Q&A, appended as a supplement.
+    const fu = state.conversation.filter((t) => t.domains.length === 0);
+    if (fu.length)
+      sections.push(
+        { heading: "Follow-up — Q&A" },
+        ...fu.map((t, i) => ({ heading: `${i + 1}. ${t.question}`, body: t.answer }))
+      );
+    downloadDossier(
+      {
+        title: "Financial model",
+        meta: [currency, `${model.dataMaturityPct}% real data`, new Date().toLocaleDateString()],
+        sections,
+      },
+      "financials-dossier"
+    );
+  };
+
   useEffect(() => {
     setModel(initial?.model ?? null);
     setInputs(initial?.inputs ?? null);
@@ -378,6 +439,13 @@ export default function FinancialsSection({
                 <span className="flex items-center gap-1"><Dot source="founder_entered" /> you</span>
                 <span className="flex items-center gap-1"><Dot source="computed" /> computed</span>
               </span>
+              <button
+                onClick={exportPdf}
+                title="Export the financial model (+ follow-up Q&A) as a PDF"
+                className="ml-auto flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1 text-[11px] font-medium text-neutral-700 hover:border-neutral-400"
+              >
+                <FileDown className="h-3.5 w-3.5" /> Create PDF
+              </button>
             </div>
 
             {/* HERO: top-down vs bottom-up reconciliation */}

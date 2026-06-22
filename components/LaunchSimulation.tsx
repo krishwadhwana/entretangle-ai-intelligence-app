@@ -30,10 +30,12 @@ import {
   ChevronDown,
   Settings2,
   Globe,
+  FileDown,
   Trash2,
 } from "lucide-react";
 import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
+import { downloadDossier, slug, type DossierSection } from "./pdf";
 import type { LaunchSimInputs, LaunchSimRecord } from "@/lib/schema";
 
 // ---------------------------------------------------------------------------
@@ -956,9 +958,56 @@ function Results({
     { name: "Fixed costs", value: s.totalFixedCosts },
   ].filter((c) => c.value > 0);
 
+  const exportPdf = () => {
+    const d = result.diagnostics;
+    const cur = record.inputs.currency;
+    const sections: DossierSection[] = [];
+    if (d.headline) sections.push({ heading: "Verdict", body: d.headline });
+    sections.push({
+      heading: "Key metrics",
+      bullets: [
+        `Net profit: ${fmt.money(s.netProfit)} (${s.netMarginPct}% net margin)`,
+        `Net revenue: ${fmt.money(s.netRevenue)} (gross ${fmt.money(s.grossRevenue)})`,
+        `Orders: ${fmt.num(s.totalOrders)} · ${s.returningCustomerSharePct}% returning`,
+        `Refund rate: ${s.refundRatePct}% (${fmt.num(s.refunds)} refunds)`,
+        `Blended CAC: ${fmt.money(s.blendedCac)}`,
+        `Break-even: ${s.breakEvenLabel ?? "Never"}`,
+      ],
+    });
+    if (d.drivers.length) sections.push({ heading: "What's driving it", bullets: d.drivers });
+    if (d.risks.length) sections.push({ heading: "Risks", bullets: d.risks });
+    if (d.nextMoves.length) sections.push({ heading: "Next moves", bullets: d.nextMoves });
+    downloadDossier(
+      {
+        title: `Launch simulation — ${record.name}`,
+        subtitle: record.inputs.region
+          ? `${record.inputs.region} region`
+          : "Whole audience",
+        meta: [
+          `${record.inputs.horizon} ${record.inputs.granularity === "day" ? "days" : "months"}`,
+          cur,
+          new Date().toLocaleDateString(),
+        ],
+        sections,
+      },
+      `launch-${slug(record.name)}-dossier`
+    );
+  };
+
   return (
     <div className="space-y-5">
-      <Readout diagnostics={result.diagnostics} />
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <Readout diagnostics={result.diagnostics} />
+        </div>
+        <button
+          onClick={exportPdf}
+          title="Export this launch scenario's conclusion as a PDF"
+          className="flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-400"
+        >
+          <FileDown className="h-3.5 w-3.5" /> Create PDF
+        </button>
+      </div>
 
       {/* Headline stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
