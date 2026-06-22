@@ -272,6 +272,8 @@ model LaunchSimulation {
   name      String   @default("Scenario")
   inputs    Json // LaunchSimInputs
   result    Json // LaunchSimResult
+  // JSONB: "Ask about this scenario" follow-up Q&A — [{question,answer,ts}]
+  followUp  Json     @default("[]") @map("follow_up")
   createdAt DateTime @default(now()) @map("created_at")
 
   run Run @relation(fields: [runId], references: [id], onDelete: Cascade)

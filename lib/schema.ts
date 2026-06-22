@@ -1006,12 +1006,23 @@ export type BrandSocialSection = z.infer<typeof BrandSocialSectionSchema>;
 // computeFinancials() against the same persona audience. `editedKeys` records
 // which inputs the founder changed (drives the founder_entered provenance +
 // the "firming up" data-maturity meter).
+// One persisted follow-up exchange (ask-about-this Q&A on a launch scenario or
+// the financial model). Shared shape so launch + financials reuse it.
+export const FollowUpTurnSchema = z.object({
+  question: z.string(),
+  answer: z.string(),
+  ts: z.string().default(""),
+});
+export type FollowUpTurn = z.infer<typeof FollowUpTurnSchema>;
+
 export const FinancialsSectionSchema = z.object({
   model: FinancialModelSchema.nullable().default(null),
   inputs: FinancialInputsSchema.nullable().default(null),
   editedKeys: z.array(z.string()).default([]),
   generatedAt: z.string().nullable().default(null),
   sourceRunId: z.string().nullable().default(null),
+  // "Ask about these financials" Q&A — persists with the model.
+  followUp: z.array(FollowUpTurnSchema).default([]),
 });
 export type FinancialsSection = z.infer<typeof FinancialsSectionSchema>;
 
@@ -1509,6 +1520,8 @@ export const LaunchSimRecordSchema = z.object({
   name: z.string(),
   inputs: LaunchSimInputsSchema,
   result: LaunchSimResultSchema,
+  // "Ask about this scenario" Q&A — persisted on the scenario record.
+  followUp: z.array(FollowUpTurnSchema).default([]),
   createdAt: z.string(),
 });
 export type LaunchSimRecord = z.infer<typeof LaunchSimRecordSchema>;

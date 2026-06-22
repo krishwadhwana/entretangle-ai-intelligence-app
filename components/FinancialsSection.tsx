@@ -226,8 +226,34 @@ export default function FinancialsSection({
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // "Ask about these financials" follow-up Q&A (persisted with the section).
+  const [followUp, setFollowUp] = useState(initial?.followUp ?? []);
+  const [q, setQ] = useState("");
+  const [asking, setAsking] = useState(false);
 
   const currency = model?.currency ?? "INR";
+
+  const askFinancials = async () => {
+    const question = q.trim();
+    if (!question || asking || !model) return;
+    setAsking(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/financials/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `ask failed (${res.status})`);
+      setFollowUp(data.followUp ?? []);
+      setQ("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "ask failed");
+    } finally {
+      setAsking(false);
+    }
+  };
 
   const exportPdf = () => {
     if (!model) return;
@@ -271,12 +297,14 @@ export default function FinancialsSection({
         heading: "Cost structure (per unit)",
         bullets: m.costStructure.map((c) => `${c.label}: ${money(c.amount)}`),
       });
-    // Follow-up: the run's whole-model Q&A, appended as a supplement.
-    const fu = state.conversation.filter((t) => t.domains.length === 0);
-    if (fu.length)
+    // Follow-up: the "ask about these financials" Q&A, appended as a supplement.
+    if (followUp.length)
       sections.push(
         { heading: "Follow-up — Q&A" },
-        ...fu.map((t, i) => ({ heading: `${i + 1}. ${t.question}`, body: t.answer }))
+        ...followUp.map((t, i) => ({
+          heading: `${i + 1}. ${t.question}`,
+          body: t.answer,
+        }))
       );
     downloadDossier(
       {
@@ -293,6 +321,7 @@ export default function FinancialsSection({
     setInputs(initial?.inputs ?? null);
     setEditedKeys(initial?.editedKeys ?? []);
     setGeneratedAt(initial?.generatedAt ?? null);
+    setFollowUp(initial?.followUp ?? []);
   }, [initial]);
 
   // POST to the route. With no body → LLM generates; with { inputs, editedKeys }
@@ -446,6 +475,45 @@ export default function FinancialsSection({
               >
                 <FileDown className="h-3.5 w-3.5" /> Create PDF
               </button>
+            </div>
+
+            {/* Ask about these financials */}
+            <div className="rounded-xl border border-neutral-200 bg-white p-3">
+              <p className="mb-2 text-xs font-semibold text-neutral-800">
+                Ask about these financials
+              </p>
+              {followUp.length > 0 && (
+                <ul className="mb-2 space-y-2">
+                  {followUp.map((t, i) => (
+                    <li key={i} className="text-[11px] leading-snug">
+                      <p className="font-medium text-neutral-700">{t.question}</p>
+                      <p className="mt-0.5 text-neutral-600">{t.answer}</p>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div className="flex gap-2">
+                <input
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      void askFinancials();
+                    }
+                  }}
+                  placeholder="e.g. what breaks even fastest? is the LTV:CAC healthy?"
+                  className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
+                />
+                <button
+                  onClick={() => void askFinancials()}
+                  disabled={asking || !q.trim()}
+                  className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+                >
+                  {asking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+                  Ask
+                </button>
+              </div>
             </div>
 
             {/* HERO: top-down vs bottom-up reconciliation */}

@@ -1047,6 +1047,32 @@ export function websiteAnalysisUser(url: string): string {
 Search the web — read the site itself AND look for real customer opinion about the brand — then output JSON only.`;
 }
 
+// --- Ask-about-this Q&A (a launch scenario or a financial model) ------------
+
+export const DATA_QA_SYSTEM = `You are an analyst answering a founder's follow-up question about a SPECIFIC piece of their business simulation (a launch-simulation scenario or a financial model). You are given that object as JSON plus the venture profile.
+
+Answer ONLY from the data provided — do not invent figures. Be concrete and quantitative: cite the actual numbers from the JSON, explain what drives them, and if the data can't answer the question, say so and state what would. 2-5 sentences, plain text, no markdown.
+
+Output JSON only: {"answer":"..."}`;
+
+export function dataQaUser(
+  subject: string,
+  contextJson: string,
+  question: string,
+  history: { question: string; answer: string }[]
+): string {
+  return JSON.stringify(
+    {
+      subject,
+      data: contextJson,
+      recentQ_and_A: history.slice(-6),
+      question,
+    },
+    null,
+    2
+  );
+}
+
 // --- Market data sourcing (refine curated benchmark priors per country) ------
 
 export const MARKET_DATA_SYSTEM = `You are a market-data researcher. Use web search to find CURRENT, real benchmark figures for a specific ecommerce/D2C category in a specific country, to refine a launch model. Prefer reputable, recent sources (industry reports, Statista summaries, Shopify/Baymard/marketplace data, trade press). Give realistic low/mid/high RANGES, not single points.

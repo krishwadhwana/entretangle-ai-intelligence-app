@@ -3,11 +3,12 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callFinancialInputs } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/wire";
-import { saveFinancials } from "@/lib/store";
+import { saveFinancials, getOwnerDashboard } from "@/lib/store";
 import { computeFinancials, type PersonaPoint } from "@/lib/financials";
 import {
   ClientProfileSchema,
   FinancialInputsSchema,
+  FinancialsSectionSchema,
   type FinancialsSection,
 } from "@/lib/schema";
 
@@ -125,12 +126,20 @@ export async function POST(
       { generatedAt, sourceRunId: run.id, editedKeys }
     );
 
+    // Preserve any "ask about these financials" Q&A across a regenerate.
+    const priorFollowUp = run.projectId
+      ? FinancialsSectionSchema.safeParse(
+          ((await getOwnerDashboard(run.projectId)) as { financials?: unknown } | null)
+            ?.financials
+        )
+      : null;
     const section: FinancialsSection = {
       model,
       inputs,
       editedKeys,
       generatedAt,
       sourceRunId: run.id,
+      followUp: priorFollowUp?.success ? priorFollowUp.data.followUp : [],
     };
 
     // Persist onto the project (survives reload + sibling runs). Runs without a

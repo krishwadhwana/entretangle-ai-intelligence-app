@@ -6,6 +6,7 @@ import { simulateLaunch, type LaunchPersona } from "@/lib/launchSim";
 import {
   ClientProfileSchema,
   LaunchSimInputsSchema,
+  LaunchSimRecordSchema,
   type LaunchBusinessModel,
   type LaunchSimInputs,
   type LaunchSimRecord,
@@ -201,6 +202,7 @@ export async function GET(
               seasonality: priors.seasonality,
             })
           : (r.result as unknown as LaunchSimRecord["result"]),
+      followUp: LaunchSimRecordSchema.shape.followUp.parse(r.followUp),
       createdAt: r.createdAt.toISOString(),
     };
   });
@@ -292,6 +294,7 @@ export async function POST(
       name: row.name,
       inputs,
       result,
+      followUp: [],
       createdAt: row.createdAt.toISOString(),
     };
     return NextResponse.json(record);

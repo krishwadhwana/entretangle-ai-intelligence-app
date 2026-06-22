@@ -657,7 +657,7 @@ export default function LaunchSimulation({
           </div>
         </section>
 
-        {active && <Results record={active} fmt={fmt} />}
+        {active && <Results record={active} fmt={fmt} runId={runId} />}
 
         <OutcomeCapture
           runId={runId}
@@ -900,15 +900,46 @@ function OutcomeRow({
 function Results({
   record,
   fmt,
+  runId,
 }: {
   record: LaunchSimRecord;
   fmt: Formatters;
+  runId: string;
 }) {
   const { result } = record;
   const { summary: s, timeline, breakdowns: b } = result;
   const [visible, setVisible] = useState(timeline.length);
   const [playing, setPlaying] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
+  // "Ask about this scenario" follow-up Q&A (persisted on the scenario).
+  const [followUp, setFollowUp] = useState(record.followUp ?? []);
+  const [q, setQ] = useState("");
+  const [asking, setAsking] = useState(false);
+  const [qaError, setQaError] = useState<string | null>(null);
+  useEffect(() => {
+    setFollowUp(record.followUp ?? []);
+  }, [record.id, record.followUp]);
+  const ask = async () => {
+    const question = q.trim();
+    if (!question || asking) return;
+    setAsking(true);
+    setQaError(null);
+    try {
+      const res = await fetch(`/api/runs/${runId}/launch-sim/ask`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scenarioId: record.id, question }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data?.error ?? `ask failed (${res.status})`);
+      setFollowUp(data.followUp ?? []);
+      setQ("");
+    } catch (e) {
+      setQaError(e instanceof Error ? e.message : "ask failed");
+    } finally {
+      setAsking(false);
+    }
+  };
 
   // Restart playback whenever a new scenario is shown.
   useEffect(() => {
@@ -977,6 +1008,11 @@ function Results({
     if (d.drivers.length) sections.push({ heading: "What's driving it", bullets: d.drivers });
     if (d.risks.length) sections.push({ heading: "Risks", bullets: d.risks });
     if (d.nextMoves.length) sections.push({ heading: "Next moves", bullets: d.nextMoves });
+    if (followUp.length)
+      sections.push(
+        { heading: "Follow-up — Q&A" },
+        ...followUp.map((t, i) => ({ heading: `${i + 1}. ${t.question}`, body: t.answer }))
+      );
     downloadDossier(
       {
         title: `Launch simulation — ${record.name}`,
@@ -1007,6 +1043,46 @@ function Results({
         >
           <FileDown className="h-3.5 w-3.5" /> Create PDF
         </button>
+      </div>
+
+      {/* Ask about this scenario */}
+      <div className="rounded-xl border border-neutral-200 bg-white p-3">
+        <p className="mb-2 text-xs font-semibold text-neutral-800">
+          Ask about this scenario
+        </p>
+        {followUp.length > 0 && (
+          <ul className="mb-2 space-y-2">
+            {followUp.map((t, i) => (
+              <li key={i} className="text-[11px] leading-snug">
+                <p className="font-medium text-neutral-700">{t.question}</p>
+                <p className="mt-0.5 text-neutral-600">{t.answer}</p>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex gap-2">
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                void ask();
+              }
+            }}
+            placeholder="e.g. why does profit dip after month 6? what lifts CAC?"
+            className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
+          />
+          <button
+            onClick={() => void ask()}
+            disabled={asking || !q.trim()}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {asking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            Ask
+          </button>
+        </div>
+        {qaError && <p className="mt-1 text-[11px] text-red-600">{qaError}</p>}
       </div>
 
       {/* Headline stat cards */}

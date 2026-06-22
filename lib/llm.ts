@@ -71,6 +71,8 @@ import {
   websiteAnalysisUser,
   MARKET_DATA_SYSTEM,
   marketDataUser,
+  DATA_QA_SYSTEM,
+  dataQaUser,
   intakePrefillBlock,
   QUERY_SYSTEM,
   queryV2User,
@@ -1157,6 +1159,28 @@ export async function callBrandKit(
       maxCompletionTokens: 16000,
     });
   }
+}
+
+/**
+ * Answer a founder's follow-up question about a specific simulation object (a
+ * launch scenario or a financial model). Grounded strictly in the JSON given.
+ */
+export async function callDataQuestion(
+  runId: string,
+  subject: string,
+  contextJson: string,
+  question: string,
+  history: { question: string; answer: string }[]
+): Promise<string> {
+  if (config.mockMode) return `(mock) Answer about ${subject}: ${question}`;
+  const out = await callJson({
+    runId,
+    system: DATA_QA_SYSTEM,
+    user: dataQaUser(subject, contextJson, question, history),
+    schema: z.object({ answer: z.string() }),
+    maxCompletionTokens: 700,
+  });
+  return out.answer;
 }
 
 /**

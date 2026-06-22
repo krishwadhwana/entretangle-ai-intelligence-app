@@ -64,6 +64,7 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     editedKeys: [],
     generatedAt: null,
     sourceRunId: null,
+    followUp: [],
   },
   inspiration: { kit: null, generatedAt: null, sourceRunId: null },
 };
