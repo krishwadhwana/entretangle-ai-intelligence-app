@@ -8,7 +8,9 @@ export const SEGMENT_COLORS: Record<string, string> = {
   luxury: "#a855f7",
 };
 
-// GoI zonal-council colours (political-geography map + region chart).
+// Region colours for the political-geography map + region chart. Covers both
+// India GoI zones and US Census regions (Midwest is US-only; Northeast/South/
+// West are shared labels).
 export const ZONE_COLORS: Record<string, string> = {
   North: "#6366f1",
   South: "#10b981",
@@ -16,6 +18,7 @@ export const ZONE_COLORS: Record<string, string> = {
   West: "#ef4444",
   Central: "#8b5cf6",
   Northeast: "#14b8a6",
+  Midwest: "#0ea5e9",
   Other: "#94a3b8",
 };
 
