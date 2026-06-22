@@ -1031,14 +1031,15 @@ export const WEBSITE_ANALYSIS_SYSTEM = `You bootstrap a founder's venture profil
 Use web search to:
 1. Read the founder's website at the given URL — what they sell, the category, price band, hero products, the style/aesthetic, who it's for, the geography it serves, and its differentiation.
 2. Find REAL online consumer opinion about this brand/product: reviews, ratings, social comments, marketplace feedback, press. Capture what customers actually praise and complain about, and what triggers a purchase. If you cannot find brand-specific opinion, fall back to category-level sentiment and SAY so.
+3. Infer the FOUNDERS' EXISTING SKILLS & BACKGROUND — read the About / Our Story / Team / founder-bio pages, plus press, LinkedIn or interviews if linked. Capture relevant experience: prior ventures, years in the category, design/manufacturing/retail/operating/technical background, whether this is a first venture or a family/heritage business. Write it as the "experience" field, in the same plain style the intake would record (e.g. "10+ years as a menswear designer; previously ran a boutique label"). If the site gives no founder/team signal at all, LEAVE experience empty — do not guess.
 
-Only fill draftProfile fields you are genuinely confident about from the evidence; leave the rest empty. List the confident fields in knownFields using EXACTLY these keys when known: product, category, priceBand, geography, targetAudience, styleKeywords, heroProducts, differentiation.
+Only fill draftProfile fields you are genuinely confident about from the evidence; leave the rest empty. List the confident fields in knownFields using EXACTLY these keys when known: product, category, priceBand, geography, targetAudience, styleKeywords, heroProducts, differentiation, experience.
 
 consumerOpinion: a tight 3-6 sentence brief of real customer sentiment (praise + objections + buying triggers), grounded in what you found; put source URLs in sources. sentiment: overall positive | mixed | negative | unknown. summary: a short, plain-English founder-facing recap of everything you inferred, so they can confirm or correct it in one line.
 
 Output JSON only:
-{"draftProfile":{"product":"...","category":"...","priceBand":"...","geography":["..."],"targetAudience":"...","styleKeywords":["..."],"heroProducts":["..."],"differentiation":"..."},
-"knownFields":["product","category"],
+{"draftProfile":{"product":"...","category":"...","priceBand":"...","geography":["..."],"targetAudience":"...","styleKeywords":["..."],"heroProducts":["..."],"differentiation":"...","experience":"..."},
+"knownFields":["product","category","experience"],
 "consumerOpinion":"...","sentiment":"mixed","summary":"...","sources":["https://..."]}`;
 
 export function websiteAnalysisUser(url: string): string {
@@ -1111,9 +1112,10 @@ Online consumer opinion: ${prefill.consumerOpinion || "(none found)"}
 
 Rules given this pre-fill:
 - Do NOT ask about anything already covered by the known fields / draft profile — treat those as answered.
+- In particular, if the draft profile carries an "experience" value (founders' existing skills/background inferred from the site), treat the founders' skills/experience as ALREADY KNOWN and do NOT ask any background/experience question.
 - ALWAYS ask the SIMULATION GOAL (what the founder wants the run to answer) — a website can't reveal it — and CONFIRM the target country if it wasn't explicit on the site (it sets currency/benchmarks/regions).
-- Otherwise ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, founder experience, and any financial targets. Aim for 2-4 questions; ask fewer when the site was rich.
-- On done:true, MERGE the draft profile into the final profile (the founder's chat answers override the draft on any conflict) and fold the consumer opinion into your read of targetAudience.`;
+- Otherwise ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, and any financial targets (and founder experience ONLY if the draft profile has no "experience" value). Aim for 2-4 questions; ask fewer when the site was rich.
+- On done:true, MERGE the draft profile into the final profile (the founder's chat answers override the draft on any conflict): carry the draft "experience" straight into the final profile's "experience" field, and fold the consumer opinion into your read of targetAudience.`;
 }
 
 export function queryUser(

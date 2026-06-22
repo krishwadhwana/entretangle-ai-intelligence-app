@@ -14,6 +14,7 @@ import {
   Loader2,
   Play,
   Rocket,
+  Ship,
   Square,
   X,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
 import LaunchSimulation from "./LaunchSimulation";
+import ExportViability from "./ExportViability";
 import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
 
@@ -50,6 +52,15 @@ type Props = {
   projectId: string | null;
   brief: string;
   parentRunId: string | null;
+  mode?: string;
+  targetMarket?: string | null;
+  exportProfileDefaults?: {
+    targetAudience: string;
+    priceBand: string;
+    priceMin: number | null;
+    priceMax: number | null;
+    targetMarginPct: number | null;
+  };
   childRunIds: string[];
   maxCostUsd: number;
   maxTokens: number;
@@ -134,16 +145,33 @@ function RunSwitcher({
  * conclusion panel) → THE MAP with two toggle layers (geography / network)
  * and the cohort drawer.
  */
+// Destination markets offered for a one-click cross-border export run. The
+// engine treats any non-home country as the USD/Western baseline today, so this
+// is a convenience list, not a hard limit.
+const EXPORT_MARKETS = [
+  "United States",
+  "United Kingdom",
+  "United Arab Emirates",
+  "Canada",
+  "Australia",
+  "Germany",
+  "Singapore",
+];
+
 export default function RunDashboard({
   runId,
   projectId,
   brief,
   parentRunId,
+  mode,
+  targetMarket,
+  exportProfileDefaults,
   childRunIds,
   maxCostUsd,
   maxTokens,
   siblingRuns,
 }: Props) {
+  const isExportRun = mode === "export";
   const router = useRouter();
   const { state, patchState, replay, replaying, hydrated } =
     useRunEvents(runId);
@@ -154,6 +182,7 @@ export default function RunDashboard({
     | "playbook"
     | "owner"
     | "launch"
+    | "export"
     | "domain"
     | "conclusion"
   >("geo");
@@ -161,6 +190,34 @@ export default function RunDashboard({
     "conclusion" | Domain | null
   >(null);
   const [reportBusy, setReportBusy] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exportBusy, setExportBusy] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+  // The "Test in another market" edit-profile modal: which market it's open for,
+  // plus the editable (pre-filled) destination-market overrides.
+  const [exportMarket, setExportMarket] = useState<string | null>(null);
+  const [ovAudience, setOvAudience] = useState("");
+  const [ovPriceBand, setOvPriceBand] = useState("");
+  const [ovPriceMin, setOvPriceMin] = useState("");
+  const [ovPriceMax, setOvPriceMax] = useState("");
+  const [ovMargin, setOvMargin] = useState("");
+  const [ovContext, setOvContext] = useState("");
+
+  // Open the modal for a market, pre-filling the inherited profile fields.
+  const openExportModal = useCallback(
+    (market: string) => {
+      setExportOpen(false);
+      setExportError(null);
+      setOvAudience(exportProfileDefaults?.targetAudience ?? "");
+      setOvPriceBand(exportProfileDefaults?.priceBand ?? "");
+      setOvPriceMin(exportProfileDefaults?.priceMin?.toString() ?? "");
+      setOvPriceMax(exportProfileDefaults?.priceMax?.toString() ?? "");
+      setOvMargin(exportProfileDefaults?.targetMarginPct?.toString() ?? "");
+      setOvContext("");
+      setExportMarket(market);
+    },
+    [exportProfileDefaults]
+  );
   const [audienceBranchOpen, setAudienceBranchOpen] = useState(false);
   const [audienceBranchInfo, setAudienceBranchInfo] = useState("");
   const [audienceBranchBusy, setAudienceBranchBusy] = useState(false);
@@ -302,6 +359,7 @@ export default function RunDashboard({
         | "playbook"
         | "owner"
         | "launch"
+        | "export"
     ) => {
       setActivePanel(null);
       setView(nextView);
@@ -356,6 +414,61 @@ export default function RunDashboard({
       setAudienceBranchBusy(false);
     }
   }, [audienceBranchBusy, audienceBranchInfo, router, runId]);
+
+  // Spin up a dependent export run rooted at THIS completed run: same product,
+  // re-pointed at the destination market, carrying this run's results forward —
+  // with the founder's optional destination-market profile tweaks applied.
+  const onCreateExportRun = useCallback(async () => {
+    if (exportBusy || !exportMarket) return;
+    setExportBusy(true);
+    setExportError(null);
+    try {
+      const num = (s: string): number | undefined => {
+        const n = parseFloat(s);
+        return Number.isFinite(n) && n >= 0 ? n : undefined;
+      };
+      const profileOverrides: Record<string, unknown> = {};
+      if (ovAudience.trim()) profileOverrides.targetAudience = ovAudience.trim();
+      if (ovPriceBand.trim()) profileOverrides.priceBand = ovPriceBand.trim();
+      if (num(ovPriceMin) !== undefined) profileOverrides.priceMin = num(ovPriceMin);
+      if (num(ovPriceMax) !== undefined) profileOverrides.priceMax = num(ovPriceMax);
+      if (num(ovMargin) !== undefined) profileOverrides.targetMarginPct = num(ovMargin);
+      const res = await fetch(`/api/runs`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          mode: "export",
+          parentRunId: runId,
+          targetMarket: exportMarket,
+          projectId,
+          ...(Object.keys(profileOverrides).length ? { profileOverrides } : {}),
+          ...(ovContext.trim() ? { additionalContext: ovContext.trim() } : {}),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        const msg =
+          typeof data?.error === "string" ? data.error : `export failed (${res.status})`;
+        throw new Error(msg);
+      }
+      router.push(`/runs/${data.runId}`);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Export run failed");
+      setExportBusy(false);
+    }
+  }, [
+    exportBusy,
+    exportMarket,
+    ovAudience,
+    ovPriceBand,
+    ovPriceMin,
+    ovPriceMax,
+    ovMargin,
+    ovContext,
+    projectId,
+    router,
+    runId,
+  ]);
 
   const onAudienceBatchAdded = useCallback(
     (result: AudienceBatchResult) => {
@@ -525,6 +638,63 @@ export default function RunDashboard({
         >
           <Rocket className="h-3 w-3" /> Launch Simulation
         </button>
+        {!isExportRun && canLaunch ? (
+          <div className="relative">
+            <button
+              onClick={() => setExportOpen((o) => !o)}
+              disabled={exportBusy}
+              className="flex items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:border-indigo-500 disabled:opacity-60"
+              title="Carry this run forward into another market (landed cost, pricing & viability)"
+            >
+              {exportBusy ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Ship className="h-3 w-3" />
+              )}
+              Test in another market
+              <ChevronDown className="h-3 w-3" />
+            </button>
+            {exportOpen ? (
+              <div className="absolute left-0 z-20 mt-1 w-52 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
+                <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Destination market
+                </div>
+                {EXPORT_MARKETS.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => openExportModal(m)}
+                    className="block w-full px-3 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-indigo-50"
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+            {exportError ? (
+              <div className="absolute left-0 top-full mt-1 w-52 text-[10px] text-rose-600">
+                {exportError}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        {isExportRun ? (
+          <button
+            onClick={() => selectMainView("export")}
+            disabled={!canLaunch}
+            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
+              view === "export"
+                ? "bg-indigo-600 text-white"
+                : "border border-indigo-300 text-indigo-700 hover:border-indigo-500"
+            } disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-transparent disabled:text-neutral-400 disabled:opacity-60`}
+            title={
+              canLaunch
+                ? "Cross-border landed cost, pricing & viability"
+                : "Available after the audience has finished simulating"
+            }
+          >
+            <Ship className="h-3 w-3" /> Export Viability
+          </button>
+        ) : null}
         <span
           className="flex items-center gap-1 text-[11px] text-neutral-500"
           title="simulated personas"
@@ -747,6 +917,8 @@ export default function RunDashboard({
           />
         ) : view === "launch" ? (
           <LaunchSimulation runId={runId} projectId={projectId} />
+        ) : view === "export" ? (
+          <ExportViability runId={runId} targetMarket={targetMarket} />
         ) : (
           <NetworkView
             state={state}
@@ -776,6 +948,111 @@ export default function RunDashboard({
           />
         )}
       </div>
+
+      {/* Test-in-another-market: edit the inherited profile for the destination
+          before spinning up the dependent export branch. */}
+      {exportMarket && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          onClick={() => !exportBusy && setExportMarket(null)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="flex items-center gap-2 text-sm font-bold text-neutral-900">
+              <Ship className="h-4 w-4 text-indigo-600" /> Test in {exportMarket}
+            </h3>
+            <p className="mt-1 text-[11px] text-neutral-500">
+              Tweak the profile for {exportMarket}, or leave it to carry your home
+              settings forward. The product stays the same; this only re-aims the
+              audience &amp; pricing for the destination.
+            </p>
+            <div className="mt-3 space-y-2.5">
+              <label className="block text-[11px] font-medium text-neutral-600">
+                Target audience
+                <textarea
+                  value={ovAudience}
+                  onChange={(e) => setOvAudience(e.target.value)}
+                  rows={2}
+                  className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                  placeholder="Who buys this in the destination market?"
+                />
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-[11px] font-medium text-neutral-600">
+                  Price band
+                  <input
+                    value={ovPriceBand}
+                    onChange={(e) => setOvPriceBand(e.target.value)}
+                    className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                    placeholder="e.g. premium"
+                  />
+                </label>
+                <label className="block text-[11px] font-medium text-neutral-600">
+                  Target margin %
+                  <input
+                    value={ovMargin}
+                    onChange={(e) => setOvMargin(e.target.value)}
+                    className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                    placeholder="auto"
+                  />
+                </label>
+                <label className="block text-[11px] font-medium text-neutral-600">
+                  Price min
+                  <input
+                    value={ovPriceMin}
+                    onChange={(e) => setOvPriceMin(e.target.value)}
+                    className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                  />
+                </label>
+                <label className="block text-[11px] font-medium text-neutral-600">
+                  Price max
+                  <input
+                    value={ovPriceMax}
+                    onChange={(e) => setOvPriceMax(e.target.value)}
+                    className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                  />
+                </label>
+              </div>
+              <label className="block text-[11px] font-medium text-neutral-600">
+                Destination-specific context (optional)
+                <textarea
+                  value={ovContext}
+                  onChange={(e) => setOvContext(e.target.value)}
+                  rows={2}
+                  className="mt-0.5 block w-full rounded-md border border-neutral-300 px-2 py-1 text-xs"
+                  placeholder="Anything that's different in this market — positioning, competitors, occasions…"
+                />
+              </label>
+            </div>
+            {exportError && (
+              <p className="mt-2 text-[11px] text-rose-600">{exportError}</p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                onClick={() => setExportMarket(null)}
+                disabled={exportBusy}
+                className="rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-600 hover:border-neutral-400 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void onCreateExportRun()}
+                disabled={exportBusy}
+                className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+              >
+                {exportBusy ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Ship className="h-3.5 w-3.5" />
+                )}
+                Run {exportMarket} export
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

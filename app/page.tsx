@@ -14,10 +14,12 @@ import {
   FileText,
   FolderOpen,
   Loader2,
+  Pencil,
   Play,
   Sparkles,
   Trash2,
   Upload,
+  X,
   XCircle,
 } from "lucide-react";
 import type {
@@ -108,6 +110,152 @@ type DocSummary = {
   embModel: string;
   createdAt: string;
 };
+
+// Projects rail shared by the setup and dashboard views: switch, rename
+// (inline), or delete a project. Rename/delete hit /api/projects/[id]; the
+// parent owns the persistence and state updates via the handlers it passes.
+function ProjectSidebar({
+  projects,
+  activeId,
+  onSwitch,
+  onRename,
+  onDelete,
+}: {
+  projects: ProjectSummary[];
+  activeId: string | null;
+  onSwitch: (id: string) => void;
+  onRename: (id: string, name: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editingId) inputRef.current?.select();
+  }, [editingId]);
+
+  function startEdit(p: ProjectSummary) {
+    setEditingId(p.id);
+    setDraft(p.name);
+  }
+  function commitEdit() {
+    if (!editingId) return;
+    const name = draft.trim();
+    const original = projects.find((p) => p.id === editingId);
+    if (name && original && name !== original.name) onRename(editingId, name);
+    setEditingId(null);
+  }
+
+  return (
+    <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
+      <div className="border-b border-neutral-200 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+          Projects
+        </p>
+      </div>
+      <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
+        {projects.map((p) => {
+          const active = p.id === activeId;
+          if (editingId === p.id) {
+            return (
+              <div
+                key={p.id}
+                className="mb-1 flex items-center gap-1 rounded-lg border border-indigo-300 bg-white px-2 py-1.5"
+              >
+                <input
+                  ref={inputRef}
+                  value={draft}
+                  maxLength={120}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      commitEdit();
+                    } else if (e.key === "Escape") {
+                      e.preventDefault();
+                      setEditingId(null);
+                    }
+                  }}
+                  className="min-w-0 flex-1 bg-transparent text-xs font-medium text-neutral-900 outline-none"
+                />
+                <button
+                  onClick={commitEdit}
+                  title="Save"
+                  className="shrink-0 rounded p-1 text-neutral-400 hover:text-emerald-600"
+                >
+                  <Check className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  onClick={() => setEditingId(null)}
+                  title="Cancel"
+                  className="shrink-0 rounded p-1 text-neutral-400 hover:text-neutral-700"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            );
+          }
+          return (
+            <div
+              key={p.id}
+              className={`group mb-1 flex items-center gap-0.5 rounded-lg pr-1 transition ${
+                active
+                  ? "bg-neutral-900 text-white"
+                  : "text-neutral-700 hover:bg-neutral-100"
+              }`}
+            >
+              <button
+                onClick={() => onSwitch(p.id)}
+                className="flex min-w-0 flex-1 items-start gap-2 px-2.5 py-2 text-left"
+              >
+                <FolderOpen
+                  className={`mt-0.5 h-4 w-4 shrink-0 ${
+                    active ? "text-white" : "text-neutral-400"
+                  }`}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {p.name}
+                  </span>
+                  <span
+                    className={`mt-0.5 block truncate text-[10px] ${
+                      active ? "text-neutral-300" : "text-neutral-400"
+                    }`}
+                  >
+                    Updated {new Date(p.updatedAt).toLocaleDateString()}
+                  </span>
+                </span>
+              </button>
+              <button
+                onClick={() => startEdit(p)}
+                title="Rename project"
+                className={`shrink-0 rounded p-1 ${
+                  active
+                    ? "text-neutral-400 hover:text-white"
+                    : "text-neutral-300 hover:text-indigo-600 group-hover:text-neutral-400"
+                }`}
+              >
+                <Pencil className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => onDelete(p.id)}
+                title="Delete project"
+                className={`shrink-0 rounded p-1 ${
+                  active
+                    ? "text-neutral-400 hover:text-red-300"
+                    : "text-neutral-300 hover:text-red-500 group-hover:text-neutral-400"
+                }`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          );
+        })}
+      </nav>
+    </aside>
+  );
+}
 
 function IntakePageInner() {
   const router = useRouter();
@@ -364,6 +512,44 @@ function IntakePageInner() {
       window.localStorage.setItem(ACTIVE_PROJECT_KEY, id);
     }
     applyProject(target, true);
+  }
+
+  // Optimistic rename: update the rail + active title immediately, persist in
+  // the background. A failed save self-corrects on the next project reload.
+  function renameProject(id: string, name: string) {
+    setProjectPreviews((prev) =>
+      prev.map((p) => (p.id === id ? { ...p, name } : p))
+    );
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
+    if (id === projectId) setProjectName(name);
+    void fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name }),
+    }).catch(() => undefined);
+  }
+
+  // Delete after confirmation. The shared et:project-deleted handler does the
+  // state surgery (drop it, re-create if the list empties, switch off it).
+  function deleteProject(id: string) {
+    const target = projects.find((p) => p.id === id);
+    if (
+      !window.confirm(
+        `Delete "${
+          target?.name ?? "this project"
+        }"? Its interview, profile and simulation history will be removed.`
+      )
+    )
+      return;
+    void fetch(`/api/projects/${id}`, { method: "DELETE" })
+      .then((res) => {
+        if (res.ok) {
+          window.dispatchEvent(
+            new CustomEvent("et:project-deleted", { detail: { id } })
+          );
+        }
+      })
+      .catch(() => undefined);
   }
 
   // Analyse the founder's website + online consumer opinion, then seed the
@@ -794,47 +980,13 @@ function IntakePageInner() {
   if (!done) {
     return (
       <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
-        <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
-          <div className="border-b border-neutral-200 px-4 py-3">
-            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Projects
-            </p>
-          </div>
-          <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
-            {projects.map((p) => {
-              const active = p.id === projectId;
-              return (
-                <button
-                  key={p.id}
-                  onClick={() => switchProject(p.id)}
-                  className={`mb-1 flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition ${
-                    active
-                      ? "bg-neutral-900 text-white"
-                      : "text-neutral-700 hover:bg-neutral-100"
-                  }`}
-                >
-                  <FolderOpen
-                    className={`mt-0.5 h-4 w-4 shrink-0 ${
-                      active ? "text-white" : "text-neutral-400"
-                    }`}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate text-xs font-medium">
-                      {p.name}
-                    </span>
-                    <span
-                      className={`mt-0.5 block truncate text-[10px] ${
-                        active ? "text-neutral-300" : "text-neutral-400"
-                      }`}
-                    >
-                      Updated {new Date(p.updatedAt).toLocaleDateString()}
-                    </span>
-                  </span>
-                </button>
-              );
-            })}
-          </nav>
-        </aside>
+        <ProjectSidebar
+          projects={projects}
+          activeId={projectId}
+          onSwitch={switchProject}
+          onRename={renameProject}
+          onDelete={deleteProject}
+        />
 
         <section className="min-h-0 overflow-y-auto px-4 py-10">
           <div className="mx-auto w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -1021,47 +1173,13 @@ function IntakePageInner() {
 
   return (
     <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
-      <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
-        <div className="border-b border-neutral-200 px-4 py-3">
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-            Projects
-          </p>
-        </div>
-        <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
-          {projects.map((p) => {
-            const active = p.id === projectId;
-            return (
-              <button
-                key={p.id}
-                onClick={() => switchProject(p.id)}
-                className={`mb-1 flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition ${
-                  active
-                    ? "bg-neutral-900 text-white"
-                    : "text-neutral-700 hover:bg-neutral-100"
-                }`}
-              >
-                <FolderOpen
-                  className={`mt-0.5 h-4 w-4 shrink-0 ${
-                    active ? "text-white" : "text-neutral-400"
-                  }`}
-                />
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">
-                    {p.name}
-                  </span>
-                  <span
-                    className={`mt-0.5 block truncate text-[10px] ${
-                      active ? "text-neutral-300" : "text-neutral-400"
-                    }`}
-                  >
-                    Updated {new Date(p.updatedAt).toLocaleDateString()}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
+      <ProjectSidebar
+        projects={projects}
+        activeId={projectId}
+        onSwitch={switchProject}
+        onRename={renameProject}
+        onDelete={deleteProject}
+      />
 
       <section className="min-h-0 overflow-y-auto">
         <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-5 xl:grid-cols-[minmax(0,1fr)_420px]">

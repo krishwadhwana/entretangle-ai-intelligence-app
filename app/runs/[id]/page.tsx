@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import RunDashboard from "@/components/RunDashboard";
+import { ClientProfileSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -12,9 +13,34 @@ export default async function RunPage({
 }) {
   const run = await prisma.run.findUnique({
     where: { id: params.id },
-    select: { id: true, brief: true, parentRunId: true, projectId: true },
+    select: {
+      id: true,
+      brief: true,
+      parentRunId: true,
+      projectId: true,
+      mode: true,
+      targetMarket: true,
+      clientProfile: true,
+    },
   });
   if (!run) notFound();
+
+  // The editable subset of this run's profile — prefills the "Test in another
+  // market" form so a founder can tweak it for the destination before branching.
+  const profile = (() => {
+    try {
+      return ClientProfileSchema.parse(JSON.parse(run.clientProfile));
+    } catch {
+      return null;
+    }
+  })();
+  const exportProfileDefaults = {
+    targetAudience: profile?.targetAudience ?? "",
+    priceBand: profile?.priceBand ?? "",
+    priceMin: profile?.priceMin ?? null,
+    priceMax: profile?.priceMax ?? null,
+    targetMarginPct: profile?.targetMarginPct ?? null,
+  };
 
   const children = await prisma.run.findMany({
     where: { parentRunId: run.id },
@@ -44,6 +70,9 @@ export default async function RunPage({
       projectId={run.projectId}
       brief={run.brief}
       parentRunId={run.parentRunId}
+      mode={run.mode}
+      targetMarket={run.targetMarket}
+      exportProfileDefaults={exportProfileDefaults}
       childRunIds={children.map((c) => c.id)}
       maxCostUsd={config.maxCostUsd}
       maxTokens={config.maxTokensPerRun}

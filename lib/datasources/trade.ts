@@ -88,6 +88,30 @@ async function comtradeImports(
   }
 }
 
+/**
+ * Applied (MFN) import duty % a reporter charges the world for an HS6 product —
+ * a landed-cost input for the export-pricing engine. Best-effort: null on any
+ * failure (caller supplies its own default). Live + cached (24h).
+ */
+export async function fetchAppliedTariffPct(
+  iso2: string,
+  hs6: string
+): Promise<number | null> {
+  if (config.mockMode) return 12;
+  const cacheKey = `tariff:${iso2}:${hs6}`;
+  const hit = CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.at < TTL_MS) {
+    const t = hit.data?.text.match(/([\d.]+)%/);
+    return t ? parseFloat(t[1]) : null;
+  }
+  const val = await witsTariff(iso2, hs6.slice(0, 6));
+  CACHE.set(cacheKey, {
+    at: Date.now(),
+    data: val != null ? { text: `${val}%`, sources: ["https://wits.worldbank.org"] } : null,
+  });
+  return val;
+}
+
 /** WITS: simple applied (MFN) tariff for reporter from world, HS6. */
 async function witsTariff(iso2: string, hs6: string): Promise<number | null> {
   // WITS wants lowercase ISO3-ish reporter; it also accepts ISO2 in some paths.

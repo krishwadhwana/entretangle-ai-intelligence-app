@@ -11,6 +11,12 @@ import {
   callClassifyVenture,
 } from "./llm";
 import { ProjectRetriever, formatGroundTruth } from "./rag";
+import {
+  loadExportContext,
+  formatExportPriorGroundTruth,
+  formatExportTransferContext,
+  type ExportContext,
+} from "./exportRun";
 import { calibrateCohortPlan } from "./datasources/demographics";
 import { expandPanIndiaCohortPlan } from "./audienceCoverage";
 import {
@@ -338,6 +344,27 @@ export async function executeRun(runId: string): Promise<void> {
     };
     // Scoped follow-up: reuse a prior run's audience instead of re-simulating.
     const scoped = run.mode === "scoped" && !!run.sourceRunId;
+
+    // Cross-border export run (Phase 1): load the completed home-market parent
+    // and carry its proven results forward as priors. exportPriorGroundTruth
+    // grounds the planner + research desks; cohortFocus (built below) injects the
+    // behavioural prior into the destination-market cohort simulation (Phase 2).
+    let exportCtx: ExportContext | null = null;
+    if (run.mode === "export" && run.parentRunId) {
+      exportCtx = await loadExportContext(run.parentRunId).catch((e) => {
+        console.error(`[orchestrator] export context load failed:`, e);
+        return null;
+      });
+      if (exportCtx) {
+        console.log(
+          `[orchestrator] export run ${runId}: carrying forward parent ${run.parentRunId} → ${run.targetMarket} (${exportCtx.conclusions.length} findings, audience=${!!exportCtx.aggregate}, launch=${!!exportCtx.launch})`
+        );
+      }
+    }
+    const targetMarket = run.targetMarket ?? "the destination market";
+    const exportPriorGroundTruth = exportCtx
+      ? formatExportPriorGroundTruth(exportCtx, targetMarket)
+      : "";
     // Audience size for this run (UI slider/number). null → env default;
     // 0 → research desks only (no audience).
     const audienceTarget = run.targetAudienceSize ?? config.targetAudienceSize;
@@ -413,8 +440,10 @@ export async function executeRun(runId: string): Promise<void> {
       ? formatPlanningTemplate(knowledge)
       : "";
 
-    // The planner sees the planning template + industry knowledge + founder RAG.
+    // The planner sees the planning template + industry knowledge + founder RAG
+    // (and, for an export run, the home-market prior).
     const planGroundTruth = [
+      exportPriorGroundTruth,
       planningTemplateGroundTruth,
       industryGroundTruth,
       ragPlanGroundTruth,
@@ -513,6 +542,8 @@ export async function executeRun(runId: string): Promise<void> {
     for (const [i, d] of desks.entries()) {
       await throwIfRunCancelled(runId);
       const parts: string[] = [];
+      // Export run: every desk reasons against the home-market prior.
+      if (exportPriorGroundTruth) parts.push(exportPriorGroundTruth);
       // Auto-built (or curated-fallback) industry knowledge — every desk.
       if (industryGroundTruth) parts.push(industryGroundTruth);
       if (governanceGroundTruth && GOVERNANCE_DOMAINS.has(d.domain))
@@ -621,11 +652,25 @@ export async function executeRun(runId: string): Promise<void> {
       }
       return anyConcluded;
     };
+    // Phase 2 — export prior transfer: destination-market cohorts are simulated
+    // with the analogous home-market segment's intent/WTP as a behavioural prior,
+    // while the persona's own market behaviour dominates the draw.
+    const cohortFocus = exportCtx
+      ? {
+          ...focus,
+          additionalContext: [
+            formatExportTransferContext(exportCtx, targetMarket),
+            focus.additionalContext,
+          ]
+            .filter(Boolean)
+            .join("\n\n"),
+        }
+      : focus;
     const [anyDeskConcluded, simulatedCohorts] = await Promise.all([
       runDesks(),
       scoped
         ? Promise.resolve(0)
-        : simulateAllCohorts(emitter, cohortIds, profile, currency, focus),
+        : simulateAllCohorts(emitter, cohortIds, profile, currency, cohortFocus),
     ]);
     const cohortsDone = scoped ? copiedCohorts : simulatedCohorts;
     if (!anyDeskConcluded && cohortsDone === 0) {

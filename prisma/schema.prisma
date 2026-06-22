@@ -78,8 +78,13 @@ model Run {
   // the simulated audience from.
   focusQuestion     String?
   additionalContext String?
-  mode              String  @default("full") // "full" | "scoped"
+  mode              String  @default("full") // "full" | "scoped" | "export"
   sourceRunId       String?
+  // Cross-border export run: a dependent run that tests the venture in a new
+  // market. parentRunId points at the completed home-market (e.g. India) run
+  // whose proven results are carried forward as priors; targetMarket is the
+  // destination country (e.g. "United States"). mode === "export".
+  targetMarket      String?
   // Per-run audience size chosen in the UI (slider/number). Null → use the
   // TARGET_AUDIENCE_SIZE env default. 0 → research desks only, no audience.
   targetAudienceSize Int?

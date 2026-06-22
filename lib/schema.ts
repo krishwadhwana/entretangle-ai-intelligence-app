@@ -150,6 +150,10 @@ export const WebsiteDraftProfileSchema = z.object({
   styleKeywords: z.array(z.string()).default([]),
   heroProducts: z.array(z.string()).default([]),
   differentiation: z.string().optional(),
+  // Founders' existing skills / background inferred from the site (About,
+  // team/founder bios, press, prior ventures). Maps to ClientProfile.experience
+  // so the intake doesn't re-ask it.
+  experience: z.string().optional(),
 });
 export type WebsiteDraftProfile = z.infer<typeof WebsiteDraftProfileSchema>;
 
@@ -1164,7 +1168,7 @@ export const InterviewTranscriptSchema = z.object({
 });
 export type InterviewTranscript = z.infer<typeof InterviewTranscriptSchema>;
 
-export const RunModeSchema = z.enum(["full", "scoped"]);
+export const RunModeSchema = z.enum(["full", "scoped", "export"]);
 export type RunMode = z.infer<typeof RunModeSchema>;
 
 // One entry of the append-only simulation_runs JSONB array.
@@ -1525,6 +1529,123 @@ export const LaunchSimRecordSchema = z.object({
   createdAt: z.string(),
 });
 export type LaunchSimRecord = z.infer<typeof LaunchSimRecordSchema>;
+
+// ---------------------------------------------------------------------------
+// Export viability (Phase 3): deterministic landed-cost / export-pricing engine.
+// Takes a home-market unit COGS and builds it up to a destination-market shelf
+// price across one or more fulfillment paths, then scores the required price
+// against the destination audience's willingness-to-pay. Pure arithmetic over
+// the inputs (mirrors the launch-sim contract): same inputs → same report.
+// ---------------------------------------------------------------------------
+
+// How the home brand reaches the destination customer. Drives duty (de minimis),
+// freight mode, fulfillment cost and platform fees.
+export const FulfillmentPathSchema = z.enum([
+  "dtc_parcel", // per-order cross-border parcels (air); de minimis may apply
+  "bulk_warehouse", // containerized import, cleared once, fulfilled from a 3PL
+  "marketplace", // imported in bulk, sold + fulfilled via a marketplace (FBA)
+]);
+export type FulfillmentPath = z.infer<typeof FulfillmentPathSchema>;
+
+export const ExportSimInputsSchema = z.object({
+  homeCurrency: z.string().default("INR"),
+  destCurrency: z.string().default("USD"),
+  destCountry: z.string().default("United States"),
+  // 1 home-currency unit = fxRate destination-currency units (e.g. INR→USD≈0.012).
+  fxRate: z.number().positive(),
+  unitCogsHome: z.number().nonnegative(), // ex-works COGS per unit, home currency
+  unitWeightKg: z.number().positive().default(0.5),
+  hsCode: z.string().default(""),
+  // Destination import duty %, live-sourced (WITS) but overridable.
+  dutyRatePct: z.number().min(0).max(100).default(0),
+  // De-minimis: small DTC parcels under the threshold historically clear duty-free.
+  // Status is in flux — verify per corridor; this is an explicit, overridable knob.
+  deMinimisActive: z.boolean().default(true),
+  deMinimisThresholdUsd: z.number().nonnegative().default(800),
+  targetMarginPct: z.number().min(0).max(95).default(50), // gross margin on dest price
+  salesTaxPct: z.number().min(0).max(30).default(7.5), // destination avg combined sales tax
+  paymentFeePct: z.number().min(0).max(0.2).default(0.029),
+  // Per-unit allocation of inland-to-port freight + export docs, in dest currency.
+  originLogisticsUsd: z.number().nonnegative().default(1.2),
+  // Amortization base for per-entry fees (MPF/HMF/brokerage) on a bulk shipment.
+  bulkUnitsPerEntry: z.number().int().positive().default(500),
+  scenarios: z
+    .array(FulfillmentPathSchema)
+    .min(1)
+    .default(["dtc_parcel", "bulk_warehouse", "marketplace"]),
+  // Destination-currency WTP samples (the destination audience's prices) to score
+  // the required price against. Empty → coverage/verdict is "unknown".
+  wtpSamplesDest: z.array(z.number()).default([]),
+  sources: z.array(z.string()).default([]),
+  notes: z.array(z.string()).default([]),
+});
+export type ExportSimInputs = z.infer<typeof ExportSimInputsSchema>;
+
+export const ExportWaterfallLineSchema = z.object({
+  label: z.string(),
+  amount: z.number(), // destination currency, per unit
+  note: z.string().optional(),
+});
+export type ExportWaterfallLine = z.infer<typeof ExportWaterfallLineSchema>;
+
+// A destination-market launch trajectory for one fulfillment scenario (Phase 4):
+// the landed cost + required price run through the launch engine over the
+// destination audience — directly comparable to the home-market launch sim.
+export const ExportLaunchSummarySchema = z.object({
+  currency: z.string(),
+  horizonLabel: z.string(), // e.g. "90 days"
+  adSpendPerMonth: z.number(),
+  totalOrders: z.number(),
+  unitsSold: z.number(),
+  netRevenue: z.number(),
+  netProfit: z.number(),
+  grossMarginPct: z.number(),
+  netMarginPct: z.number(),
+  blendedCac: z.number(),
+  breakEvenLabel: z.string().nullable(),
+  peakCapitalNeeded: z.number(),
+});
+export type ExportLaunchSummary = z.infer<typeof ExportLaunchSummarySchema>;
+
+export const ExportScenarioResultSchema = z.object({
+  path: FulfillmentPathSchema,
+  label: z.string(),
+  waterfall: z.array(ExportWaterfallLineSchema), // ex-works → landed, per unit
+  landedCostPerUnit: z.number(),
+  requiredPrice: z.number(), // dest list price that hits target margin
+  unitMargin: z.number(),
+  marginPct: z.number(),
+  consumerPriceWithTax: z.number(), // required price + destination sales tax
+  wtpMedian: z.number().nullable(),
+  wtpCoveragePct: z.number().nullable(), // % of audience whose WTP ≥ required price
+  verdict: z.enum(["viable", "marginal", "unviable", "unknown"]),
+  // Destination launch trajectory (Phase 4). Null from the pure engine; the route
+  // fills it by running the launch sim over the destination audience.
+  launch: ExportLaunchSummarySchema.nullable().default(null),
+  notes: z.array(z.string()).default([]),
+});
+export type ExportScenarioResult = z.infer<typeof ExportScenarioResultSchema>;
+
+export const ExportViabilityReportSchema = z.object({
+  resolvedInputs: ExportSimInputsSchema,
+  scenarios: z.array(ExportScenarioResultSchema),
+  recommended: z
+    .object({ path: FulfillmentPathSchema, requiredPrice: z.number(), reason: z.string() })
+    .nullable(),
+  // ± bands on the recommended path's required price — the honest answer given
+  // FX / tariff / de-minimis uncertainty (the live-sourced inputs that move most).
+  sensitivity: z.object({
+    basePath: FulfillmentPathSchema.nullable(),
+    fxPlus10Pct: z.number().nullable(), // required price if home currency strengthens 10%
+    fxMinus10Pct: z.number().nullable(),
+    dutyZero: z.number().nullable(), // required price if duty-free
+    dutyDoubled: z.number().nullable(),
+    deMinimisOff: z.number().nullable(), // DTC required price if de minimis ends
+  }),
+  sources: z.array(z.string()).default([]),
+  notes: z.array(z.string()).default([]),
+});
+export type ExportViabilityReport = z.infer<typeof ExportViabilityReportSchema>;
 
 // World model — the converged terminal object (SPEC §4.5, v2: + audience)
 export type WorldModel = {

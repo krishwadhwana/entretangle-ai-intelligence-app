@@ -129,6 +129,19 @@ export async function GET(
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
   const baseTier =
     model?.priceTiers.find((t) => t.label) ?? model?.priceTiers[0] ?? null;
+  // Fallback sale price from the venture profile (founder targets + website-
+  // captured price band) so the form prefills even without a Financials model.
+  const priceProfile = (() => {
+    try {
+      const p = ClientProfileSchema.safeParse(JSON.parse(run.clientProfile || "{}"));
+      return p.success ? p.data : null;
+    } catch {
+      return null;
+    }
+  })();
+  const profileSalePrice = priceProfile
+    ? priceProfile.priceMax ?? priceProfile.priceMin ?? priceFromBand(priceProfile.priceBand)
+    : null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
@@ -140,7 +153,7 @@ export async function GET(
     suggestedCostPrice: model
       ? model.costStructure.reduce((s, c) => s + c.amount.value, 0)
       : null,
-    suggestedSalePrice: baseTier?.price.value ?? null,
+    suggestedSalePrice: baseTier?.price.value ?? profileSalePrice ?? null,
     suggestedAdSpendPerMonth: suggestAdSpendPerMonth(
       blendedCac,
       reachableProspectsPerMonth,
@@ -318,6 +331,16 @@ export async function DELETE(
     where: { id: scenarioId, runId: params.id },
   });
   return NextResponse.json({ ok: true });
+}
+
+// Pull a numeric price out of a free-text price band (e.g. "₹1,200–1,800",
+// "$25", "around 1500"). Returns the upper number of a range (the list price),
+// or null when the band is purely qualitative ("premium").
+function priceFromBand(band?: string | null): number | null {
+  if (!band) return null;
+  const nums = band.replace(/,/g, "").match(/\d+(?:\.\d+)?/g);
+  const vals = (nums ?? []).map(Number).filter((n) => n > 0);
+  return vals.length ? Math.max(...vals) : null;
 }
 
 // Resolve benchmark priors for a run: category from its profile (fall back to
