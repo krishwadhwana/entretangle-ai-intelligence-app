@@ -8,7 +8,8 @@
 //   2. SENSITIVITY   — changing ad spend produces a *different* trajectory
 //                      (so the model genuinely responds to inputs, not noise).
 //   3. CONSERVATION  — the accounting holds (orders ≥ refunds, P&L identity,
-//                      reach never exceeds the pool, etc.).
+//                      reach never exceeds the pool, orders cannot exceed the
+//                      checkout-level demand that entered consideration, etc.).
 //
 // Determinism is asserted, NEVER hardcoded: the engine is a pure function of
 // its inputs, so equality emerges. If (1) ever fails we've found a real
@@ -123,6 +124,20 @@ assert(LaunchSimResultSchema.safeParse(a).success, "result validates against Lau
 assert(s.refunds <= s.unitsSold + 1e-6, "refunds never exceed units sold");
 assert(s.totalReached <= (a.resolvedInputs.reachablePool ?? Infinity) + 1, "cumulative reach never exceeds the reachable pool");
 assert(s.repeatOrders + s.newOrders >= s.totalOrders - 1e-6, "new + repeat orders reconcile with total orders");
+assert(
+  s.newOrders <= s.totalCheckoutsStarted + 1,
+  "first-time orders cannot exceed checkout-start demand"
+);
+assert(
+  s.totalOrders <= s.totalCheckoutsStarted + s.repeatOrders + 1,
+  "total orders reconcile with acquisition checkouts plus repeat demand"
+);
+assert(
+  a.breakdowns.byAcquisitionChannel.every(
+    (ch) => ch.id === "returning" || ch.orders <= ch.checkoutsStarted + 1
+  ),
+  "each acquisition channel's first-time orders stay within its checkout starts"
+);
 
 // P&L identity: netProfit == netRevenue − every cost line.
 const reconstructed =
@@ -169,6 +184,91 @@ assert(
 assert(
   noAcquisition.summary.deadstockUnits === 0,
   "zero-acquisition scenarios do not create deadstock by default"
+);
+
+const organicInputs = LaunchSimInputsSchema.parse({
+  ...baseInputs,
+  adSpendPerMonth: 0,
+  organicReachPerStep: 500,
+  horizon: 30,
+  reachablePool: 30000,
+  initialInventoryUnits: 10000,
+});
+const organicOnly = simulateLaunch(personas, organicInputs, {
+  blendedCac: 100000,
+});
+const organicWithTinyPaid = simulateLaunch(
+  personas,
+  { ...organicInputs, adSpendPerMonth: 1000 },
+  { blendedCac: 100000 }
+);
+assert(
+  organicWithTinyPaid.summary.newOrders >= organicOnly.summary.newOrders * 0.9,
+  "organic demand is not capped away by a paid CAC benchmark"
+);
+
+const yearLongPaidLaunch = simulateLaunch(
+  personas,
+  {
+    ...baseInputs,
+    adSpendPerMonth: 1500000,
+    horizon: 365,
+    reachablePool: 10000000,
+  },
+  { blendedCac: 5000 }
+);
+const avg = (xs: number[]) => xs.reduce((sum, x) => sum + x, 0) / xs.length;
+const firstMonthNewOrders = avg(
+  yearLongPaidLaunch.timeline.slice(0, 30).map((step) => step.newOrders)
+);
+const lastMonthNewOrders = avg(
+  yearLongPaidLaunch.timeline.slice(-30).map((step) => step.newOrders)
+);
+assert(
+  lastMonthNewOrders < firstMonthNewOrders * 0.35,
+  "year-long paid launches taper instead of repeating a flat CAC quota"
+);
+
+const delayedInventory = simulateLaunch(
+  personas,
+  {
+    ...baseInputs,
+    businessModel: "consumable",
+    costPrice: 100,
+    salePrice: 500,
+    adSpendPerMonth: 300000,
+    reachablePool: 20000,
+    initialInventoryUnits: 0,
+    reorderEnabled: true,
+    reorderLeadTimeDays: 10,
+    minOrderQtyUnits: 100,
+    repeatRateMult: 20,
+    horizon: 20,
+    cpm: 100,
+  },
+  { blendedCac: 100 }
+);
+let fulfilledNewBeforeStep = 0;
+let repeatBeforeFulfilledNew = false;
+for (const step of delayedInventory.timeline) {
+  if (fulfilledNewBeforeStep <= 0 && step.repeatOrders > 0) {
+    repeatBeforeFulfilledNew = true;
+  }
+  fulfilledNewBeforeStep += step.newOrders;
+}
+assert(
+  !repeatBeforeFulfilledNew,
+  "stocked-out first-time demand is not eligible to repeat"
+);
+
+const regionalReach = simulateLaunch(
+  personas,
+  { ...baseInputs, reachablePool: 100000 },
+  { audienceShare: 0.2 }
+);
+assert(
+  regionalReach.resolvedInputs.reachablePool === 20000,
+  "regional scenarios scale an explicit reachable pool by audience share"
 );
 
 console.log(

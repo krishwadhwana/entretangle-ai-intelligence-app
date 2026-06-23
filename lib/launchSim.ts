@@ -267,19 +267,21 @@ export function resolveLaunchInputs(
 
   // Reach ceiling: a finite pool the ad spend saturates over time.
   let reachablePool = i.reachablePool;
+  const audienceShare = ctx.audienceShare ?? 1;
   if (reachablePool == null) {
     const monthly = ctx.reachableProspectsPerMonth ?? null;
     const horizonMonths = Math.max(1, i.horizon / stepsPerMonth);
     // Regional runs are a proportional slice: scale the auto-sized pool by the
     // audience share so a region only reaches its part of the market.
-    const share = ctx.audienceShare ?? 1;
     // Unique prospects reachable over the WHOLE launch window. Previously capped
     // at 12 months, which artificially shrank the market (and the order ceiling)
     // for longer sims. This is only a DEFAULT — the founder can set any pool.
     reachablePool =
       monthly && monthly > 0
-        ? Math.round(monthly * horizonMonths * share)
-        : Math.round(20000 * share);
+        ? Math.max(1, Math.round(monthly * horizonMonths * audienceShare))
+        : Math.max(1, Math.round(20000 * audienceShare));
+  } else if (audienceShare >= 0 && audienceShare < 1) {
+    reachablePool = Math.max(1, Math.round(reachablePool * audienceShare));
   }
 
   // Decision speed: how quickly considerers resolve. A day-step audience decides
@@ -293,8 +295,8 @@ export function resolveLaunchInputs(
   const channels = normalizeChannels(i, preset);
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
-  // founder didn't pin a MOQ. Size it from first-month reachable demand, not
-  // the whole pool, so a zero-acquisition scenario does not buy deadstock.
+  // founder didn't pin a MOQ. Size it from first-month checkout-level demand,
+  // not the whole pool, so a zero-acquisition scenario does not buy deadstock.
   let initialInventoryUnits = i.initialInventoryUnits;
   if (initialInventoryUnits == null) {
     const meanBuy = meanBuyProb(personas, i.salePrice);
@@ -309,13 +311,17 @@ export function resolveLaunchInputs(
         : i.organicReachPerStep;
     const firstMonthReach = Math.min(reachablePool, paidReach + organicReach);
     const decisionCoverage = 1 - Math.pow(1 - decisionSpeed, stepsPerMonth);
-    let estMonthlyOrders = firstMonthReach * meanBuy * decisionCoverage;
-    // CRITICAL: the main loop caps paid first-time orders at what the ad budget
-    // can actually buy at the benchmark CAC (the `paidNewCustomerCap` below). The
-    // raw reach × buy-prob estimate above ignores that cap and the engagement →
-    // visit → checkout attrition, so it can over-estimate first-month demand by
-    // 100×+ — pre-buying mountains of inventory that never sells (runaway
-    // deadstock). Size inventory to the SAME binding constraint the loop enforces.
+    const funnelCoverage = weightedMeanChannelMetric(
+      channels,
+      channelFunnelRate,
+      0.05
+    );
+    let estMonthlyOrders =
+      firstMonthReach * funnelCoverage * meanBuy * decisionCoverage;
+    // CRITICAL: the main loop can also cap paid first-time orders at what the ad
+    // budget can buy at the benchmark CAC (the `paidNewCustomerCap` below). Keep
+    // inventory sizing on the same binding constraints as the loop, otherwise a
+    // cheap-CPM scenario can pre-buy stock for demand the budget cannot acquire.
     const cac =
       ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
     if (cac && i.adSpendPerMonth > 0) {
@@ -454,6 +460,79 @@ function channelPlatformAffinity(p: LaunchPersona, ch: LaunchChannelInput): numb
     return platformAffinity(p.platforms, new Set(["whatsapp", "email", "referral"]));
   }
   return 0.8;
+}
+
+function channelFunnelRate(ch: LaunchChannelInput): number {
+  return (
+    clamp(ch.engagementRate, 0, 1) *
+    clamp(ch.visitRate, 0, 1) *
+    clamp(ch.checkoutRate, 0, 1)
+  );
+}
+
+function weightedMeanChannelMetric(
+  channels: LaunchChannelInput[],
+  select: (ch: LaunchChannelInput) => number,
+  fallback: number
+): number {
+  if (channels.length === 0) return fallback;
+  const paidWeight = channels.reduce(
+    (s, ch) =>
+      s +
+      (ch.kind === "paid" || ch.kind === "marketplace" || ch.kind === "retail"
+        ? ch.spendPct
+        : 0),
+    0
+  );
+  if (paidWeight > 0) {
+    return (
+      channels.reduce((s, ch) => {
+        const w =
+          ch.kind === "paid" || ch.kind === "marketplace" || ch.kind === "retail"
+            ? ch.spendPct
+            : 0;
+        return s + select(ch) * w;
+      }, 0) / paidWeight
+    );
+  }
+  return channels.reduce((s, ch) => s + select(ch), 0) / channels.length;
+}
+
+function averageFunnelStages(channels: LaunchChannelInput[]) {
+  return {
+    engagementRate: clamp(
+      weightedMeanChannelMetric(channels, (ch) => ch.engagementRate, 0.25),
+      0,
+      1
+    ),
+    visitRate: clamp(
+      weightedMeanChannelMetric(channels, (ch) => ch.visitRate, 0.45),
+      0,
+      1
+    ),
+    checkoutRate: clamp(
+      weightedMeanChannelMetric(channels, (ch) => ch.checkoutRate, 0.45),
+      0,
+      1
+    ),
+  };
+}
+
+function paidLaunchEfficiency(
+  step: number,
+  stepsPerMonth: number,
+  reachedShare: number
+): number {
+  const month = step / Math.max(1, stepsPerMonth);
+  // The launch window has novelty; the same paid budget should not keep buying
+  // the same number of first-time customers forever. Hold the opening push for
+  // ~2 months, then let creative fatigue / audience familiarity raise effective
+  // CAC. The small floor reflects ongoing evergreen acquisition, not launch heat.
+  const novelty =
+    month <= 2 ? 1 : 0.12 + 0.88 * Math.exp(-(month - 2) / 3.5);
+  // Reaching more of the finite pool leaves a colder, harder-to-convert residue.
+  const saturation = Math.pow(clamp(1 - reachedShare, 0, 1), 0.55);
+  return clamp(novelty * saturation, 0.05, 1);
 }
 
 // --- a NameCount accumulator -----------------------------------------------
@@ -660,9 +739,36 @@ export function simulateLaunch(
     const repeatHazard = (annualRepeat / stepsPerYear) * (1 - refundP);
     return { p, buyProb, attract, refundP, repeatHazard };
   });
-  const totalAttract = pre.reduce((s, x) => s + x.attract, 0) || 1;
+  const channelAttractTotals = new Map<string, number>();
+  for (const ch of channels) {
+    channelAttractTotals.set(
+      ch.id,
+      pre.reduce(
+        (s, x) =>
+          s + Math.max(0.02, x.attract * channelPlatformAffinity(x.p, ch)),
+        0
+      ) || 1
+    );
+  }
+  const fallbackStages = averageFunnelStages(channels);
+  const organicWordOfMouthChannel = channel(
+    "organic_word_of_mouth",
+    "Organic / word-of-mouth",
+    "owned",
+    0,
+    inputs.cpm,
+    0,
+    inputs.frequencyCap,
+    fallbackStages.engagementRate,
+    fallbackStages.visitRate,
+    fallbackStages.checkoutRate,
+    1.05,
+    0.95,
+    1.15
+  );
 
   // Compartment state (fractions of each persona's represented sub-population).
+  // `considering` is checkout-level/high-intent demand, not everyone reached.
   const unaware = new Array(N).fill(1);
   const considering = new Array(N).fill(0);
   const consideringTrust = new Array(N).fill(1);
@@ -711,6 +817,7 @@ export function simulateLaunch(
   let refundsGenerated = 0;
 
   const timeline: LaunchSimStep[] = [];
+  let cumulativeReachedRaw = 0;
   let cumulativeNetProfit = 0;
   let cumulativeCash = -(inputs.initialInventoryUnits ?? 0) * inputs.costPrice;
   let minCash = cumulativeCash;
@@ -794,29 +901,30 @@ export function simulateLaunch(
       first: number;
       repeat: number;
       firstFrac: number;
+      oldActive: number;
+      oldActiveRepeatMult: number;
+      firstRepeatMult: number;
+      paidShare: number;
       refundMult: number;
       channelShares: { ch: LaunchChannelInput; share: number }[];
     }[] = [];
     let demand = 0;
     let repeatDemand = 0;
+    let paidNewDemand = 0;
 
     for (let k = 0; k < N; k++) {
       const { buyProb, attract, repeatHazard } = pre[k];
-      const channelAwareness = channelMedia.map(({ ch, spend, impressions }) => {
+      const channelAwareness = channelMedia.map(({ ch, impressions }) => {
         const chAffinity = channelPlatformAffinity(pre[k].p, ch);
         const chAttract = Math.max(0.02, attract * chAffinity);
+        const channelAttractTotal = channelAttractTotals.get(ch.id) || 1;
         const imprPerPerson =
-          (impressions * chAttract) / (totalAttract * scaleFactor || 1);
-        const paidAware = 1 - Math.exp(-imprPerPerson / ch.frequencyCap);
-        const directAware =
-          ch.kind === "organic" || ch.kind === "owned"
-            ? ch.reachPerStep / Math.max(reachablePool, 1)
-            : 0;
+          (impressions * chAttract) / (channelAttractTotal * scaleFactor || 1);
+        const mediaAware = 1 - Math.exp(-imprPerPerson / ch.frequencyCap);
         return {
           ch,
-          spend,
           impressions,
-          prob: clamp(paidAware + directAware, 0, 1),
+          prob: clamp(mediaAware, 0, 1),
         };
       });
       const paidOrganicAware = 1 - channelAwareness.reduce(
@@ -826,30 +934,51 @@ export function simulateLaunch(
       const awareProb = clamp(paidOrganicAware + organicPerPerson + woMPerPerson, 0, 1);
 
       const newlyAware = unaware[k] * awareProb;
-      const channelProbSum =
-        channelAwareness.reduce((s, x) => s + x.prob, 0) || 1;
-      const channelShares = channelAwareness
+      const sourceWeights = channelAwareness
         .filter((x) => x.prob > 0)
-        .map((x) => ({ ch: x.ch, share: x.prob / channelProbSum }));
+        .map((x) => ({ ch: x.ch, weight: x.prob }));
+      const unattributedAware = organicPerPerson + woMPerPerson;
+      if (unattributedAware > 0) {
+        sourceWeights.push({
+          ch: organicWordOfMouthChannel,
+          weight: unattributedAware,
+        });
+      }
+      const sourceWeightSum =
+        sourceWeights.reduce((s, x) => s + x.weight, 0) || 1;
+      let channelShares = sourceWeights.map((x) => ({
+        ch: x.ch,
+        share: x.weight / sourceWeightSum,
+      }));
+      if (channelShares.length === 0 && newlyAware > 0) {
+        channelShares = [{ ch: organicWordOfMouthChannel, share: 1 }];
+      }
       const trust =
         channelShares.reduce((s, x) => s + x.share * x.ch.trustMultiplier, 0) || 1;
       const refundMult =
         channelShares.reduce((s, x) => s + x.share * x.ch.refundMultiplier, 0) || 1;
       const repeatMult =
         channelShares.reduce((s, x) => s + x.share * x.ch.repeatMultiplier, 0) || 1;
+      const newConsidering =
+        newlyAware *
+        clamp(
+          channelShares.reduce((s, x) => s + x.share * channelFunnelRate(x.ch), 0),
+          0,
+          1
+        );
 
       unaware[k] -= newlyAware;
       const oldConsidering = considering[k];
-      considering[k] += newlyAware;
-      if (considering[k] > 0 && newlyAware > 0) {
+      considering[k] += newConsidering;
+      if (considering[k] > 0 && newConsidering > 0) {
         consideringTrust[k] =
-          (consideringTrust[k] * oldConsidering + trust * newlyAware) /
+          (consideringTrust[k] * oldConsidering + trust * newConsidering) /
           considering[k];
         consideringRefundMult[k] =
-          (consideringRefundMult[k] * oldConsidering + refundMult * newlyAware) /
+          (consideringRefundMult[k] * oldConsidering + refundMult * newConsidering) /
           considering[k];
         consideringRepeatMult[k] =
-          (consideringRepeatMult[k] * oldConsidering + repeatMult * newlyAware) /
+          (consideringRepeatMult[k] * oldConsidering + repeatMult * newConsidering) /
           considering[k];
       }
 
@@ -861,13 +990,21 @@ export function simulateLaunch(
         stepEngaged += engaged;
         stepProductVisits += visits;
         stepCheckoutsStarted += checkouts;
-        const row = stepChannelFunnel.get(x.ch.id);
-        if (row) {
-          row.reached += reached;
-          row.engaged += engaged;
-          row.visits += visits;
-          row.checkouts += checkouts;
+        let row = stepChannelFunnel.get(x.ch.id);
+        if (!row) {
+          row = {
+            ch: x.ch,
+            reached: 0,
+            engaged: 0,
+            visits: 0,
+            checkouts: 0,
+          };
+          stepChannelFunnel.set(x.ch.id, row);
         }
+        row.reached += reached;
+        row.engaged += engaged;
+        row.visits += visits;
+        row.checkouts += checkouts;
       }
 
       const decideRate = clamp(
@@ -887,25 +1024,36 @@ export function simulateLaunch(
       const repeatBuyers =
         oldActive * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
 
-      active[k] += firstBuyers;
-      if (active[k] > 0 && firstBuyers > 0) {
-        activeRepeatMult[k] =
-          (activeRepeatMult[k] * oldActive +
-            consideringRepeatMult[k] * firstBuyers) /
-          active[k];
-      }
-
       const mi = scaleFactor;
       const first = firstBuyers * mi;
       const repeat = repeatBuyers * mi;
+      const paidShare = clamp(
+        channelShares.reduce(
+          (s, x) =>
+            s +
+            (x.ch.kind === "paid" ||
+            x.ch.kind === "marketplace" ||
+            x.ch.kind === "retail"
+              ? x.share
+              : 0),
+          0
+        ),
+        0,
+        1
+      );
       stepNewlyReached += newlyAware * mi;
       stepNewOrders += first;
       stepRepeatOrders += repeat;
+      paidNewDemand += first * paidShare;
       desired.push({
         idx: k,
         first,
         repeat,
         firstFrac: firstBuyers,
+        oldActive,
+        oldActiveRepeatMult: activeRepeatMult[k],
+        firstRepeatMult: consideringRepeatMult[k],
+        paidShare,
         refundMult: consideringRefundMult[k],
         channelShares,
       });
@@ -925,23 +1073,51 @@ export function simulateLaunch(
         spend
       );
     }
+    const fallbackRow = stepChannelFunnel.get(organicWordOfMouthChannel.id);
+    if (fallbackRow) {
+      byAcquisitionChannel.addFunnel(
+        organicWordOfMouthChannel,
+        0,
+        fallbackRow.reached,
+        fallbackRow.engaged,
+        fallbackRow.visits,
+        fallbackRow.checkouts,
+        0
+      );
+    }
 
     // If the financial model has a CAC, paid first-time acquisition cannot
     // exceed the number of new customers this step's ad budget can buy. The
-    // demand tilt (seasonality × momentum) scales the cap: in festive / high-
-    // attention months the same ad spend converts better (effectively cheaper
-    // CAC), so it acquires proportionally more customers.
-    if (blendedCac && adSpend > 0 && stepNewOrders > 0) {
-      const paidNewCustomerCap = (adSpend / blendedCac) * demandMult;
-      const firstScale = Math.min(1, paidNewCustomerCap / stepNewOrders);
-      if (firstScale < 1) {
+    // demand tilt (seasonality × momentum) scales the cap, while launch fatigue
+    // and audience saturation push effective CAC upward over long horizons. This
+    // keeps CAC as an upper bound instead of a guaranteed "same orders forever"
+    // quota.
+    if (blendedCac && adSpend > 0 && paidNewDemand > 0) {
+      const reachedShare = reachablePool > 0
+        ? (cumulativeReachedRaw + stepNewlyReached) / reachablePool
+        : 1;
+      const paidEfficiency = paidLaunchEfficiency(
+        t,
+        stepsPerMonth,
+        reachedShare
+      );
+      const paidNewCustomerCap =
+        (adSpend / blendedCac) * demandMult * paidEfficiency;
+      const paidScale = Math.min(1, paidNewCustomerCap / paidNewDemand);
+      if (paidScale < 1) {
+        let scaledStepNewOrders = 0;
         for (const d of desired) {
+          const paidFirst = d.first * d.paidShare;
+          const organicFirst = d.first - paidFirst;
+          const scaledFirst = organicFirst + paidFirst * paidScale;
+          const firstScale = d.first > 0 ? scaledFirst / d.first : 1;
           const unconverted = d.firstFrac * (1 - firstScale);
-          active[d.idx] = Math.max(0, active[d.idx] - unconverted);
           considering[d.idx] += unconverted;
-          d.first *= firstScale;
+          d.firstFrac *= firstScale;
+          d.first = scaledFirst;
+          scaledStepNewOrders += scaledFirst;
         }
-        stepNewOrders *= firstScale;
+        stepNewOrders = scaledStepNewOrders;
         demand = stepNewOrders + repeatDemand;
       }
     }
@@ -958,6 +1134,16 @@ export function simulateLaunch(
       const first = d.first * fillRate;
       const repeat = d.repeat * fillRate;
       const orders = first + repeat;
+      const fulfilledFirstFrac = d.firstFrac * fillRate;
+      active[d.idx] = d.oldActive + fulfilledFirstFrac;
+      if (active[d.idx] > 0) {
+        activeRepeatMult[d.idx] =
+          (d.oldActive * d.oldActiveRepeatMult +
+            fulfilledFirstFrac * d.firstRepeatMult) /
+          active[d.idx];
+      } else {
+        activeRepeatMult[d.idx] = d.oldActiveRepeatMult;
+      }
       if (orders <= 0) continue;
       const rev = orders * inputs.salePrice;
       byChannel.add(p.channelPref, orders, rev);
@@ -1053,15 +1239,14 @@ export function simulateLaunch(
     lastStepNewBuyers = stepNewOrders * fillRate;
 
     const scrolledPast = Math.max(0, stepNewlyReached - stepNewOrders * fillRate);
+    const cumulativeReachedNext = cumulativeReachedRaw + stepNewlyReached;
 
     timeline.push({
       step: t,
       label: stepLabel(inputs.granularity, t),
       impressions: count(impressions),
       newlyReached: count(stepNewlyReached),
-      cumulativeReached: count(
-        (timeline[t - 1]?.cumulativeReached ?? 0) + stepNewlyReached
-      ),
+      cumulativeReached: count(cumulativeReachedNext),
       scrolledPast: count(scrolledPast),
       engaged: count(stepEngaged),
       productVisits: count(stepProductVisits),
@@ -1084,6 +1269,7 @@ export function simulateLaunch(
       cumulativeNetProfit: money(cumulativeNetProfit),
       cumulativeCash: money(cumulativeCash),
     });
+    cumulativeReachedRaw = cumulativeReachedNext;
   }
 
   // --- summary ---
@@ -1330,7 +1516,7 @@ function buildAssumptions(
       source: ctx.blendedCac ? "financial_model" : "computed",
       confidence: ctx.blendedCac ? 0.55 : 0.25,
       basis: ctx.blendedCac
-        ? "Paid first-time acquisition is capped by ad spend divided by the financial model's blended CAC."
+        ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then tapered by launch fatigue and reachable-audience saturation."
         : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
     },
     {

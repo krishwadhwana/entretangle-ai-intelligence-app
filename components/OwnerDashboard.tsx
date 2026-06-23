@@ -104,30 +104,36 @@ export default function OwnerDashboard({
           <div className="flex h-full items-center justify-center text-xs text-neutral-400">
             <Loader2 className="mr-2 h-4 w-4 animate-spin" /> Loading…
           </div>
-        ) : section === "financials" ? (
-          <FinancialsSection
-            runId={runId}
-            projectId={projectId}
-            state={state}
-            initial={financials}
-            onSaved={setFinancials}
-          />
-        ) : section === "brandSocial" ? (
-          <BrandSocialSection
-            runId={runId}
-            projectId={projectId}
-            state={state}
-            initial={brandSocial}
-            onChange={setBrandSocial}
-          />
-        ) : section === "inspiration" ? (
-          <InspirationSection
-            runId={runId}
-            state={state}
-            initial={inspiration}
-            onSaved={setInspiration}
-          />
-        ) : null}
+        ) : (
+          <>
+            <div className={section === "financials" ? "" : "hidden"}>
+              <FinancialsSection
+                runId={runId}
+                projectId={projectId}
+                state={state}
+                initial={financials}
+                onSaved={setFinancials}
+              />
+            </div>
+            <div className={section === "brandSocial" ? "" : "hidden"}>
+              <BrandSocialSection
+                runId={runId}
+                projectId={projectId}
+                state={state}
+                initial={brandSocial}
+                onChange={setBrandSocial}
+              />
+            </div>
+            <div className={section === "inspiration" ? "" : "hidden"}>
+              <InspirationSection
+                runId={runId}
+                state={state}
+                initial={inspiration}
+                onSaved={setInspiration}
+              />
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

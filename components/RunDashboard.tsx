@@ -16,6 +16,7 @@ import {
   Rocket,
   Ship,
   Square,
+  FileDown,
   X,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
@@ -186,6 +187,7 @@ export default function RunDashboard({
     | "domain"
     | "conclusion"
   >("geo");
+  const [ownerMounted, setOwnerMounted] = useState(false);
   const [activePanel, setActivePanel] = useState<
     "conclusion" | Domain | null
   >(null);
@@ -193,6 +195,7 @@ export default function RunDashboard({
   const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+  const [dossierBusy, setDossierBusy] = useState(false);
   // The "Test in another market" edit-profile modal: which market it's open for,
   // plus the editable (pre-filled) destination-market overrides.
   const [exportMarket, setExportMarket] = useState<string | null>(null);
@@ -470,6 +473,60 @@ export default function RunDashboard({
     runId,
   ]);
 
+  // Generate a full graphical PDF dossier for this run: verdict, audience charts,
+  // key findings, launch trajectory, and (for export runs) cross-border viability.
+  const onDownloadDossier = useCallback(async () => {
+    if (dossierBusy) return;
+    setDossierBusy(true);
+    try {
+      let launch = null;
+      let currency = "INR";
+      let exportReport = null;
+      try {
+        const res = await fetch(`/api/runs/${runId}/launch-sim`);
+        if (res.ok) {
+          const data = await res.json();
+          currency = data.defaults?.currency ?? currency;
+          launch = data.scenarios?.[0] ?? null;
+        }
+      } catch {
+        // launch data is optional in the dossier
+      }
+      if (isExportRun) {
+        try {
+          const res = await fetch(`/api/runs/${runId}/export-sim`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: "{}",
+          });
+          if (res.ok) exportReport = (await res.json()).report ?? null;
+        } catch {
+          // export viability is optional
+        }
+      }
+      const [{ buildRunDossier }, { downloadDossier, slug }] = await Promise.all([
+        import("./runDossier"),
+        import("./pdf"),
+      ]);
+      const dossier = buildRunDossier({
+        brief,
+        mode,
+        targetMarket,
+        currency,
+        report: state.finalReport,
+        aggregate: state.aggregate,
+        worldModel: state.worldModel,
+        blocks: Object.values(state.blocks),
+        launch,
+        exportReport,
+        generatedOn: new Date().toLocaleDateString(),
+      });
+      downloadDossier(dossier, `${slug(dossier.title)}-dossier`);
+    } finally {
+      setDossierBusy(false);
+    }
+  }, [dossierBusy, runId, isExportRun, brief, mode, targetMarket, state]);
+
   const onAudienceBatchAdded = useCallback(
     (result: AudienceBatchResult) => {
       const cohort = { ...result.cohort, personas: result.personas };
@@ -560,6 +617,10 @@ export default function RunDashboard({
     ? state.cohorts[selectedCohortId]
     : null;
 
+  useEffect(() => {
+    if (view === "owner") setOwnerMounted(true);
+  }, [view]);
+
   if (!hydrated) {
     return (
       <div className="flex h-full flex-col">
@@ -637,6 +698,19 @@ export default function RunDashboard({
           }
         >
           <Rocket className="h-3 w-3" /> Launch Simulation
+        </button>
+        <button
+          onClick={() => void onDownloadDossier()}
+          disabled={dossierBusy || (!state.finalReport && !state.aggregate)}
+          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          title="Download a full graphical PDF dossier for this run"
+        >
+          {dossierBusy ? (
+            <Loader2 className="h-3 w-3 animate-spin" />
+          ) : (
+            <FileDown className="h-3 w-3" />
+          )}
+          Dossier
         </button>
         {!isExportRun && canLaunch ? (
           <div className="relative">
@@ -873,6 +947,15 @@ export default function RunDashboard({
       />
 
       <div className="relative flex-1">
+        {(ownerMounted || view === "owner") && (
+          <div className={view === "owner" ? "" : "hidden"}>
+            <OwnerDashboard
+              runId={runId}
+              projectId={projectId}
+              state={state}
+            />
+          </div>
+        )}
         {view === "domain" && activePanel && activePanel !== "conclusion" ? (
           <DomainWorkspace
             domain={activePanel}
@@ -910,11 +993,7 @@ export default function RunDashboard({
         ) : view === "playbook" ? (
           <PlaybookView state={state} onQuery={onQuery} />
         ) : view === "owner" ? (
-          <OwnerDashboard
-            runId={runId}
-            projectId={projectId}
-            state={state}
-          />
+          null
         ) : view === "launch" ? (
           <LaunchSimulation runId={runId} projectId={projectId} />
         ) : view === "export" ? (
