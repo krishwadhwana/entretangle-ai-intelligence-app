@@ -1,7 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { ChevronDown, MessageCircle } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
+import { ChevronDown, FileDown, Loader2, MessageCircle } from "lucide-react";
 import {
   ResponsiveContainer,
   BarChart,
@@ -18,6 +18,7 @@ import {
 import { SEGMENT_COLORS, ZONE_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
 import type { CanvasState } from "./useRunEvents";
+import type { DossierSection, KPI } from "./pdf";
 
 // ---------------------------------------------------------------------------
 // Insights view (v2.1): every chart derives purely from CanvasState — the
@@ -306,6 +307,42 @@ const SENTIMENT_META = {
   reject: { label: "Reject", color: "#ef4444" },
 };
 
+const PDF_SEGMENT_COLORS: Record<string, [number, number, number]> = {
+  budget: [148, 163, 184],
+  middle: [99, 102, 241],
+  affluent: [16, 185, 129],
+  luxury: [245, 158, 11],
+};
+
+const PDF_SENTIMENT_COLORS: Record<keyof typeof SENTIMENT_META, [number, number, number]> = {
+  approve: [16, 185, 129],
+  mixed: [245, 158, 11],
+  reject: [239, 68, 68],
+};
+
+function pct(n: number): string {
+  return `${Math.round(n * 100)}%`;
+}
+
+function fmtMoney(n: number, currency = ""): string {
+  const prefix =
+    currency === "INR" ? "Rs "
+    : currency === "USD" ? "$"
+    : currency ? `${currency} `
+    : "";
+  const a = Math.abs(n);
+  const value =
+    a >= 1e7 ? `${(n / 1e7).toFixed(2)}Cr`
+    : a >= 1e5 ? `${(n / 1e5).toFixed(2)}L`
+    : Math.round(n).toLocaleString();
+  return `${prefix}${value}`;
+}
+
+function median(xs: number[]): number {
+  const sorted = xs.filter(Number.isFinite).slice().sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
 function SentimentSummary({
   counts,
 }: {
@@ -465,6 +502,7 @@ function objectionTheme(text: string): string {
 
 type Props = {
   state: CanvasState;
+  brief: string;
   maxCostUsd: number;
   maxTokens: number;
   onSelectCohort: (cohortId: string) => void;
@@ -473,12 +511,14 @@ type Props = {
 
 export default function InsightsView({
   state,
+  brief,
   maxCostUsd,
   maxTokens,
   onSelectCohort,
   onChatPersona,
 }: Props) {
   const agg = state.aggregate;
+  const [dossierBusy, setDossierBusy] = useState(false);
 
   const toRows = (rec: Record<string, { n: number; meanIntent: number }>) =>
     Object.entries(rec)
@@ -771,9 +811,363 @@ export default function InsightsView({
 
   const costPct = Math.min(100, (state.costUsd / maxCostUsd) * 100);
   const tokPct = Math.min(100, (state.tokensUsed / maxTokens) * 100);
+  const canDownloadDossier = personaRows.length > 0 || conclusions.length > 0;
+
+  const downloadInsightsDossier = useCallback(async () => {
+    if (dossierBusy || !canDownloadDossier) return;
+    setDossierBusy(true);
+    try {
+      const { downloadDossier, slug } = await import("./pdf");
+      const total = Math.max(personaRows.length, 1);
+      const avgIntent =
+        personaRows.length > 0
+          ? personaRows.reduce((sum, p) => sum + p.intent, 0) / personaRows.length
+          : 0;
+      const currency =
+        personaRows.find((p) => p.wtpCurrency)?.wtpCurrency ??
+        wtpRanges[0]?.cur ??
+        "";
+      const medianWtp = median(personaRows.map((p) => p.wtp));
+      const approvePct = sentiment.total > 0 ? sentiment.approve / sentiment.total : 0;
+      const rejectPct = sentiment.total > 0 ? sentiment.reject / sentiment.total : 0;
+      const title = `${brief.slice(0, 70) || "Run"} - Insights`;
+      const sections: DossierSection[] = [];
+
+      const coverKpis: KPI[] = [
+        { label: "Personas", value: personaRows.length.toLocaleString() },
+        { label: "Cohorts", value: String(agg?.totalCohorts ?? state.cohortOrder.length) },
+        {
+          label: "Avg intent",
+          value: pct(avgIntent),
+          tone: avgIntent >= 0.55 ? "good" : avgIntent < 0.35 ? "bad" : "neutral",
+        },
+        { label: "Median WTP", value: fmtMoney(medianWtp, currency) },
+        {
+          label: "Approve",
+          value: pct(approvePct),
+          tone: approvePct >= 0.55 ? "good" : "neutral",
+        },
+        {
+          label: "Reject",
+          value: pct(rejectPct),
+          tone: rejectPct > 0.35 ? "bad" : "neutral",
+        },
+      ];
+
+      sections.push({
+        heading: "Run telemetry",
+        kpis: [
+          { label: "Research desks", value: String(state.blockOrder.length) },
+          { label: "Conclusions", value: String(conclusions.length) },
+          { label: "Edges", value: String(state.edges.length) },
+          { label: "Cost used", value: `$${state.costUsd.toFixed(2)}`, sub: `of $${maxCostUsd.toFixed(2)} cap` },
+          { label: "Tokens used", value: state.tokensUsed.toLocaleString(), sub: `of ${maxTokens.toLocaleString()}` },
+        ],
+      });
+
+      sections.push({
+        heading: "Opinion sentiment",
+        kpis: [
+          { label: "Approve", value: `${sentiment.approve.toLocaleString()} (${pct(approvePct)})`, tone: "good" },
+          { label: "Mixed", value: `${sentiment.mixed.toLocaleString()} (${pct(sentiment.total > 0 ? sentiment.mixed / sentiment.total : 0)})` },
+          { label: "Reject", value: `${sentiment.reject.toLocaleString()} (${pct(rejectPct)})`, tone: rejectPct > 0.35 ? "bad" : "neutral" },
+        ],
+        share: {
+          title: "Approve / mixed / reject share",
+          data: (["approve", "mixed", "reject"] as const).map((key) => ({
+            label: SENTIMENT_META[key].label,
+            value: sentiment[key],
+            color: PDF_SENTIMENT_COLORS[key],
+          })),
+        },
+      });
+
+      if (agg) {
+        const segmentRows = toRows(agg.bySegment);
+        const localityRows = toRows(agg.byLocality);
+        const roleRows = toRows(agg.byRole);
+        if (segmentRows.length) {
+          sections.push({
+            bars: {
+              title: "Purchase intent by income segment",
+              unit: "%",
+              data: segmentRows.map((row) => ({
+                label: row.name,
+                value: Math.round(row.meanIntent * 100),
+                color: PDF_SEGMENT_COLORS[row.name],
+              })),
+            },
+          });
+        }
+        if (localityRows.length) {
+          sections.push({
+            bars: {
+              title: "Purchase intent by locality",
+              unit: "%",
+              data: localityRows.slice(0, 10).map((row) => ({
+                label: row.name,
+                value: Math.round(row.meanIntent * 100),
+              })),
+            },
+          });
+        }
+        if (roleRows.length) {
+          sections.push({
+            bars: {
+              title: "Purchase intent by buyer role",
+              unit: "%",
+              data: roleRows.map((row) => ({
+                label: row.name.replace("_", " "),
+                value: Math.round(row.meanIntent * 100),
+              })),
+            },
+          });
+        }
+        if (agg.channelShare?.length) {
+          sections.push({
+            share: {
+              title: "Channel preference",
+              data: agg.channelShare.slice(0, 8).map((row) => ({
+                label: row.name,
+                value: row.share,
+              })),
+            },
+          });
+        }
+      }
+
+      if (wtpRanges.length) {
+        sections.push({
+          heading: "Willingness to pay",
+          table: {
+            columns: ["Segment", "P25", "P50", "P75"],
+            rows: wtpRanges.map((row) => [
+              row.segment,
+              fmtMoney(row.p25, row.cur),
+              fmtMoney(row.p50, row.cur),
+              fmtMoney(row.p75, row.cur),
+            ]),
+          },
+        });
+      }
+
+      if (sentimentByRole.length) {
+        sections.push({
+          heading: "Approval by buyer role",
+          table: {
+            columns: ["Role", "Approve", "Mixed", "Reject", "n"],
+            rows: sentimentByRole.map((row) => [
+              row.name,
+              `${Math.round((row.approve / row.total) * 100)}%`,
+              `${Math.round((row.mixed / row.total) * 100)}%`,
+              `${Math.round((row.reject / row.total) * 100)}%`,
+              row.total,
+            ]),
+          },
+        });
+      }
+      if (sentimentBySegment.length) {
+        sections.push({
+          heading: "Approval by income segment",
+          table: {
+            columns: ["Segment", "Approve", "Mixed", "Reject", "n"],
+            rows: sentimentBySegment.map((row) => [
+              row.name,
+              `${Math.round((row.approve / row.total) * 100)}%`,
+              `${Math.round((row.mixed / row.total) * 100)}%`,
+              `${Math.round((row.reject / row.total) * 100)}%`,
+              row.total,
+            ]),
+          },
+        });
+      }
+
+      if (objectionThemes.length) {
+        sections.push({
+          heading: "Top objections to defuse",
+          bars: {
+            title: "Objection themes",
+            data: objectionThemes.slice(0, 8).map((row) => ({
+              label: row.name,
+              value: row.count,
+              color: [239, 68, 68],
+            })),
+          },
+          bullets: objectionThemes.slice(0, 5).map((row) => {
+            const share = Math.round((row.count / total) * 100);
+            const example = row.examples?.[0] ? ` Example: ${row.examples[0]}` : "";
+            return `${row.name}: ${row.count} personas (${share}%).${example}`;
+          }),
+        });
+      }
+
+      if (valueDrivers.length) {
+        sections.push({
+          bars: {
+            title: "Repeated value drivers",
+            data: valueDrivers.slice(0, 10).map((row) => ({
+              label: row.name,
+              value: row.count,
+              color: [16, 185, 129],
+            })),
+          },
+        });
+      }
+
+      if (roleResistance.length) {
+        sections.push({
+          heading: "Resistance by buyer role",
+          table: {
+            columns: ["Role", "Top resistance", "Mentions"],
+            rows: roleResistance.slice(0, 8).map((row) => [
+              row.roleLabel,
+              row.text,
+              row.count,
+            ]),
+          },
+        });
+      }
+
+      const languageBullets = [
+        ...supportiveQuotes.slice(0, 4).map((q) => `Supportive - ${q.text} (${q.meta})`),
+        ...conditionalQuotes.slice(0, 3).map((q) => `Conditional - ${q.text} (${q.meta})`),
+        ...skepticalQuotes.slice(0, 4).map((q) => `Skeptical - ${q.text} (${q.meta})`),
+      ];
+      if (languageBullets.length) {
+        sections.push({
+          heading: "Customer language",
+          bullets: languageBullets,
+        });
+      }
+
+      if (reasoningSnippets.length) {
+        sections.push({
+          heading: "Why they hesitate or convert",
+          bullets: reasoningSnippets.map((row) => `${row.text} (${row.meta})`),
+        });
+      }
+
+      if (agg && agg.platformShare.length) {
+        sections.push({
+          heading: "Social platform affinity",
+          table: {
+            columns: ["Platform", "Budget", "Middle", "Affluent", "Luxury", "Overall"],
+            rows: agg.platformShare.slice(0, 8).map((platform) => {
+              const row = agg.platformMatrix[platform.name] ?? {};
+              return [
+                platform.name,
+                `${Math.round(row.budget ?? 0)}%`,
+                `${Math.round(row.middle ?? 0)}%`,
+                `${Math.round(row.affluent ?? 0)}%`,
+                `${Math.round(row.luxury ?? 0)}%`,
+                `${platform.share}%`,
+              ];
+            }),
+          },
+        });
+      }
+
+      if (opportunity.length) {
+        sections.push({
+          heading: "Opportunity map",
+          table: {
+            columns: ["Cohort", "Segment", "Intent", "WTP P50", "n"],
+            rows: opportunity
+              .slice()
+              .sort((a, b) => b.intent * b.wtp - a.intent * a.wtp)
+              .slice(0, 12)
+              .map((row) => [
+                row.label,
+                row.segment,
+                pct(row.intent),
+                fmtMoney(row.wtp, currency),
+                row.n,
+              ]),
+          },
+        });
+      }
+
+      if (entities.length) {
+        sections.push({
+          share: {
+            title: "Top entities in conclusions",
+            data: entities.map((row) => ({ label: row.name, value: row.share })),
+          },
+        });
+      }
+
+      downloadDossier(
+        {
+          title,
+          subtitle: "Audience insights dossier",
+          meta: [
+            `${personaRows.length.toLocaleString()} personas`,
+            `${state.blockOrder.length} desks`,
+            new Date().toLocaleDateString(),
+          ],
+          cover: {
+            verdict:
+              avgIntent >= 0.55
+                ? "The simulated audience shows strong buyer pull."
+                : avgIntent < 0.35
+                  ? "The simulated audience shows weak buyer pull; address resistance before scaling."
+                  : "The simulated audience is mixed; growth depends on focused positioning and objection handling.",
+            kpis: coverKpis,
+          },
+          sections,
+        },
+        `${slug(title)}-dossier`
+      );
+    } finally {
+      setDossierBusy(false);
+    }
+  }, [
+    agg,
+    brief,
+    canDownloadDossier,
+    conclusions.length,
+    conditionalQuotes,
+    dossierBusy,
+    entities,
+    maxCostUsd,
+    maxTokens,
+    objectionThemes,
+    opportunity,
+    personaRows,
+    reasoningSnippets,
+    roleResistance,
+    sentiment,
+    sentimentByRole,
+    sentimentBySegment,
+    skepticalQuotes,
+    state.blockOrder.length,
+    state.cohortOrder.length,
+    state.costUsd,
+    state.edges.length,
+    state.tokensUsed,
+    supportiveQuotes,
+    valueDrivers,
+    wtpRanges,
+  ]);
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/60 p-4 pt-14">
+      <div className="mx-auto mb-3 flex max-w-6xl justify-end">
+        <button
+          type="button"
+          onClick={() => void downloadInsightsDossier()}
+          disabled={dossierBusy || !canDownloadDossier}
+          className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+          title="Download this Insights page as a PDF dossier"
+        >
+          {dossierBusy ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <FileDown className="h-3.5 w-3.5" />
+          )}
+          Dossier
+        </button>
+      </div>
       <div className="mx-auto grid max-w-6xl grid-cols-1 gap-4 md:grid-cols-2">
         {/* ---- Run telemetry ---- */}
         <Card title="Run spend vs caps">

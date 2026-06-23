@@ -984,6 +984,7 @@ export default function RunDashboard({
         ) : view === "insights" ? (
           <InsightsView
             state={state}
+            brief={brief}
             maxCostUsd={maxCostUsd}
             maxTokens={maxTokens}
             onSelectCohort={setSelectedCohortId}
