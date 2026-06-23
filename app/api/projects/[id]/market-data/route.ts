@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { callMarketData } from "@/lib/llm";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { saveMarketDatum } from "@/lib/store";
 import { ClientProfileSchema, MarketDatumSchema } from "@/lib/schema";
 import {
@@ -64,9 +65,10 @@ export async function POST(
     await saveMarketDatum(params.id, `${market}:${category}`, datum);
     return NextResponse.json({ datum });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "market data sourcing failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "market data sourcing failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }

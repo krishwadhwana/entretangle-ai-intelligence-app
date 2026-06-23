@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { callWebsiteAnalysis } from "@/lib/llm";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { saveWebsiteAnalysis } from "@/lib/store";
 import { WebsiteAnalysisSchema } from "@/lib/schema";
 
@@ -37,9 +38,10 @@ export async function POST(
     await saveWebsiteAnalysis(params.id, analysis).catch(() => undefined);
     return NextResponse.json({ analysis });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "website analysis failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "website analysis failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }

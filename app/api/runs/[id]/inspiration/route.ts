@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { callInspiration, verifyInspiration } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/orchestrator";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { saveInspiration } from "@/lib/store";
 import { ClientProfileSchema } from "@/lib/schema";
 
@@ -61,9 +62,10 @@ export async function POST(
 
     return NextResponse.json({ kit, generatedAt });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "inspiration generation failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "inspiration generation failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }

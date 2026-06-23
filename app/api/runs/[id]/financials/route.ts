@@ -16,6 +16,10 @@ import {
 } from "@/lib/datasources/benchmarks";
 import { fetchFxRate } from "@/lib/datasources/exportCosts";
 import {
+  isProviderQuotaError,
+  toProviderErrorPayload,
+} from "@/lib/providerErrors";
+import {
   ClientProfileSchema,
   FinancialInputsSchema,
   type FinancialsSection,
@@ -101,6 +105,7 @@ export async function POST(
   const capital = await capitalForCurrency(profile, currency);
 
   try {
+    const priors = await financialBenchmarkPriors(profile, targetProjectId);
     // Override mode skips the LLM entirely — pure recompute.
     const rawInputs =
       override ??
@@ -116,9 +121,27 @@ export async function POST(
             },
           })
         ).map(conclusionToWire);
-        return callFinancialInputs(run.id, profile, conclusions, aggregate, currency);
+        try {
+          return await callFinancialInputs(
+            run.id,
+            profile,
+            conclusions,
+            aggregate,
+            currency
+          );
+        } catch (e) {
+          if (!isProviderQuotaError(e)) throw e;
+          console.warn(
+            `[financials] OpenAI quota exhausted; using benchmark fallback for run ${run.id}`
+          );
+          return benchmarkFallbackFinancialInputs(
+            profile,
+            priors,
+            aggregate,
+            currency
+          );
+        }
       })());
-    const priors = await financialBenchmarkPriors(profile, targetProjectId);
     const inputs = applyMarketCacPrior(rawInputs, priors);
 
     const generatedAt = new Date().toISOString();
@@ -150,11 +173,110 @@ export async function POST(
     }
     return NextResponse.json(section);
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "financials generation failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "financials generation failed"
     );
+    return NextResponse.json(payload, { status });
   }
+}
+
+function benchmarkFallbackFinancialInputs(
+  profile: z.infer<typeof ClientProfileSchema>,
+  priors: BenchmarkPriors,
+  aggregate: unknown,
+  currency: string
+): z.infer<typeof FinancialInputsSchema> {
+  const cur = normalizeCurrency(currency || priors.currency || "INR");
+  const priceMid = positive(priors.aovInr.mid, 1000);
+  const priceLow = positive(priors.aovInr.low, priceMid * 0.75);
+  const priceHigh = positive(priors.aovInr.high, priceMid * 1.5);
+  const cogs = Math.max(
+    1,
+    roundMoney(priceMid * (1 - priors.grossMarginPct.mid / 100))
+  );
+  const fixedCostFloor = cur === "INR" ? 50_000 : 1_000;
+  const fixedCosts = roundMoney(
+    Math.max(priceMid * 120, priors.shippingPerOrderInr * 400, fixedCostFloor)
+  );
+  const moqCashRequired = roundMoney(
+    Math.max(cogs * 1_000, priceMid * 750, fixedCosts * 2)
+  );
+  const reachableProspects =
+    aggregate &&
+    typeof aggregate === "object" &&
+    "totalPersonas" in aggregate &&
+    typeof (aggregate as { totalPersonas?: unknown }).totalPersonas === "number"
+      ? Math.max(1000, (aggregate as { totalPersonas: number }).totalPersonas * 12)
+      : Math.max(1500, Math.round(100 / (priors.landingCvrPct.mid / 100)));
+  const channels = [
+    { channel: "Meta / paid social", cac: priors.cacInr.mid * 0.9 },
+    { channel: "Search / high-intent", cac: priors.cacInr.mid * 1.1 },
+    { channel: "Creator / affiliate", cac: priors.cacInr.mid },
+  ].map((c) => ({ ...c, cac: roundMoney(c.cac) }));
+  const tam =
+    priors.marketImportsUsdMn && cur === "INR"
+      ? roundMoney(priors.marketImportsUsdMn.value * 1_000_000 * 83)
+      : roundMoney(priceMid * reachableProspects * 12 * 120);
+  const sam = roundMoney(tam * 0.12);
+  const som = roundMoney(sam * 0.08);
+  const product = profile.product || profile.category || "product";
+
+  return FinancialInputsSchema.parse({
+    currency: cur,
+    costStructure: [
+      {
+        label: "Product landed COGS",
+        amount: roundMoney(cogs * 0.72),
+        note: `${product} benchmark COGS from ${priors.category} gross-margin prior`,
+      },
+      {
+        label: "Packaging and QC",
+        amount: roundMoney(cogs * 0.16),
+        note: "Benchmark fallback allocation",
+      },
+      {
+        label: "Inbound handling",
+        amount: roundMoney(cogs * 0.12),
+        note: "Benchmark fallback allocation",
+      },
+    ],
+    priceTiers: [
+      {
+        label: "Entry",
+        segment: "budget",
+        price: roundMoney(priceLow),
+        landedCogs: null,
+      },
+      {
+        label: "Core",
+        segment: "middle",
+        price: roundMoney(priceMid),
+        landedCogs: null,
+      },
+      {
+        label: "Premium",
+        segment: "affluent",
+        price: roundMoney(priceHigh),
+        landedCogs: null,
+      },
+    ],
+    fixedCostsPerMonth: fixedCosts,
+    moqCashRequired,
+    reachableProspectsPerMonth: Math.round(reachableProspects),
+    cacByChannel: channels,
+    ltv: null,
+    tam,
+    sam,
+    som,
+    baseTierLabel: "Core",
+    assumptions: [
+      "OpenAI quota was unavailable, so this financial model used deterministic benchmark priors instead of web-grounded AI assumptions.",
+      `AOV prior ${cur} ${priors.aovInr.low}-${priors.aovInr.high}; gross margin prior ${priors.grossMarginPct.low}-${priors.grossMarginPct.high}%.`,
+      `CAC prior ${cur} ${priors.cacInr.low}-${priors.cacInr.high}; return prior ${priors.returnRatePct.low}-${priors.returnRatePct.high}%.`,
+      ...priors.notes.slice(0, 2),
+    ],
+  });
 }
 
 // Most common wtpCurrency across the simulated personas (they should all agree,
@@ -269,6 +391,10 @@ function clampToRange(v: number, range: Range): number {
 function roundMoney(v: number): number {
   if (!Number.isFinite(v)) return 0;
   return Number(v.toFixed(Math.abs(v) >= 1000 ? 0 : 2));
+}
+
+function positive(v: number, fallback: number): number {
+  return Number.isFinite(v) && v > 0 ? v : fallback;
 }
 
 function normalizeCurrency(c?: string | null): string {

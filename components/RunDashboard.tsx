@@ -933,6 +933,7 @@ export default function RunDashboard({
         {(ownerMounted || view === "owner") && (
           <div className={view === "owner" ? "" : "hidden"}>
             <OwnerDashboard
+              key={runId}
               runId={runId}
               projectId={projectId}
               state={state}

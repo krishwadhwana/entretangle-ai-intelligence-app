@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { callAssumptionUpdate } from "@/lib/llm";
 import { ClientProfileSchema } from "@/lib/schema";
 import { benchmarksForProfile } from "@/lib/datasources/benchmarks";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -65,9 +66,7 @@ export async function POST(
     );
     return NextResponse.json({ update });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "propose failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "propose failed");
+    return NextResponse.json(payload, { status });
   }
 }

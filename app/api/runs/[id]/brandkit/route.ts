@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { callBrandKit } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/orchestrator";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { saveBrandKit } from "@/lib/store";
 import { ClientProfileSchema } from "@/lib/schema";
 
@@ -71,9 +72,10 @@ export async function POST(
 
     return NextResponse.json({ kit, checks: {}, generatedAt });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "brand kit generation failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "brand kit generation failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }

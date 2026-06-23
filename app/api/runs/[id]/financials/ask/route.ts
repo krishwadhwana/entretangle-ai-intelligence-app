@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callDataQuestion } from "@/lib/llm";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { getFinancialsSection, saveFinancials } from "@/lib/store";
 import {
   ClientProfileSchema,
@@ -65,10 +66,8 @@ export async function POST(
       history
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "ask failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "ask failed");
+    return NextResponse.json(payload, { status });
   }
 
   const turn: FollowUpTurn = {
