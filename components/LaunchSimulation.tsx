@@ -372,7 +372,11 @@ export default function LaunchSimulation({
   const set = <K extends keyof LaunchSimInputs>(
     key: K,
     value: LaunchSimInputs[K]
-  ) => setInputs((cur) => ({ ...cur, [key]: value }));
+  ) => {
+    // Once the founder overrides a saved scenario, the form is a new draft.
+    setActive(null);
+    setInputs((cur) => ({ ...cur, [key]: value }));
+  };
 
   // A knowledge-driven re-run produced a new scenario — surface it like any run.
   const onRerun = useCallback(
@@ -1268,7 +1272,8 @@ function Results({
 
   const exportPdf = () => {
     const d = result.diagnostics;
-    const cur = record.inputs.currency;
+    const usedInputs = result.resolvedInputs ?? record.inputs;
+    const cur = usedInputs.currency;
     const sections: DossierSection[] = [];
     if (d.headline) sections.push({ heading: "Verdict", body: d.headline });
     sections.push({
@@ -1282,6 +1287,11 @@ function Results({
         `Blended CAC: ${fmt.money(s.blendedCac)}`,
         `Break-even: ${s.breakEvenLabel ?? "Never"}`,
       ],
+    });
+    sections.push({
+      heading: "Advanced settings used",
+      body: "Final values reflect the settings the simulation actually ran with after Auto/default fields were resolved.",
+      bullets: buildAdvancedSettingsBullets(record.inputs, usedInputs, fmt),
     });
     if (result.assumptions.length) {
       sections.push({
@@ -2094,6 +2104,101 @@ function formatAssumptionValue(
   return unit ? `${formatted} ${unit}` : formatted;
 }
 
+function buildAdvancedSettingsBullets(
+  raw: LaunchSimInputs,
+  used: LaunchSimInputs,
+  fmt: Formatters
+): string[] {
+  const stepUnit = used.granularity === "day" ? "day" : "month";
+  const moneyPer = (value: number, unit: string) => `${fmt.money(value)}/${unit}`;
+  const auto = (isAuto: boolean, label = "auto-resolved") =>
+    isAuto ? ` (${label})` : "";
+  const channels =
+    used.channels.length > 0
+      ? used.channels
+          .map((c) => {
+            const paid =
+              c.kind === "paid" || c.kind === "marketplace" || c.kind === "retail";
+            const spend = paid ? `, ${pctLabel(c.spendPct)} spend` : "";
+            return `${c.label} (${c.kind}${spend}, ${fmt.money(c.cpm)} CPM, ${smartNumber(c.frequencyCap)} freq)`;
+          })
+          .join("; ")
+      : "None";
+
+  return [
+    `Acquisition - Reachable pool: ${fmt.num(used.reachablePool ?? 0)} people${auto(raw.reachablePool == null, "auto-sized")}`,
+    `Acquisition - CPM: ${moneyPer(used.cpm, "1k impressions")}`,
+    `Acquisition - Frequency cap: ${smartNumber(used.frequencyCap)} impressions/person`,
+    `Acquisition - Organic reach: ${fmt.num(used.organicReachPerStep)} people/${stepUnit}`,
+    `Acquisition - Paid platforms: ${used.adPlatforms.join(", ") || "None"}`,
+    `Acquisition - Channels: ${channels}`,
+    `Funnel behavior - Targeting quality: ${pctLabel(used.targetingQuality)}`,
+    `Funnel behavior - Virality k: ${smartNumber(used.viralityK)} people/buyer`,
+    `Funnel behavior - Decision speed: ${pctLabel(used.decisionSpeed ?? 0)}/${stepUnit}${auto(raw.decisionSpeed == null)}`,
+    `Funnel behavior - Abandon rate: ${pctLabel(used.abandonRate)}/${stepUnit}`,
+    `Funnel behavior - Launch month: ${used.launchStartMonth ? monthLabel(used.launchStartMonth) : "Seasonality off"}${auto(raw.launchStartMonth == null, "seasonality default")}`,
+    `Funnel behavior - Attention momentum: ${signedPercent(used.demandMomentumPct)} demand tilt`,
+    `Funnel behavior - Growth / month: ${signedPercent(used.monthlyGrowthPct ?? 0)}${auto(raw.monthlyGrowthPct == null, "audience-derived")}`,
+    `Operations & costs - Shipping/order: ${moneyPer(used.shippingPerOrder, "order")}`,
+    `Operations & costs - Payment fee: ${pctLabel(used.paymentFeePct)}`,
+    `Operations & costs - Fixed costs: ${moneyPer(used.fixedCostsPerMonth, "month")}`,
+    `Operations & costs - Initial inventory: ${fmt.num(used.initialInventoryUnits ?? 0)} units${auto(raw.initialInventoryUnits == null, "auto-sized")}`,
+    `Operations & costs - Reordering: ${used.reorderEnabled ? "On" : "Off"}`,
+    `Operations & costs - Reorder lead: ${fmt.num(used.reorderLeadTimeDays)} days`,
+    `Operations & costs - Minimum order quantity: ${fmt.num(used.minOrderQtyUnits ?? 0)} units/batch${auto(raw.minOrderQtyUnits == null, "auto-sized")}`,
+    `Returns & retention - Return window: ${fmt.num(used.returnWindowDays)} days`,
+    `Returns & retention - Target refund rate: ${
+      used.targetRefundRatePct == null
+        ? "Persona baseline"
+        : `${smartNumber(used.targetRefundRatePct)}%`
+    }${auto(raw.targetRefundRatePct == null, "benchmark/default")}`,
+    `Returns & retention - Refund multiplier: ${smartNumber(used.refundRateMult)}x`,
+    `Returns & retention - Resellable returns: ${pctLabel(used.resellablePct)}`,
+    `Returns & retention - Return shipping/order: ${moneyPer(
+      used.returnShippingPerOrder ?? used.shippingPerOrder,
+      "return"
+    )}${auto(raw.returnShippingPerOrder == null, "same as outbound")}`,
+    `Returns & retention - Repeat rate multiplier: ${smartNumber(used.repeatRateMult)}x`,
+    `Engine - Trajectory jitter: ${pctLabel(used.jitterAmplitude)}`,
+  ];
+}
+
+function pctLabel(value: number): string {
+  return `${smartNumber(value * 100)}%`;
+}
+
+function signedPercent(value: number): string {
+  const sign = value > 0 ? "+" : "";
+  return `${sign}${smartNumber(value)}%`;
+}
+
+function smartNumber(value: number): string {
+  if (!Number.isFinite(value)) return "0";
+  const maxFractionDigits = Math.abs(value) < 10 && !Number.isInteger(value) ? 2 : 1;
+  return new Intl.NumberFormat(undefined, {
+    maximumFractionDigits: maxFractionDigits,
+  }).format(value);
+}
+
+function monthLabel(month: number): string {
+  return (
+    [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ][month - 1] ?? `Month ${month}`
+  );
+}
+
 function AdvancedGroup({
   title,
   description,
@@ -2156,26 +2261,30 @@ function NumField({
       </label>
       <div className="relative">
         <input
-          type="number"
+          type="text"
           inputMode="decimal"
           value={text}
           placeholder="0"
           step={step}
+          autoComplete="off"
           onFocus={() => {
             editing.current = true;
           }}
-          onBlur={() => {
+          onBlur={(e) => {
             editing.current = false;
-            // Normalise the display to the canonical value on blur.
-            setText(Number.isFinite(value) ? String(value) : "");
+            const n = parseNumericText(e.currentTarget.value);
+            onChange(n);
+            // Normalise the display; clamped/rounded parent values will flow in
+            // immediately through the effect above.
+            setText(Number.isFinite(n) ? String(n) : "");
           }}
           onChange={(e) => {
             const raw = e.target.value;
             setText(raw);
             // Empty / partial ("-", ".") report 0 to the parent but keep the raw
-            // text so the user can keep typing.
-            const n = parseFloat(raw);
-            onChange(Number.isFinite(n) ? n : 0);
+            // text so the user can keep typing. Commas/currency symbols pasted
+            // from spreadsheets or dashboards are accepted and normalised later.
+            onChange(parseNumericText(raw));
           }}
           className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
             unit ? "pr-24" : ""
@@ -2197,6 +2306,32 @@ function NumField({
 }
 
 // --- helpers ---------------------------------------------------------------
+
+function parseNumericText(raw: string): number {
+  const currencyStripped = raw.replace(/,/g, "").replace(/[^\d.-]/g, "");
+  const minusNormalized = currencyStripped.startsWith("-")
+    ? `-${currencyStripped.slice(1).replace(/-/g, "")}`
+    : currencyStripped.replace(/-/g, "");
+  const firstDecimal = minusNormalized.indexOf(".");
+  const normalized =
+    firstDecimal === -1
+      ? minusNormalized
+      : `${minusNormalized.slice(0, firstDecimal + 1)}${minusNormalized
+          .slice(firstDecimal + 1)
+          .replace(/\./g, "")}`;
+
+  if (
+    !normalized ||
+    normalized === "-" ||
+    normalized === "." ||
+    normalized === "-."
+  ) {
+    return 0;
+  }
+
+  const n = Number(normalized);
+  return Number.isFinite(n) ? n : 0;
+}
 
 type Formatters = {
   money: (n: number) => string;
