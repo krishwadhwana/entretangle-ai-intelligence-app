@@ -107,6 +107,48 @@ assert(
   "paid new orders are bounded by ad spend ÷ CAC"
 );
 
+const fixedCostFloored = simulateLaunch(
+  personas,
+  { ...baseInputs, fixedCostsPerMonth: 0 },
+  { reachableProspectsPerMonth: 8000, fixedCostsPerMonthFloor: 123456 }
+);
+assert(
+  fixedCostFloored.resolvedInputs.fixedCostsPerMonth === 123456,
+  "missing fixed costs use the route-supplied operating-cost floor"
+);
+const explicitFixedCost = simulateLaunch(
+  personas,
+  { ...baseInputs, fixedCostsPerMonth: 5000 },
+  { reachableProspectsPerMonth: 8000, fixedCostsPerMonthFloor: 123456 }
+);
+assert(
+  explicitFixedCost.resolvedInputs.fixedCostsPerMonth === 123456,
+  "stale low fixed costs are lifted to the operating-cost floor"
+);
+const higherFixedCost = simulateLaunch(
+  personas,
+  { ...baseInputs, fixedCostsPerMonth: 200000 },
+  { reachableProspectsPerMonth: 8000, fixedCostsPerMonthFloor: 123456 }
+);
+assert(
+  higherFixedCost.resolvedInputs.fixedCostsPerMonth === 200000,
+  "fixed costs above the operating-cost floor are preserved"
+);
+const launchInvestmentPayback = simulateLaunch(
+  personas,
+  { ...baseInputs, fixedCostsPerMonth: 0 },
+  {
+    reachableProspectsPerMonth: 8000,
+    fixedCostsPerMonthFloor: 123456,
+    launchInvestmentFloor: 1_000_000,
+  }
+);
+assert(
+  launchInvestmentPayback.summary.peakCapitalNeeded >
+    fixedCostFloored.summary.peakCapitalNeeded + 999_000,
+  "break-even cash payback includes the launch investment reserve"
+);
+
 // Price sensitivity: a higher sale price should not increase orders.
 const pricier = simulateLaunch(
   personas,

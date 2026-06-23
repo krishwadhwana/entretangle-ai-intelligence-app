@@ -142,8 +142,15 @@ type Msg = OpenAI.Chat.ChatCompletionMessageParam;
 // reasoning effort low so blocks stay inside BLOCK_TIMEOUT_MS.
 const COMPLETION_BUDGET = 8000;
 const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per batch
-const FINANCIALS_WEB_TIMEOUT_MS = 12_000;
-const FINANCIALS_FALLBACK_TIMEOUT_MS = 30_000;
+// Owner-dashboard add-ons run inside HTTP requests, so keep every model leg
+// bounded and disable SDK retries that can silently multiply latency.
+const OWNER_WEB_TIMEOUT_MS = 45_000;
+const OWNER_FALLBACK_TIMEOUT_MS = 45_000;
+const OWNER_QA_TIMEOUT_MS = 45_000;
+const MARKET_DATA_TIMEOUT_MS = 90_000;
+const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
+const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
+const FINANCIALS_COMPLETION_BUDGET = 6000;
 
 function baseParams(
   model: string = config.model
@@ -1121,20 +1128,23 @@ export async function callBrandKit(
 
   // Preferred path: Responses API with web_search so accounts are verifiable.
   try {
-    const response = await client().responses.create({
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content:
-            "Search the web to verify comparable accounts, then output JSON only.",
-        },
-      ],
-      max_output_tokens: 16000,
-      reasoning: { effort: "low" },
-    });
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content:
+              "Search the web to verify comparable accounts, then output JSON only.",
+          },
+        ],
+        max_output_tokens: 16000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
     const searchCalls = Array.isArray(response.output)
       ? response.output.filter((o: { type?: string }) =>
           String(o.type ?? "").startsWith("web_search")
@@ -1165,6 +1175,8 @@ export async function callBrandKit(
       user: brandKitUser(profile, conclusions, aggregate),
       schema: BrandKitSchema,
       maxCompletionTokens: 16000,
+      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
     });
   }
 }
@@ -1187,6 +1199,8 @@ export async function callDataQuestion(
     user: dataQaUser(subject, contextJson, question, history),
     schema: z.object({ answer: z.string() }),
     maxCompletionTokens: 700,
+    requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
+    requestMaxRetries: 0,
   });
   return out.answer;
 }
@@ -1215,6 +1229,8 @@ export async function callAssumptionUpdate(
     user: assumptionUpdateUser(contextJson, knowledge),
     schema: AssumptionUpdateSchema,
     maxCompletionTokens: 1400,
+    requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
+    requestMaxRetries: 0,
   });
 }
 
@@ -1236,16 +1252,19 @@ export async function callMarketData(
       sources: ["mock://market-data"],
     });
   }
-  const response = await client().responses.create({
-    model: config.model,
-    tools: [{ type: "web_search" } as never],
-    input: [
-      { role: "system", content: MARKET_DATA_SYSTEM },
-      { role: "user", content: marketDataUser(country, category) },
-    ],
-    max_output_tokens: 4000,
-    reasoning: { effort: "low" },
-  });
+  const response = await client().responses.create(
+    {
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: MARKET_DATA_SYSTEM },
+        { role: "user", content: marketDataUser(country, category) },
+      ],
+      max_output_tokens: 4000,
+      reasoning: { effort: "low" },
+    },
+    { timeout: MARKET_DATA_TIMEOUT_MS, maxRetries: 0 }
+  );
   const parsed = MarketDataOutputSchema.safeParse(
     JSON.parse(stripFences(response.output_text ?? ""))
   );
@@ -1283,21 +1302,24 @@ export async function callGeneratePlaybook(
       model: "mock",
     });
   }
-  const response = await client().responses.create({
-    model: config.model,
-    tools: [{ type: "web_search" } as never],
-    input: [
-      { role: "system", content: PLAYBOOK_SYSTEM },
-      {
-        role: "user",
-        content:
-          playbookUser(profile, conclusionsByDomain) +
-          "\n\nSearch the web for current tax/duty rates and named competitors for this exact product & market, then output JSON only.",
-      },
-    ],
-    max_output_tokens: 9000,
-    reasoning: { effort: "low" },
-  });
+  const response = await client().responses.create(
+    {
+      model: config.model,
+      tools: [{ type: "web_search" } as never],
+      input: [
+        { role: "system", content: PLAYBOOK_SYSTEM },
+        {
+          role: "user",
+          content:
+            playbookUser(profile, conclusionsByDomain) +
+            "\n\nSearch the web for current tax/duty rates and named competitors for this exact product & market, then output JSON only.",
+        },
+      ],
+      max_output_tokens: 9000,
+      reasoning: { effort: "low" },
+    },
+    { timeout: MARKET_DATA_TIMEOUT_MS, maxRetries: 0 }
+  );
   const searchCalls = Array.isArray(response.output)
     ? response.output.filter((o: { type?: string }) =>
         String(o.type ?? "").startsWith("web_search")
@@ -1350,16 +1372,19 @@ export async function callWebsiteAnalysis(
     });
   }
   try {
-    const response = await client().responses.create({
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: WEBSITE_ANALYSIS_SYSTEM },
-        { role: "user", content: websiteAnalysisUser(url) },
-      ],
-      max_output_tokens: 6000,
-      reasoning: { effort: "low" },
-    });
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: WEBSITE_ANALYSIS_SYSTEM },
+          { role: "user", content: websiteAnalysisUser(url) },
+        ],
+        max_output_tokens: 6000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
     const parsed = WebsiteAnalysisOutputSchema.safeParse(
       JSON.parse(stripFences(response.output_text ?? ""))
     );
@@ -1377,6 +1402,8 @@ export async function callWebsiteAnalysis(
       user: websiteAnalysisUser(url),
       schema: WebsiteAnalysisOutputSchema,
       maxCompletionTokens: 6000,
+      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
     });
   }
 }
@@ -1402,20 +1429,23 @@ export async function callInspiration(
   )}`;
 
   try {
-    const response = await client().responses.create({
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: system },
-        {
-          role: "user",
-          content:
-            "Search the web to find real, current examples, then output JSON only.",
-        },
-      ],
-      max_output_tokens: 16000,
-      reasoning: { effort: "low" },
-    });
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: system },
+          {
+            role: "user",
+            content:
+              "Search the web to find real, current examples, then output JSON only.",
+          },
+        ],
+        max_output_tokens: 16000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
     const searchCalls = Array.isArray(response.output)
       ? response.output.filter((o: { type?: string }) =>
           String(o.type ?? "").startsWith("web_search")
@@ -1445,6 +1475,8 @@ export async function callInspiration(
       user: inspirationUser(profile, conclusions),
       schema: InspirationKitSchema,
       maxCompletionTokens: 16000,
+      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
     });
   }
 }
@@ -1637,7 +1669,7 @@ export async function callFinancialInputs(
               "Search the web to sanity-check market size and prices, then output JSON only.",
           },
         ],
-        max_output_tokens: 16000,
+        max_output_tokens: FINANCIALS_COMPLETION_BUDGET,
         reasoning: { effort: "low" },
       },
       { timeout: FINANCIALS_WEB_TIMEOUT_MS, maxRetries: 0 }
@@ -1670,7 +1702,7 @@ export async function callFinancialInputs(
       system: FINANCIALS_SYSTEM,
       user,
       schema: FinancialInputsSchema,
-      maxCompletionTokens: 16000,
+      maxCompletionTokens: FINANCIALS_COMPLETION_BUDGET,
       maxAttempts: 1,
       requestTimeoutMs: FINANCIALS_FALLBACK_TIMEOUT_MS,
       requestMaxRetries: 0,

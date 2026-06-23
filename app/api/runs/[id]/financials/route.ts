@@ -22,7 +22,7 @@ import {
 } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 // Owner Dashboard › Financials. Two modes, one route:
 //   • POST {}                      → generate a fresh model (LLM emits the

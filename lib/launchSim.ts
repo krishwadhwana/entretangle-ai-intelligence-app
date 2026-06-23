@@ -55,6 +55,15 @@ export type LaunchContext = {
   // Applied (normalised) to new-customer conversion when inputs.launchStartMonth
   // is set, so festive months lift demand and the trough dampens it.
   seasonality?: number[] | null;
+  // Conservative monthly overhead floor supplied by the route when the founder /
+  // financial model did not provide fixed costs. Keeps launch payback from being
+  // pure inventory recovery on otherwise full-scale scenarios.
+  fixedCostsPerMonthFloor?: number | null;
+  // Up-front launch investment reserve to pay back before the Break-even card
+  // turns green. This represents setup, initial operating runway, creative,
+  // sampling and launch-management capital that does not appear as one month's
+  // product inventory.
+  launchInvestmentFloor?: number | null;
   // Fraction of the whole audience this run covers (regional scope). 1 = whole.
   // A regional run is a PROPORTIONAL SLICE: the auto-sized reachable pool, the ad
   // spend and the fixed costs are all scaled by this share, so per-region runs
@@ -303,6 +312,10 @@ export function resolveLaunchInputs(
       stepsPerMonth,
       repeatRateMult: resolvedRepeatRateMult,
     });
+  const fixedCostsPerMonth = Math.max(
+    i.fixedCostsPerMonth,
+    ctx.fixedCostsPerMonthFloor ?? 0
+  );
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
   // founder didn't pin a MOQ. Size it from first-month checkout-level demand,
@@ -363,6 +376,7 @@ export function resolveLaunchInputs(
     initialInventoryUnits,
     minOrderQtyUnits,
     monthlyGrowthPct,
+    fixedCostsPerMonth,
     refundRateMult: i.refundRateMult * preset.refundMult,
     repeatRateMult: resolvedRepeatRateMult,
     abandonRate: clamp(i.abandonRate * preset.abandonMult, 0, 1),
@@ -731,6 +745,9 @@ export function simulateLaunch(
   const parsedRawInputs = LaunchSimInputsSchema.parse(rawInputs);
   const growthWasFounderEntered = parsedRawInputs.monthlyGrowthPct != null;
   const inputs = resolveLaunchInputs(parsedRawInputs, personas, ctx);
+  const fixedCostsWereFounderEntered =
+    parsedRawInputs.fixedCostsPerMonth > 0 &&
+    parsedRawInputs.fixedCostsPerMonth >= inputs.fixedCostsPerMonth - 0.01;
   const N = personas.length;
   // Proportional regional slice: scale ad spend + fixed costs (the pool is scaled
   // in resolveLaunchInputs) so per-region runs reconcile with the whole-audience
@@ -907,7 +924,9 @@ export function simulateLaunch(
   const timeline: LaunchSimStep[] = [];
   let cumulativeReachedRaw = 0;
   let cumulativeNetProfit = 0;
-  let cumulativeCash = -(inputs.initialInventoryUnits ?? 0) * inputs.costPrice;
+  const launchInvestment = Math.max(0, ctx.launchInvestmentFloor ?? 0);
+  let cumulativeCash =
+    -(inputs.initialInventoryUnits ?? 0) * inputs.costPrice - launchInvestment;
   let minCash = cumulativeCash;
   let breakEvenStep: number | null = null;
 
@@ -1456,7 +1475,12 @@ export function simulateLaunch(
     diagnostics: buildDiagnostics(inputs, summary, breakdowns),
     summary,
     breakdowns,
-    assumptions: buildAssumptions(inputs, ctx, growthWasFounderEntered),
+    assumptions: buildAssumptions(
+      inputs,
+      ctx,
+      growthWasFounderEntered,
+      fixedCostsWereFounderEntered
+    ),
   };
 }
 
@@ -1552,7 +1576,8 @@ function buildDiagnostics(
 function buildAssumptions(
   inputs: LaunchSimInputs,
   ctx: LaunchContext,
-  growthWasFounderEntered: boolean
+  growthWasFounderEntered: boolean,
+  fixedCostsWereFounderEntered: boolean
 ): LaunchAssumption[] {
   const preset = BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic;
   const channelLabels = inputs.channels.map((c) => c.label).join(", ");
@@ -1797,9 +1822,22 @@ function buildAssumptions(
     label: "Fixed costs",
     value: inputs.fixedCostsPerMonth,
     unit: `${inputs.currency}/month`,
-    source: "founder_entered",
-    confidence: 0.7,
-    basis: "Monthly overhead allocated across simulation steps.",
+    source: fixedCostsWereFounderEntered ? "founder_entered" : "computed",
+    confidence: fixedCostsWereFounderEntered ? 0.7 : 0.45,
+    basis: fixedCostsWereFounderEntered
+      ? "Monthly overhead allocated across simulation steps."
+      : "Conservative launch operating-cost floor used because no positive fixed-cost input was provided.",
+  });
+  add({
+    key: "launchInvestmentFloor",
+    label: "Launch investment reserve",
+    value: ctx.launchInvestmentFloor ?? 0,
+    unit: inputs.currency,
+    source: ctx.launchInvestmentFloor ? "computed" : "founder_entered",
+    confidence: ctx.launchInvestmentFloor ? 0.45 : 0.7,
+    basis: ctx.launchInvestmentFloor
+      ? "Break-even must repay launch setup, operating runway, creative/sampling and launch-management reserve before turning positive."
+      : "No launch investment reserve was supplied.",
   });
   add({
     key: "returnWindowDays",

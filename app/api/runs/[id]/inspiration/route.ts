@@ -6,6 +6,7 @@ import { saveInspiration } from "@/lib/store";
 import { ClientProfileSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 // Owner Dashboard › Inspiration ("swipe file"). Generates real video examples,
 // product-placement patterns, and social success stories from the converged

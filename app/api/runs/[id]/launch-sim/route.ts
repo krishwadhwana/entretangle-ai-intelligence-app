@@ -200,7 +200,7 @@ export async function GET(
       targetCurrency,
     ] as [string, string]),
   ]);
-  const fixedCostsPerMonth = modelMatchesTarget
+  const modelFixedCostsPerMonth = modelMatchesTarget
     ? model?.breakEven.fixedCostsPerMonth.value ?? null
     : model
       ? convertMoney(
@@ -210,6 +210,15 @@ export async function GET(
           fx
         )
       : null;
+  const fixedCostsPerMonth = positiveOrFloor(
+    modelFixedCostsPerMonth,
+    launchOperatingCostFloorPerMonth(
+      targetCurrency,
+      suggestedBusinessModel,
+      null,
+      blendedCac ?? priors.cacInr.mid
+    )
+  );
   const defaults = {
     currency: targetCurrency,
     // UI display can convert destination-currency sim results back to the
@@ -270,6 +279,21 @@ export async function GET(
     // reachable market to that region's share, so a regional run is self-contained.
     const scoped = scopeToRegion(personas, preScopeInputs.region);
     const inputs = applyBenchmarkRepeat(preScopeInputs, priors, scoped.personas);
+    const scenarioFixedCostFloor = launchOperatingCostFloorPerMonth(
+      targetCurrency,
+      inputs.businessModel,
+      inputs.adSpendPerMonth,
+      blendedCac ?? priors.cacInr.mid
+    );
+    const effectiveFixedCosts = Math.max(
+      inputs.fixedCostsPerMonth,
+      scenarioFixedCostFloor
+    );
+    const scenarioLaunchInvestmentFloor = launchInvestmentFloor(
+      inputs.businessModel,
+      inputs.adSpendPerMonth,
+      effectiveFixedCosts
+    );
     return {
       id: r.id,
       runId: r.runId,
@@ -286,6 +310,8 @@ export async function GET(
               // capped — without it the engine converts most of the reachable
               // pool and revenue/orders blow up.
               blendedCac: blendedCac ?? priors.cacInr.mid,
+              fixedCostsPerMonthFloor: scenarioFixedCostFloor,
+              launchInvestmentFloor: scenarioLaunchInvestmentFloor,
               // Benchmark seasonality curve; applied only if the scenario has a
               // stored launchStartMonth (so re-simulation stays deterministic).
               seasonality: priors.seasonality,
@@ -369,11 +395,28 @@ export async function POST(
       nowMonth
     );
     const inputs = applyBenchmarkRepeat(preScopeInputs, priors, scoped.personas);
+    const scenarioFixedCostFloor = launchOperatingCostFloorPerMonth(
+      targetCurrency,
+      inputs.businessModel,
+      inputs.adSpendPerMonth,
+      reachableBlendedCac ?? priors.cacInr.mid
+    );
+    const effectiveFixedCosts = Math.max(
+      inputs.fixedCostsPerMonth,
+      scenarioFixedCostFloor
+    );
+    const scenarioLaunchInvestmentFloor = launchInvestmentFloor(
+      inputs.businessModel,
+      inputs.adSpendPerMonth,
+      effectiveFixedCosts
+    );
     const result = simulateLaunch(scoped.personas, inputs, {
       reachableProspectsPerMonth,
       audienceShare: scoped.share,
       // Benchmark CAC fallback → paid acquisition is always capped (see GET).
       blendedCac: reachableBlendedCac ?? priors.cacInr.mid,
+      fixedCostsPerMonthFloor: scenarioFixedCostFloor,
+      launchInvestmentFloor: scenarioLaunchInvestmentFloor,
       seasonality: priors.seasonality,
     });
 
@@ -684,6 +727,44 @@ function suggestAdSpendPerMonth(
   return suggested == null ? null : Math.round(suggested);
 }
 
+function positiveOrFloor(value: number | null | undefined, floor: number): number {
+  return Number.isFinite(value) && (value ?? 0) > 0 ? value! : floor;
+}
+
+function launchOperatingCostFloorPerMonth(
+  currency: string,
+  businessModel: LaunchBusinessModel,
+  adSpendPerMonth: number | null,
+  blendedCac: number | null
+): number {
+  const cur = normalizeCurrency(currency);
+  const base = cur === "INR" ? 100_000 : 2_500;
+  const modelMultiplier =
+    businessModel === "saas" || businessModel === "services" ? 0.8 : 1;
+  const baseFloor = base * modelMultiplier;
+  const campaignOps =
+    adSpendPerMonth != null && adSpendPerMonth > 0 ? adSpendPerMonth * 2 : 0;
+  const acquisitionOps =
+    blendedCac != null && blendedCac > 0
+      ? Math.min(blendedCac * 500, base * 5)
+      : 0;
+  return Math.round(Math.max(baseFloor, campaignOps, acquisitionOps));
+}
+
+function launchInvestmentFloor(
+  businessModel: LaunchBusinessModel,
+  adSpendPerMonth: number,
+  fixedCostsPerMonth: number
+): number {
+  const runwayMonths =
+    businessModel === "saas" || businessModel === "services" ? 4 : 6;
+  const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
+  return Math.round(
+    Math.max(0, fixedCostsPerMonth * runwayMonths) +
+      Math.max(0, adSpendPerMonth) * launchMediaMonths
+  );
+}
+
 function applyLegacyAcquisitionDefault(
   inputs: LaunchSimInputs,
   suggestedAdSpendPerMonth: number | null
@@ -705,7 +786,7 @@ function applyDefaultBusinessModel(
   businessModel: LaunchBusinessModel
 ): LaunchSimInputs {
   if (inputs.businessModel !== "generic") return inputs;
-  return { ...inputs, businessModel, channels: [] };
+  return { ...inputs, businessModel, channels: [], repeatRateMult: 1 };
 }
 
 // Anchor the launch-sim refund curve to the benchmark layer's returns/RTO rate
@@ -810,7 +891,12 @@ function inferLaunchBusinessModel(run: {
   if (hasAny(text, ["clothing", "apparel", "fashion", "garment", "shirt", "shirts", "dress", "dresses", "wear", "westernwear", "footwear", "shoes", "accessories", "jewellery", "jewelry"])) {
     return "apparel";
   }
-  if (hasAny(text, ["food", "beverage", "drink", "snack", "supplement", "skincare", "cosmetic", "beauty", "wellness", "grocery", "coffee", "tea", "protein"])) {
+  if (hasAny(text, [
+    "food", "beverage", "drink", "snack", "supplement", "skincare", "skin care",
+    "cosmetic", "beauty", "wellness", "grocery", "coffee", "tea", "protein",
+    "personal care", "haircare", "hair care", "body care", "shampoo",
+    "conditioner", "body wash", "shower care",
+  ])) {
     return "consumable";
   }
   return "generic";

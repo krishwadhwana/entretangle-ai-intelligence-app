@@ -1285,7 +1285,7 @@ function Results({
         `MoM growth assumed: ${growthLabel} (${growthSource})`,
         `Refund rate: ${s.refundRatePct}% (${fmt.num(s.refunds)} refunds)`,
         `Blended CAC: ${fmt.money(s.blendedCac)}`,
-        `Break-even: ${s.breakEvenLabel ?? "Never"}`,
+        `Capital payback: ${s.breakEvenLabel ?? "Never"}`,
       ],
     });
     sections.push({
@@ -1536,7 +1536,7 @@ function Results({
         />
         <Stat label="Ad spend / conversion" value={fmt.money(s.adSpendPerConversion)} sub={`CAC ${fmt.money(s.blendedCac)}`} />
         <Stat
-          label="Break-even"
+          label="Capital payback"
           value={s.breakEvenLabel ?? "Never"}
           tone={s.breakEvenLabel ? "good" : "bad"}
           sub={`peak capital ${fmt.money(s.peakCapitalNeeded)}`}

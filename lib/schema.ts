@@ -1549,7 +1549,7 @@ export const LaunchSimResultSchema = z.object({
     unitsPurchased: z.number().default(0),
     unitsInTransitEnd: z.number().default(0),
     peakCapitalNeeded: z.number(), // worst cumulative cash trough (working capital)
-    breakEvenStep: z.number().nullable(), // step index cumulative net profit first ≥ 0
+    breakEvenStep: z.number().nullable(), // step index cumulative cash first repays launch capital
     breakEvenLabel: z.string().nullable(),
   }),
   breakdowns: z.object({

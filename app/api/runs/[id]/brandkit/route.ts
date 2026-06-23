@@ -6,6 +6,7 @@ import { saveBrandKit } from "@/lib/store";
 import { ClientProfileSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 120;
 
 // Owner Dashboard › Brand & Social Action Plan. Generates the brand kit from
 // the converged world model (social/market-brand/competitor/synthesis findings
