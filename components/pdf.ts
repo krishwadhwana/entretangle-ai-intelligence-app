@@ -471,10 +471,78 @@ function renderDossier(D: Doc, d: Dossier) {
   chrome(D, d.title);
 }
 
+// jsPDF's core Helvetica is Latin-1 only. A single non-Latin-1 char (₹, smart
+// quotes, en/em dashes, …) makes jsPDF re-encode the WHOLE line as wide 2-byte
+// text, which renders with broken letter-spacing. Map the common offenders to
+// ASCII and strip anything else so text stays in single-byte WinAnsi mode.
+function clean(s: string | undefined): string {
+  if (!s) return "";
+  return s
+    .replace(/₹/g, "Rs ") // ₹
+    .replace(/[‘’‛′]/g, "'") // ' ' ‛ ′
+    .replace(/[“”″]/g, '"') // " " ″
+    .replace(/[‐-―−]/g, "-") // hyphen/dash variants + minus
+    .replace(/…/g, "...") // …
+    .replace(/[     ]/g, " ") // non-breaking / thin spaces
+    .replace(/[•●▪]/g, "-") // stray bullets
+    .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, ""); // drop remaining non-Latin-1
+}
+
+function sanitize(d: Dossier): Dossier {
+  const kpi = (k: KPI): KPI => ({
+    label: clean(k.label), value: clean(k.value),
+    sub: k.sub ? clean(k.sub) : undefined, tone: k.tone,
+  });
+  const bar = (b: Bar): Bar => ({ ...b, label: clean(b.label) });
+  return {
+    ...d,
+    title: clean(d.title),
+    subtitle: d.subtitle ? clean(d.subtitle) : undefined,
+    meta: d.meta?.map((m) => clean(m)),
+    cover: d.cover
+      ? {
+          verdict: d.cover.verdict ? clean(d.cover.verdict) : undefined,
+          tagline: d.cover.tagline ? clean(d.cover.tagline) : undefined,
+          kpis: d.cover.kpis?.map(kpi),
+        }
+      : undefined,
+    sections: d.sections.map((s) => ({
+      ...s,
+      heading: s.heading ? clean(s.heading) : undefined,
+      body: s.body ? clean(s.body) : undefined,
+      bullets: s.bullets?.map((b) => clean(b)),
+      kpis: s.kpis?.map(kpi),
+      bars: s.bars
+        ? { ...s.bars, title: s.bars.title ? clean(s.bars.title) : undefined, data: s.bars.data.map(bar) }
+        : undefined,
+      share: s.share
+        ? { ...s.share, title: s.share.title ? clean(s.share.title) : undefined, data: s.share.data.map(bar) }
+        : undefined,
+      line: s.line
+        ? {
+            ...s.line,
+            title: s.line.title ? clean(s.line.title) : undefined,
+            xLabels: s.line.xLabels?.map((x) => clean(x)),
+            series: s.line.series.map((se) => ({ ...se, name: clean(se.name) })),
+          }
+        : undefined,
+      table: s.table
+        ? {
+            columns: s.table.columns.map((c) => clean(c)),
+            rows: s.table.rows.map((r) =>
+              r.map((c) => (typeof c === "string" ? clean(c) : c))
+            ),
+          }
+        : undefined,
+    })),
+  };
+}
+
 /** Build + download one PDF from a dossier. */
 export function downloadDossier(d: Dossier, filename: string): void {
-  const D = new Doc(d.accent ?? INDIGO);
-  renderDossier(D, d);
+  const safe = sanitize(d);
+  const D = new Doc(safe.accent ?? INDIGO);
+  renderDossier(D, safe);
   D.d.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
 }
 
