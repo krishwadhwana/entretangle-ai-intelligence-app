@@ -24,3 +24,6 @@ out
 
 # TypeScript incremental build cache (collides with Nixpacks cache mount)
 tsconfig.tsbuildinfo
+
+# generated PDF artifacts
+*.pdf
