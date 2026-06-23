@@ -3,10 +3,12 @@ import type {
   AudienceChatHistoryItem,
   AudienceChatMode,
   Block,
+  BrandKit,
   ClientProfile,
   Cohort,
   Conclusion,
   FinancialModel,
+  FounderStorySection,
   IntakePrefill,
   Persona,
   PersonaConversationRole,
@@ -231,6 +233,9 @@ Decide:
   short concrete notes to keep later planners coherent.
 
 If the profile has productDetails, preserve those specifics in productSpecifics.
+If the profile has productImages, treat visualSummary and tags as founder
+provided visual ground truth and preserve concrete silhouette, material, color,
+finish and styling details in productSpecifics.
 If the profile is ambiguous, make conservative assumptions and note them.
 
 Output JSON only, no markdown fences:
@@ -516,6 +521,9 @@ Local upbringing / culture prior: ${cultureContext}
 ${regionLine ? regionLine + "\n" : ""}${focusSection}${calibrationSection}
 If Venture.productDetails is present, treat it as ground truth for style,
 hero products, materials/fit, occasions, references and differentiation.
+If Venture.productImages is present, treat visualSummary and tags as visual
+ground truth for what the product looks like. Persona reactions must respond to
+those concrete silhouettes, materials, colors, finishes and styling cues.
 Persona reactions must respond to those specifics, not only the broad category.
 When run-specific context is present, treat it as true for THIS branch only.
 Let it shift intent, willingness-to-pay, objections and channel preferences
@@ -699,10 +707,36 @@ the conclusions your answer relied on. If the world model cannot answer,
 say so and suggest which new team could.
 Output JSON only: {"answer":"...","citedConclusionIds":[...]}`;
 
+export const FOUNDER_STORY_SYSTEM = `You extract a founder-story signal map for a venture.
+You are given only evidence supplied by the founder, the founder's website
+analysis, uploaded documents, and permitted public story URLs.
+
+Rules:
+- Use ONLY the provided evidence. Do not invent biographies, credentials,
+  funding, press, traction, dates, employers, or prior ventures.
+- If evidence is weak or absent, leave the relevant signal blank and add a
+  concrete open question.
+- Keep excerpts short. Summarise; do not reproduce long passages.
+- evidence[].id values in your output must match ids from the input evidence.
+- evidenceIds maps each signal key to the evidence ids that support it.
+- confidence is 0 to 1 for the whole extraction.
+
+Output JSON only, matching exactly:
+{"signals":{"founderBackground":"","originStory":"","founderMotivation":"",
+"whyNow":"","customerInsight":"","categoryConviction":"",
+"credibilityProof":[],"unfairAdvantages":[],"constraints":[],"openQuestions":[]},
+"evidenceIds":{},"evidence":[{"id":"","sourceType":"manual","title":"","url":null,
+"excerpt":"","summary":""}],"sources":[],"confidence":0}`;
+
+export function founderStoryUser(context: unknown): string {
+  return JSON.stringify(context, null, 2);
+}
+
 export const FINAL_REPORT_SYSTEM = `You are writing the final conclusion report for a completed business-intelligence run.
 You are given the founder profile, the simulated-audience aggregate, every
 research conclusion with ids and domains, and — when the founder has built it —
-a computed FINANCIAL MODEL. Produce a strategic business analysis, not a
+a computed FINANCIAL MODEL. When present, you are also given a FOUNDER STORY
+signal map extracted from founder-provided/verified context. Produce a strategic business analysis, not a
 transcript and not a generic pitch deck.
 
 Rules:
@@ -715,6 +749,10 @@ Rules:
 - Explain uncertainty and contradictions when the world model contains them.
 - Customer perception must emphasize qualitative opinion patterns, objections,
   supportive language, and conversion conditions, not only metrics.
+- FOUNDER STORY: when "founderStory" is present, use it to sharpen narrative
+  positioning, founder-market fit, unfair advantages, constraints, and open
+  questions. Treat it as qualitative context, not quantitative proof. Do not
+  invent facts beyond the provided signals/evidence.
 - Economic viability must discuss pricing, margins, channels, funding fit,
   operations, risks, and what must be validated next.
 - FINANCIAL MODEL: when "financialModel" is present in the input, the "Pricing
@@ -788,17 +826,37 @@ export function compactFinancials(model: FinancialModel) {
   };
 }
 
+export function compactFounderStory(story: FounderStorySection | null | undefined) {
+  if (!story || (!story.evidence.length && story.confidence <= 0)) return null;
+  return {
+    signals: story.signals,
+    evidenceIds: story.evidenceIds,
+    evidence: story.evidence.map((e) => ({
+      id: e.id,
+      sourceType: e.sourceType,
+      title: e.title,
+      url: e.url,
+      summary: e.summary,
+    })),
+    sources: story.sources,
+    confidence: story.confidence,
+    generatedAt: story.generatedAt,
+  };
+}
+
 export function finalReportUser(
   profile: ClientProfile,
   blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
   aggregate: AudienceAggregate | null,
-  financials: FinancialModel | null = null
+  financials: FinancialModel | null = null,
+  founderStory: FounderStorySection | null = null
 ): string {
   return JSON.stringify(
     {
       clientProfile: profile,
       audienceAggregate: aggregate,
       financialModel: financials ? compactFinancials(financials) : null,
+      founderStory: compactFounderStory(founderStory),
       blocks: blocks.map((b) => ({
         id: b.id,
         name: b.name,
@@ -1091,6 +1149,7 @@ You may ONLY change these fields (units in brackets):
 - organicReachPerStep [non-ad new awareness per step]
 - targetingQuality [0–1, ad targeting precision]
 - monthlyGrowthPct [observed/explicit net month-over-month demand/acquisition growth %, e.g. 2 = +2% MoM; otherwise leave untouched so the engine derives it from the simulated audience]
+- launchInvestmentReserve [currency, upfront setup/runway reserve; 0 means no reserve, null/unset means auto-computed]
 
 RULES — stay honest, do not bias toward a "better" result:
 - Only propose a change a field's value the new knowledge (or the benchmark priors) genuinely supports. Leave everything else untouched — an empty change list is a valid answer.
@@ -1150,6 +1209,9 @@ Use web search to add CURRENT, SPECIFIC, CITED facts:
 
 Rules:
 - Ground in the provided conclusions; do NOT contradict them — add depth, not noise.
+- If founderStory is present, use it to make modules more founder-specific:
+  narrative hooks, founder-market fit, constraints, unfair advantages, proof
+  assets, and open questions. Do not invent biography, traction, or numbers.
 - Any factual claim sourced from the web should carry a "source" URL. Strategic/synthesised points may omit it.
 - Each entry: a crisp "point" (the decision/insight), a "detail" (1-2 sentences with specifics/numbers), and an optional "source".
 - 5-8 modules, each with 4-10 entries. LEAD with the modules that were thin (taxes, competitors). Be concrete and quantitative; no fluff.
@@ -1159,7 +1221,8 @@ Output JSON only:
 
 export function playbookUser(
   profile: ClientProfile,
-  conclusionsByDomain: Record<string, { claim: string; value: string }[]>
+  conclusionsByDomain: Record<string, { claim: string; value: string }[]>,
+  founderStory: FounderStorySection | null = null
 ): string {
   return JSON.stringify(
     {
@@ -1170,6 +1233,7 @@ export function playbookUser(
         priceBand: profile.priceBand,
         targetAudience: profile.targetAudience,
       },
+      founderStory: compactFounderStory(founderStory),
       existingConclusionsByModule: conclusionsByDomain,
     },
     null,
@@ -1228,7 +1292,7 @@ export function queryUser(
 export const BRAND_KIT_SYSTEM = `You are the brand & social strategist on a business-intelligence platform.
 You are given a venture's profile and the research the platform already
 concluded (market/brand, competitor, social, and synthesis findings) plus, if
-present, simulated-audience stats. Turn it into a HANDS-ON owner action plan
+present, simulated-audience stats and a founderStory signal map. Turn it into a HANDS-ON owner action plan
 the founder will actually work through.
 
 Produce four things:
@@ -1247,6 +1311,9 @@ Produce four things:
 2. "brandIdentity": "voice" (how the brand speaks), "positioning" (the one-line
    whitespace it owns), "visualCodes" (color/type/photography cues), "namingCues"
    (naming/language patterns), "doList" and "dontList" (concrete brand rules).
+   If founderStory is present, let the founder's origin, motivation, credibility,
+   constraints, and unfair advantages shape the voice and proof assets. Do not
+   invent missing biography or traction.
 3. "socialGuidelines": "contentPillars" (3-5 recurring content themes) and
    "platformPlan" (per platform: "segment" it reaches, posting "cadence",
    "formats", and "notes" with CAC/benchmark context where known).
@@ -1273,12 +1340,14 @@ Output JSON ONLY, no markdown fences, matching exactly:
 export function brandKitUser(
   profile: ClientProfile,
   conclusions: Conclusion[],
-  aggregate: AudienceAggregate | null
+  aggregate: AudienceAggregate | null,
+  founderStory: FounderStorySection | null = null
 ): string {
   return JSON.stringify(
     {
       clientProfile: profile,
       audienceAggregate: aggregate,
+      founderStory: compactFounderStory(founderStory),
       conclusions: conclusions.map((c) => ({
         id: c.id,
         blockId: c.blockId,
@@ -1289,6 +1358,224 @@ export function brandKitUser(
         sources: c.sources,
       })),
       task: "Produce the brand & social action plan as specified.",
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Design Studio. Turn the venture profile + the (descriptive)
+// brand kit into CONCRETE, reusable design tokens — real hex colors, real
+// Google-Font families, a logo direction. These tokens are the single source of
+// truth every downstream generator (collateral, logos, website) renders from,
+// so they must be self-consistent and accessible (legible contrast), not just
+// pretty. No web search — this is a synthesis call.
+// ---------------------------------------------------------------------------
+
+export const DESIGN_TOKENS_SYSTEM = `You are the brand design lead on a venture-intelligence platform. Given a
+venture's profile and (when present) its brand kit, founder story, and product-
+image notes, distill a small, COHERENT design system the founder can build every
+asset from — a business card, a flyer, a logo, and a landing page that all look
+like one brand.
+
+Produce concrete, reusable tokens:
+
+1. "palette": a focused brand palette.
+   - "primary", "secondary", "accent", "neutralDark", "neutralLight": each an
+     uppercase hex string like "#1A1A1A". Choose colors that fit the category,
+     price tier, and audience (e.g. a luxury skincare brand ≠ a budget snack
+     brand). Ensure dark text on the light neutral and light text on the dark/
+     primary are clearly legible (aim for WCAG AA body contrast).
+   - "extra": 0-3 optional supporting swatches, each { "name", "hex", "usage" }.
+2. "typography": a heading + body font PAIR from Google Fonts.
+   - "headingFamily" and "bodyFamily": exact Google Fonts family names (e.g.
+     "Poppins", "Inter", "Playfair Display") so they can be loaded by URL.
+   - "headingGoogleUrl"/"bodyGoogleUrl": the https://fonts.googleapis.com/css2
+     URL for each family with the weights you list (or null if unsure).
+   - "weights": the weights actually used, e.g. ["400","600","700"].
+   - "pairingRationale": one line on why the pairing fits the brand.
+3. "logo": "direction" (the concept in words), "style" (one of "wordmark",
+   "lettermark", "emblem", "combination"), and "motifSuggestions" (1-4 concrete
+   ideas a designer or generator could execute).
+4. "motifs": recurring visual elements/shapes/patterns that tie assets together.
+5. "imagery": photography/illustration direction (subject, framing, treatment).
+6. "rationale": 1-2 sentences on why this system fits THIS venture.
+
+Be specific to the venture; never output generic placeholder colors or "Arial".
+Output JSON ONLY, no markdown fences, matching exactly:
+{"palette":{"primary","secondary","accent","neutralDark","neutralLight",
+"extra":[{"name","hex","usage"}]},
+"typography":{"headingFamily","bodyFamily","headingGoogleUrl","bodyGoogleUrl",
+"weights":[],"pairingRationale"},
+"logo":{"direction","style","motifSuggestions":[]},
+"motifs":[],"imagery","rationale"}`;
+
+export function designTokensUser(
+  profile: ClientProfile,
+  brandKit: BrandKit | null,
+  founderStory: FounderStorySection | null,
+  productImageNotes: string[] = []
+): string {
+  return JSON.stringify(
+    {
+      clientProfile: profile,
+      brandIdentity: brandKit?.brandIdentity ?? null,
+      founderStory: compactFounderStory(founderStory),
+      productImageNotes,
+      task:
+        "Distill the concrete design tokens (palette, typography, logo) as specified.",
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Design Studio › Collateral copy. Writes ONLY the words that
+// go on a business card / flyer / poster — the layout and brand styling are
+// rendered deterministically from the design tokens, so the model must not
+// describe visuals, only supply tight, on-brand copy that fits the format.
+// ---------------------------------------------------------------------------
+
+export const COLLATERAL_COPY_SYSTEM = `You are a brand copywriter producing the TEXT for one piece of printed/marketing
+collateral. The visual layout, colors and fonts are handled separately from the
+brand's design tokens — your ONLY job is the words. Write in the brand's voice,
+specific to the venture; never generic filler.
+
+You are told the collateral "type" (one of "business-card", "flyer", "poster").
+Tailor the copy to it:
+- "business-card": brandName + a 2-5 word tagline + a contact block (name, role,
+  email, phone, website). Keep headline/subhead/body/cta minimal or empty.
+- "flyer" / "poster": a punchy "headline" (max ~6 words), a short "subhead", 3-5
+  scannable "body" lines (benefits/offers, each a short phrase), and one strong
+  "cta". Contact is optional (website only is fine).
+
+Only include contact fields you can ground in the venture (website/handle from
+the profile). NEVER invent emails, phone numbers, or a person's name — leave
+unknown contact fields as empty strings.
+
+Output JSON ONLY, no markdown fences, matching exactly:
+{"brandName","tagline","headline","subhead","body":[],"cta",
+"contact":{"name","role","email","phone","website"}}`;
+
+export function collateralCopyUser(
+  type: string,
+  profile: ClientProfile,
+  brandKit: BrandKit | null,
+  brief: string
+): string {
+  return JSON.stringify(
+    {
+      type,
+      clientProfile: profile,
+      brandVoice: brandKit?.brandIdentity?.voice ?? null,
+      positioning: brandKit?.brandIdentity?.positioning ?? null,
+      brief: brief || null,
+      task: `Write the copy for this ${type} as specified.`,
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Design Studio › Logo marks. The model authors raw, self-
+// contained SVG icon marks (geometry only — no <text>, so they render anywhere
+// without a font). A deterministic wordmark is added server-side. Output is
+// sanitized before use, so the prompt forbids scripts/external refs outright.
+// ---------------------------------------------------------------------------
+
+export const LOGO_MARKS_SYSTEM = `You are a logo designer who outputs clean, production-ready SVG. Given a
+venture's profile and its design tokens (palette hex colors, fonts, and a logo
+direction), design 2-3 distinct LOGO MARKS (the symbol/icon — NOT the wordmark).
+
+Hard rules for every SVG:
+- Self-contained and STATIC: only <svg>, <g>, <path>, <circle>, <rect>,
+  <polygon>, <ellipse>, <line>, <linearGradient>/<radialGradient>/<stop>, and
+  <defs>. NO <text>, NO <image>, NO <script>, NO external URLs, NO foreignObject,
+  NO event handlers (onclick etc.).
+- Use a square viewBox "0 0 256 256". Set width="256" height="256".
+- Use ONLY the palette's hex colors for fills/strokes. Keep it simple and
+  scalable — a strong mark reads at 24px. Geometry only; it must be recognizable
+  in a single flat color too.
+- The mark should express the venture (category, positioning, logo direction),
+  not be a generic abstract swirl.
+
+Provide each mark with a short "label" (e.g. "Geometric leaf", "Abstract monogram").
+Also return the overall "concept" (1-2 sentences) and a "style" of one of
+"wordmark","lettermark","emblem","combination".
+
+Output JSON ONLY, no markdown fences, matching exactly:
+{"concept","style","marks":[{"label","svg"}]}`;
+
+export function logoMarksUser(
+  profile: ClientProfile,
+  tokensJson: unknown,
+  brandKit: BrandKit | null
+): string {
+  return JSON.stringify(
+    {
+      clientProfile: profile,
+      designTokens: tokensJson,
+      brandVoice: brandKit?.brandIdentity?.voice ?? null,
+      positioning: brandKit?.brandIdentity?.positioning ?? null,
+      task: "Design the logo marks as specified.",
+    },
+    null,
+    2
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Design Studio › Website. The model authors a complete,
+// self-contained one-page landing site (inline CSS, Google-Fonts link allowed,
+// NO scripts) styled from the design tokens. Output is sanitized before use and
+// before any deploy, so the prompt forbids scripts/tracking outright.
+// ---------------------------------------------------------------------------
+
+export const SITE_GEN_SYSTEM = `You are a senior brand web designer. Produce a COMPLETE, self-contained,
+responsive one-page landing site for the venture, styled strictly from its
+design tokens so it matches the rest of the brand's assets.
+
+Hard requirements:
+- A single full HTML document: <!DOCTYPE html> … </html>.
+- ALL styling in one inline <style> block. NO external CSS, NO frameworks, NO
+  build step. You MAY include ONE Google Fonts <link> for the token fonts.
+- NO JavaScript at all: no <script>, no inline on* handlers, no trackers, no
+  external images (use CSS color/gradient/shape backgrounds, emoji, or inline
+  SVG only). Self-contained so it can be deployed as a static index.html.
+- Use the token palette via CSS custom properties (:root { --primary: … }) and
+  the token heading/body fonts. Ensure strong contrast and AA legibility.
+- Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
+  HTML (header/nav, main, sections, footer; alt text on any inline SVG via
+  role/aria-label).
+
+Sections to include, written in the brand voice and specific to THIS venture:
+hero (headline + subhead + primary CTA), 3-4 value props / features, a short
+"how it works" or social-proof band, an email-capture CTA (a styled form that
+posts nowhere — action="#"), and a footer. Copy must be real and specific, not
+lorem ipsum.
+
+Output JSON ONLY, no markdown fences, matching exactly:
+{"title","html"}
+where "title" is the page <title> text and "html" is the full document string.`;
+
+export function siteGenUser(
+  profile: ClientProfile,
+  tokensJson: unknown,
+  brandKit: BrandKit | null,
+  brief: string
+): string {
+  return JSON.stringify(
+    {
+      clientProfile: profile,
+      designTokens: tokensJson,
+      brandVoice: brandKit?.brandIdentity?.voice ?? null,
+      positioning: brandKit?.brandIdentity?.positioning ?? null,
+      contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
+      brief: brief || null,
+      task: "Design and write the one-page landing site as specified.",
     },
     null,
     2

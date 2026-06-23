@@ -59,7 +59,7 @@ export type LaunchContext = {
   // financial model did not provide fixed costs. Keeps launch payback from being
   // pure inventory recovery on otherwise full-scale scenarios.
   fixedCostsPerMonthFloor?: number | null;
-  // Up-front launch investment reserve to pay back before the Break-even card
+  // Up-front launch reserve to pay back before the Cash payback card
   // turns green. This represents setup, initial operating runway, creative,
   // sampling and launch-management capital that does not appear as one month's
   // product inventory.
@@ -924,7 +924,10 @@ export function simulateLaunch(
   const timeline: LaunchSimStep[] = [];
   let cumulativeReachedRaw = 0;
   let cumulativeNetProfit = 0;
-  const launchInvestment = Math.max(0, ctx.launchInvestmentFloor ?? 0);
+  const launchInvestment = Math.max(
+    0,
+    inputs.launchInvestmentReserve ?? ctx.launchInvestmentFloor ?? 0
+  );
   let cumulativeCash =
     -(inputs.initialInventoryUnits ?? 0) * inputs.costPrice - launchInvestment;
   let minCash = cumulativeCash;
@@ -1533,7 +1536,7 @@ function buildDiagnostics(
   }
 
   if (summary.netProfit < 0) {
-    risks.push(`Fixed costs and launch spend do not pay back within this horizon; peak capital need is ${fmtMoney(summary.peakCapitalNeeded)}.`);
+    risks.push(`Fixed costs and launch spend do not pay back within this horizon; peak cash need is ${fmtMoney(summary.peakCapitalNeeded)}.`);
   }
   if (summary.stockoutUnits > summary.unitsSold * 0.1) {
     risks.push(`${fmtCount(summary.stockoutUnits)} units of demand are lost to stockouts, so inventory is constraining upside.`);
@@ -1585,6 +1588,9 @@ function buildAssumptions(
   const resolvedChannelIds = inputs.channels.map((c) => c.id).join("|");
   const channelsFromPreset = resolvedChannelIds === presetChannelIds;
   const fromFinancials = ctx.reachableProspectsPerMonth != null && ctx.reachableProspectsPerMonth > 0;
+  const launchReserveWasFounderEntered = inputs.launchInvestmentReserve != null;
+  const launchReserve =
+    inputs.launchInvestmentReserve ?? ctx.launchInvestmentFloor ?? 0;
   const assumptions: LaunchAssumption[] = [];
   const add = (assumption: LaunchAssumption) => assumptions.push(assumption);
   const pct = (value: number) => round(value * 100, 2);
@@ -1829,15 +1835,15 @@ function buildAssumptions(
       : "Conservative launch operating-cost floor used because no positive fixed-cost input was provided.",
   });
   add({
-    key: "launchInvestmentFloor",
-    label: "Launch investment reserve",
-    value: ctx.launchInvestmentFloor ?? 0,
+    key: "launchInvestmentReserve",
+    label: "Launch reserve",
+    value: launchReserve,
     unit: inputs.currency,
-    source: ctx.launchInvestmentFloor ? "computed" : "founder_entered",
-    confidence: ctx.launchInvestmentFloor ? 0.45 : 0.7,
-    basis: ctx.launchInvestmentFloor
-      ? "Break-even must repay launch setup, operating runway, creative/sampling and launch-management reserve before turning positive."
-      : "No launch investment reserve was supplied.",
+    source: launchReserveWasFounderEntered ? "founder_entered" : "computed",
+    confidence: launchReserveWasFounderEntered ? 0.7 : 0.45,
+    basis: launchReserveWasFounderEntered
+      ? "Founder-entered launch/setup cash reserve that cash payback must recover."
+      : "Computed launch setup, operating runway, creative/sampling and launch-management reserve that cash payback must recover.",
   });
   add({
     key: "returnWindowDays",

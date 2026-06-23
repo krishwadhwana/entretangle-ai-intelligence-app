@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { callFinalReport } from "@/lib/llm";
 import { ClientProfileSchema } from "@/lib/schema";
-import { getFinancialModel } from "@/lib/store";
+import { getFinancialModel, getFounderStory } from "@/lib/store";
 import { getCostUsd, getTokensUsed } from "@/lib/usage";
 import { blockToWire } from "@/lib/wire";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -59,13 +59,17 @@ export async function POST(
   const financials = run.projectId
     ? await getFinancialModel(run.projectId, run.id)
     : null;
+  const founderStory = run.projectId
+    ? await getFounderStory(run.projectId).catch(() => null)
+    : null;
   try {
     const report = await callFinalReport(
       run.id,
       profile,
       run.blocks.map((b) => blockToWire(b, b.conclusions)),
       aggregate,
-      financials
+      financials,
+      founderStory
     );
 
     const emitter = await RunEmitter.create(run.id);

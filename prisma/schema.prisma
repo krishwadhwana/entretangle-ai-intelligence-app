@@ -341,3 +341,249 @@ model IndustryKnowledge {
 
   @@map("industry_knowledge")
 }
+
+// Globally shared company intelligence: company identity, exchange listings,
+// filings, sourced profile snapshots, financial facts, price snapshots and
+// daily news. Tables are global rather than per-project so every venture/run
+// can reuse the same intelligence base.
+model Company {
+  id              String   @id @default(cuid())
+  canonicalName   String   @map("canonical_name")
+  legalName       String?  @map("legal_name")
+  country         String?
+  website         String?
+  investorWebsite String?  @map("investor_website")
+  cik             String?  @unique
+  lei             String?
+  crunchbaseUuid      String?  @unique @map("crunchbase_uuid")
+  crunchbasePermalink String?  @unique @map("crunchbase_permalink")
+  sic             String?
+  sicDescription  String?  @map("sic_description")
+  sector          String?
+  description     String   @default("")
+  story           Json?
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  listings      ExchangeListing[]
+  profiles      CompanyProfileSnapshot[]
+  filings       CorporateFiling[]
+  metrics       FinancialMetric[]
+  news          NewsItem[]
+  sourceRecords SourceRecord[]
+  founderRoles  FounderCompanyRole[]
+  founderStories FounderStorySnapshot[]
+
+  @@index([canonicalName])
+  @@index([country])
+  @@map("companies")
+}
+
+model Founder {
+  id                  String   @id @default(cuid())
+  fullName            String   @map("full_name")
+  crunchbaseUuid      String?  @unique @map("crunchbase_uuid")
+  crunchbasePermalink String?  @unique @map("crunchbase_permalink")
+  linkedin            String?
+  website             String?
+  bio                 String   @default("")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  roles   FounderCompanyRole[]
+  stories FounderStorySnapshot[]
+
+  @@index([fullName])
+  @@map("founders")
+}
+
+model FounderCompanyRole {
+  id        String    @id @default(cuid())
+  founderId String    @map("founder_id")
+  companyId String    @map("company_id")
+  role      String    @default("founder")
+  source    String
+  startedOn DateTime? @map("started_on")
+  endedOn   DateTime? @map("ended_on")
+  raw       Json?
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  founder Founder @relation(fields: [founderId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([founderId, companyId, role, source])
+  @@index([companyId])
+  @@map("founder_company_roles")
+}
+
+model FounderStorySnapshot {
+  id          String   @id @default(cuid())
+  founderId   String?  @map("founder_id")
+  companyId   String?  @map("company_id")
+  source      String
+  sourceType  String   @map("source_type") // licensed_api | official_page | interview | manual_upload
+  url         String?
+  title       String
+  narrative   String   @default("")
+  raw         Json?
+  sources     Json     @default("[]")
+  fingerprint String   @unique
+  asOf        DateTime @default(now()) @map("as_of")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  founder Founder? @relation(fields: [founderId], references: [id], onDelete: SetNull)
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([founderId, companyId])
+  @@map("founder_story_snapshots")
+}
+
+model ExchangeListing {
+  id          String   @id @default(cuid())
+  companyId   String   @map("company_id")
+  exchange    String
+  mic         String?
+  ticker      String
+  currency    String?
+  isin        String?
+  active      Boolean  @default(true)
+  firstSeenAt DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt  DateTime @default(now()) @map("last_seen_at")
+
+  company        Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  filings        CorporateFiling[]
+  priceSnapshots PriceSnapshot[]
+
+  @@unique([exchange, ticker])
+  @@index([companyId])
+  @@map("exchange_listings")
+}
+
+model CompanyProfileSnapshot {
+  id          String   @id @default(cuid())
+  companyId   String   @map("company_id")
+  source      String // sec-submissions | crunchbase | ...
+  fingerprint String   @unique
+  asOf        DateTime @default(now()) @map("as_of")
+  title       String?
+  summary     String   @default("")
+  raw         Json
+  sources     Json     @default("[]")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, source, asOf])
+  @@map("company_profile_snapshots")
+}
+
+model CorporateFiling {
+  id              String    @id @default(cuid())
+  companyId       String    @map("company_id")
+  listingId       String?   @map("listing_id")
+  regulator       String // SEC | ...
+  formType        String    @map("form_type")
+  accessionNo     String?   @map("accession_no")
+  filingDate      DateTime  @map("filing_date")
+  reportDate      DateTime? @map("report_date")
+  title           String
+  url             String
+  primaryDocument String?   @map("primary_document")
+  raw             Json?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company Company          @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  listing ExchangeListing? @relation(fields: [listingId], references: [id], onDelete: SetNull)
+
+  @@unique([regulator, accessionNo])
+  @@index([companyId, filingDate])
+  @@index([listingId])
+  @@map("corporate_filings")
+}
+
+model FinancialMetric {
+  id           String    @id @default(cuid())
+  companyId    String    @map("company_id")
+  source       String // sec-companyfacts | ...
+  taxonomy     String
+  metric       String
+  label        String
+  unit         String
+  value        Float
+  fiscalYear   Int?      @map("fiscal_year")
+  fiscalPeriod String?   @map("fiscal_period")
+  form         String?
+  filedDate    DateTime? @map("filed_date")
+  endDate      DateTime? @map("end_date")
+  accessionNo  String?   @map("accession_no")
+  frame        String?
+  fingerprint  String    @unique
+  raw          Json?
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, metric, endDate])
+  @@map("financial_metrics")
+}
+
+model PriceSnapshot {
+  id         String   @id @default(cuid())
+  listingId  String   @map("listing_id")
+  source     String
+  observedAt DateTime @map("observed_at")
+  currency   String?
+  open       Float?
+  high       Float?
+  low        Float?
+  close      Float?
+  volume     Float?
+  raw        Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  listing ExchangeListing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, source, observedAt])
+  @@index([listingId, observedAt])
+  @@map("price_snapshots")
+}
+
+model NewsItem {
+  id          String    @id @default(cuid())
+  companyId   String?   @map("company_id")
+  source      String
+  url         String    @unique
+  title       String
+  publishedAt DateTime? @map("published_at")
+  summary     String    @default("")
+  eventType   String?   @map("event_type")
+  sentiment   String?
+  impactScore Float?    @map("impact_score")
+  raw         Json?
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, publishedAt])
+  @@map("news_items")
+}
+
+model SourceRecord {
+  id          String   @id @default(cuid())
+  companyId   String?  @map("company_id")
+  source      String
+  sourceType  String   @map("source_type") // official_api | licensed_api | public_authorized | manual_upload
+  url         String
+  retrievedAt DateTime @default(now()) @map("retrieved_at")
+  fingerprint String   @unique
+  rawMeta     Json?    @map("raw_meta")
+
+  company Company? @relation(fields: [companyId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, source])
+  @@map("source_records")
+}

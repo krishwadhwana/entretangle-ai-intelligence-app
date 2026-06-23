@@ -269,6 +269,9 @@ export default function FinancialsSection({
   const [asking, setAsking] = useState(false);
 
   const currency = model?.currency ?? "INR";
+  const sourceRunId = model?.sourceRunId ?? initial?.sourceRunId ?? null;
+  const showingCurrentRun = !sourceRunId || sourceRunId === runId;
+  const shortRunId = (sourceRunId ?? runId).slice(-6);
 
   const askFinancials = async () => {
     const question = q.trim();
@@ -298,6 +301,12 @@ export default function FinancialsSection({
 
   const exportPdf = () => {
     if (!model) return;
+    if (!showingCurrentRun) {
+      setError(
+        "This financial model belongs to another run. Wait for this run's financials to finish loading, then export again."
+      );
+      return;
+    }
     const m = model;
     const metric = (n: FinNum | null | undefined) =>
       n && Number.isFinite(n.value) ? fmt(n.value, currency, n.unit) : "—";
@@ -318,6 +327,7 @@ export default function FinancialsSection({
       heading: "Model snapshot",
       kpis: [
         { label: "Currency", value: currency },
+        { label: "Run", value: shortRunId },
         { label: "Data maturity", value: `${m.dataMaturityPct}% real` },
         { label: "Generated", value: generatedLabel },
       ],
@@ -567,7 +577,12 @@ export default function FinancialsSection({
       {
         title: "Financial model",
         subtitle: "Costs, margins, market size and runway",
-        meta: [currency, `${model.dataMaturityPct}% real data`, generatedLabel],
+        meta: [
+          currency,
+          `run ${shortRunId}`,
+          `${model.dataMaturityPct}% real data`,
+          generatedLabel,
+        ],
         cover: {
           verdict: m.runwayFit.verdict || m.marketSizing.reconciliationNote,
           kpis: [
@@ -582,7 +597,7 @@ export default function FinancialsSection({
         },
         sections,
       },
-      "financials-dossier"
+      `financials-${currency.toLowerCase()}-${shortRunId}-dossier`
     );
   };
 
@@ -592,7 +607,9 @@ export default function FinancialsSection({
     setEditedKeys(initial?.editedKeys ?? []);
     setGeneratedAt(initial?.generatedAt ?? null);
     setFollowUp(initial?.followUp ?? []);
-  }, [initial]);
+    setQ("");
+    setError(null);
+  }, [initial, runId]);
 
   // POST to the route. With no body → LLM generates; with { inputs, editedKeys }
   // → pure server-side recompute against the same persona audience.

@@ -3,6 +3,10 @@ import type { Domain } from "../schema";
 import { fetchTradeForDomain } from "./trade";
 import { fetchLocalCompetition } from "./geo";
 import { fetchOpenData } from "./opendata";
+import {
+  countryDemographicsSources,
+  formatCountryDemographics,
+} from "./countryDemographics";
 
 // ---------------------------------------------------------------------------
 // Structured real-data providers per desk domain (SPEC-V2 §1A option C).
@@ -197,6 +201,11 @@ async function marketData(ctx: StructuredCtx): Promise<StructuredData | null> {
   if (cs.length === 0 && !ctx.product) return null;
   const parts: string[] = [];
   const sources: string[] = [];
+  const demographicProfiles = formatCountryDemographics(ctx.countries);
+  if (demographicProfiles) {
+    parts.push(demographicProfiles);
+    sources.push(...countryDemographicsSources(ctx.countries));
+  }
   for (const c of cs) {
     const [gdp, urban] = await Promise.all([
       worldBank(c.meta.iso2, GDP_PC),

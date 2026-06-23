@@ -158,6 +158,22 @@ genuinely reliable free data (NSSO consumption, company-filing margins) maps to
   a new `ApiSourceRef` variant in `verified.ts`. Run `npx tsx scripts/scrape/enrich.ts`
   (idempotent — snapshots carry the data's own year). **Does NOT cover CPM/CAC/CVR**
   — those still have no free source (§3 reality check stands).
+- **India + US demographic spine started** — new `demographics.json` snapshot
+  from World Bank WDI for comparable country-level population, urban share, age
+  structure and GDP/capita proxy, plus the already verified NSSO HCES MPCE
+  anchor for India. A US Census ACS profile hook is included and auto-populates
+  median age / household income when `CENSUS_API_KEY` is configured. The runtime
+  formatter in `lib/datasources/countryDemographics.ts` injects these profiles
+  into market-desk structured data for India/US runs.
+- **Public-company intelligence foundation started** — Prisma now has global
+  company/listing/profile/filing/metric/price/news/source tables. The first
+  implemented collector is SEC EDGAR (`npm run intel:companies`) for US-listed
+  companies: official ticker/exchange mapping, submissions, recent filings and
+  XBRL company facts.
+- **Founder/private-company intelligence started** — founder, founder-role and
+  founder-story tables plus a Crunchbase API connector (`npm run intel:founders`)
+  for organization firmographics + founder cards. Crunchbase HTML scraping is
+  intentionally disabled; the connector requires `CRUNCHBASE_API_KEY`.
 
 ### Update — provenance tiers
 Three honest tiers now render on each benchmark line: **`[sourced]`** (saved

@@ -1,29 +1,52 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { LayoutDashboard, Share2, TrendingUp, Sparkles, Loader2 } from "lucide-react";
+import {
+  LayoutDashboard,
+  Share2,
+  TrendingUp,
+  Sparkles,
+  Loader2,
+  UserRound,
+  ShieldCheck,
+  Palette,
+} from "lucide-react";
 import type {
   BrandSocialSection as BrandSocialState,
   FinancialsSection as FinancialsState,
+  FounderStorySection as FounderStoryState,
   InspirationSection as InspirationState,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import BrandSocialSection from "./BrandSocialSection";
+import DesignStudioSection from "./DesignStudioSection";
 import FinancialsSection from "./FinancialsSection";
+import FounderStorySection from "./FounderStorySection";
 import InspirationSection from "./InspirationSection";
+import InvestorOSSection from "./InvestorOSSection";
 
 // The Owner Dashboard is an extensible home for owner-facing tools. The left
 // rail is data-driven so new sections (suppliers, launch checklist) slot in.
-type SectionId = "brandSocial" | "financials" | "inspiration";
+type SectionId =
+  | "investor"
+  | "founderStory"
+  | "brandSocial"
+  | "designStudio"
+  | "financials"
+  | "inspiration";
 type OwnerDashboardRunSlice = {
+  founderStory: FounderStoryState | null;
   brandSocial: BrandSocialState | null;
   financials: FinancialsState | null;
   inspiration: InspirationState | null;
 };
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
+  { id: "investor", label: "0 to 100", icon: ShieldCheck },
   { id: "financials", label: "Financials", icon: TrendingUp },
+  { id: "founderStory", label: "Founder Story", icon: UserRound },
   { id: "brandSocial", label: "Brand & Social", icon: Share2 },
+  { id: "designStudio", label: "Design Studio", icon: Palette },
   { id: "inspiration", label: "Inspiration", icon: Sparkles },
 ];
 
@@ -36,21 +59,27 @@ export default function OwnerDashboard({
   projectId: string | null;
   state: CanvasState;
 }) {
-  const [section, setSection] = useState<SectionId>("financials");
+  const [section, setSection] = useState<SectionId>("investor");
+  const [founderStory, setFounderStory] = useState<FounderStoryState | null>(
+    null
+  );
   const [brandSocial, setBrandSocial] = useState<BrandSocialState | null>(null);
   const [financials, setFinancials] = useState<FinancialsState | null>(null);
   const [inspiration, setInspiration] = useState<InspirationState | null>(null);
+  const [investorRefreshKey, setInvestorRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
+  const refreshInvestor = () => setInvestorRefreshKey((key) => key + 1);
 
   // Hydrate saved Owner Dashboard state (generated kit + checkbox progress)
   // from the project. Kept here so all sections share one fetch.
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
+    setFounderStory(null);
+    setBrandSocial(null);
+    setFinancials(null);
+    setInspiration(null);
     if (!projectId) {
-      setBrandSocial(null);
-      setFinancials(null);
-      setInspiration(null);
       setLoading(false);
       return;
     }
@@ -66,6 +95,7 @@ export default function OwnerDashboard({
             ownerDashboard: OwnerDashboardRunSlice | null;
           };
           if (!cancelled) {
+            setFounderStory(ownerDashboard?.founderStory ?? null);
             setBrandSocial(ownerDashboard?.brandSocial ?? null);
             setFinancials(ownerDashboard?.financials ?? null);
             setInspiration(ownerDashboard?.inspiration ?? null);
@@ -119,13 +149,32 @@ export default function OwnerDashboard({
           </div>
         ) : (
           <>
+            <div className={section === "investor" ? "" : "hidden"}>
+              <InvestorOSSection
+                projectId={projectId}
+                refreshKey={investorRefreshKey}
+              />
+            </div>
             <div className={section === "financials" ? "" : "hidden"}>
               <FinancialsSection
                 runId={runId}
                 projectId={projectId}
                 state={state}
                 initial={financials}
-                onSaved={setFinancials}
+                onSaved={(next) => {
+                  setFinancials(next);
+                  refreshInvestor();
+                }}
+              />
+            </div>
+            <div className={section === "founderStory" ? "" : "hidden"}>
+              <FounderStorySection
+                projectId={projectId}
+                initial={founderStory}
+                onSaved={(next) => {
+                  setFounderStory(next);
+                  refreshInvestor();
+                }}
               />
             </div>
             <div className={section === "brandSocial" ? "" : "hidden"}>
@@ -134,7 +183,16 @@ export default function OwnerDashboard({
                 projectId={projectId}
                 state={state}
                 initial={brandSocial}
-                onChange={setBrandSocial}
+                onChange={(next) => {
+                  setBrandSocial(next);
+                  refreshInvestor();
+                }}
+              />
+            </div>
+            <div className={section === "designStudio" ? "" : "hidden"}>
+              <DesignStudioSection
+                projectId={projectId}
+                sourceRunId={runId}
               />
             </div>
             <div className={section === "inspiration" ? "" : "hidden"}>
@@ -142,7 +200,10 @@ export default function OwnerDashboard({
                 runId={runId}
                 state={state}
                 initial={inspiration}
-                onSaved={setInspiration}
+                onSaved={(next) => {
+                  setInspiration(next);
+                  refreshInvestor();
+                }}
               />
             </div>
           </>

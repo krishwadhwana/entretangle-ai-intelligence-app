@@ -3,7 +3,7 @@ import { prisma } from "@/lib/db";
 import { callBrandKit } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/orchestrator";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
-import { saveBrandKit } from "@/lib/store";
+import { getFounderStory, saveBrandKit } from "@/lib/store";
 import { ClientProfileSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +51,16 @@ export async function POST(
     : null;
 
   try {
-    const kit = await callBrandKit(run.id, profile, conclusions, aggregate);
+    const founderStory = run.projectId
+      ? await getFounderStory(run.projectId).catch(() => null)
+      : null;
+    const kit = await callBrandKit(
+      run.id,
+      profile,
+      conclusions,
+      aggregate,
+      founderStory
+    );
     const generatedAt = new Date().toISOString();
 
     // Persist onto the project (keeps checkbox progress across regenerates and

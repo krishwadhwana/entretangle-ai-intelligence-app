@@ -13,6 +13,7 @@
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { collectComtradeImports } from "./collectors/comtrade";
+import { collectDemographicProfiles } from "./collectors/demographics";
 import { collectWorldBankMacro } from "./collectors/worldbank";
 
 const dir = join(process.cwd(), "data", "benchmarks", "collected");
@@ -37,6 +38,12 @@ async function main() {
   const worldbank = await collectWorldBankMacro();
   console.log(`• worldbank: ${Object.keys(worldbank).length} indicators`);
   if (Object.keys(worldbank).length) writeIfChanged("worldbank-macro.json", worldbank);
+
+  const demographics = await collectDemographicProfiles();
+  console.log(
+    `• demographics: ${Object.keys(demographics.countries).length} countries`
+  );
+  writeIfChanged("demographics.json", demographics);
 }
 
 main();

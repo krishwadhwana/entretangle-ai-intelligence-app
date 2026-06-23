@@ -13,6 +13,7 @@ import {
   Database,
   FileText,
   FolderOpen,
+  ImageIcon,
   Loader2,
   Pencil,
   Play,
@@ -27,6 +28,7 @@ import type {
   ClientProfile,
   InterviewTranscript,
   PendingQuestion,
+  ProductImageRef,
   SimulationRunRecord,
   WebsiteAnalysis,
 } from "@/lib/schema";
@@ -295,6 +297,7 @@ function IntakePageInner() {
   const [simRuns, setSimRuns] = useState<SimulationRunRecord[]>([]);
   const [documents, setDocuments] = useState<DocSummary[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadingImages, setUploadingImages] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Free-text "Other response" for the current question.
   const [otherText, setOtherText] = useState("");
@@ -353,6 +356,7 @@ function IntakePageInner() {
     setAnalyzing(false);
     setSimRuns(proj.simulationRuns ?? []);
     setDocuments([]);
+    setUploadingImages(false);
     setSelected(new Set());
     setOtherText("");
     setInput("");
@@ -972,6 +976,75 @@ function IntakePageInner() {
     void loadDocuments(projectId);
   }
 
+  function applyProductImages(productImages: ProductImageRef[]) {
+    if (!projectId || !profile) return;
+    const nextProfile: ClientProfile = { ...profile, productImages };
+    setProfile(nextProfile);
+    setProjectPreviews((prev) =>
+      prev.map((p) =>
+        p.id === projectId ? { ...p, ventureProfile: nextProfile } : p
+      )
+    );
+  }
+
+  async function onProductImagesPicked(files: FileList | null) {
+    if (!files || !projectId || !profile || uploadingImages) return;
+    const picked = Array.from(files).filter((file) =>
+      file.type.startsWith("image/")
+    );
+    if (picked.length === 0) return;
+
+    setUploadingImages(true);
+    setError(null);
+    try {
+      for (const file of picked) {
+        const form = new FormData();
+        form.append("image", file);
+        const res = await fetch(`/api/projects/${projectId}/product-images`, {
+          method: "POST",
+          body: form,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            typeof data?.error === "string"
+              ? data.error
+              : `Image upload failed (${res.status})`
+          );
+        }
+        applyProductImages((data.productImages ?? []) as ProductImageRef[]);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Image upload failed");
+    } finally {
+      setUploadingImages(false);
+    }
+  }
+
+  async function deleteProductImage(imageId: string) {
+    if (!projectId || !profile) return;
+    const prior = profile.productImages ?? [];
+    applyProductImages(prior.filter((image) => image.id !== imageId));
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/product-images/${imageId}`,
+        { method: "DELETE" }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Image removal failed (${res.status})`
+        );
+      }
+      applyProductImages((data.productImages ?? []) as ProductImageRef[]);
+    } catch (err) {
+      applyProductImages(prior);
+      setError(err instanceof Error ? err.message : "Image removal failed");
+    }
+  }
+
   function clickOption(opt: string) {
     if (!pending) return;
     if (!pending.multiSelect) {
@@ -1112,6 +1185,7 @@ function IntakePageInner() {
           : null,
       ].filter(Boolean)
     : [];
+  const productImages = profile?.productImages ?? [];
 
   if (!done) {
     return (
@@ -1400,6 +1474,87 @@ function IntakePageInner() {
                     Complete the setup steps to turn this into a structured
                     venture profile.
                   </p>
+                )}
+                {profile && (
+                  <div className="mt-4 border-t border-neutral-100 pt-4">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                          Product images
+                        </p>
+                        <p className="mt-0.5 text-xs text-neutral-500">
+                          {productImages.length} reference
+                          {productImages.length === 1 ? "" : "s"}
+                        </p>
+                      </div>
+                      <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
+                        {uploadingImages ? (
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        ) : (
+                          <Upload className="h-3.5 w-3.5" />
+                        )}
+                        {uploadingImages ? "Adding" : "Add images"}
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/png,image/jpeg,image/webp,image/gif"
+                          className="hidden"
+                          disabled={uploadingImages}
+                          onChange={(e) => {
+                            void onProductImagesPicked(e.target.files);
+                            e.target.value = "";
+                          }}
+                        />
+                      </label>
+                    </div>
+
+                    {productImages.length > 0 ? (
+                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        {productImages.map((image) => (
+                          <div
+                            key={image.id}
+                            className="overflow-hidden rounded-lg border border-neutral-200 bg-white"
+                          >
+                            <div className="relative aspect-[4/3] bg-neutral-100">
+                              <img
+                                src={image.url}
+                                alt={image.visualSummary || image.name}
+                                loading="lazy"
+                                className="h-full w-full object-cover"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void deleteProductImage(image.id)}
+                                className="absolute right-1.5 top-1.5 rounded bg-white/90 p-1 text-neutral-500 shadow-sm hover:text-red-500"
+                                title="Remove image"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
+                            <div className="min-h-[76px] p-2">
+                              <p className="truncate text-xs font-medium text-neutral-800">
+                                {image.name}
+                              </p>
+                              {image.visualSummary ? (
+                                <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-neutral-500">
+                                  {image.visualSummary}
+                                </p>
+                              ) : (
+                                <p className="mt-1 text-[11px] text-neutral-400">
+                                  Visual summary pending
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="mt-3 flex min-h-24 items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-50 text-xs text-neutral-400">
+                        <ImageIcon className="mr-2 h-4 w-4" />
+                        No product images yet
+                      </div>
+                    )}
+                  </div>
                 )}
                 {userAnswers.length > 0 && !done && (
                   <div className="mt-4 border-t border-neutral-100 pt-3">

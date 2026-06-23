@@ -108,6 +108,18 @@ export const ProductDetailsSchema = z
   .default({});
 export type ProductDetails = z.infer<typeof ProductDetailsSchema>;
 
+export const ProductImageRefSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  url: z.string(),
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  uploadedAt: z.string(),
+  visualSummary: z.string().optional(),
+  tags: z.array(z.string()).default([]),
+});
+export type ProductImageRef = z.infer<typeof ProductImageRefSchema>;
+
 export const ClientProfileSchema = z.object({
   ambitions: z.string(),
   product: z.string(),
@@ -123,6 +135,7 @@ export const ClientProfileSchema = z.object({
   geography: z.array(z.string()).optional(),
   targetAudience: z.string().optional(),
   productDetails: ProductDetailsSchema.optional(),
+  productImages: z.array(ProductImageRefSchema).default([]).optional(),
   funding: FundingSchema.nullable().optional(),
   // Numeric financial targets captured at intake — feed the Financials module
   // as founder-entered ground truth. All optional/nullable so profiles saved
@@ -1103,6 +1116,69 @@ const EMPTY_INSPIRATION = {
   sourceRunId: null,
 };
 
+// Owner Dashboard › Founder Story. A project-level narrative signal extracted
+// from founder notes, website analysis, uploaded docs, and permitted story URLs.
+// Downstream reports/playbooks/brand kits use it as qualitative context.
+export const FounderStorySignalsSchema = z.object({
+  founderBackground: z.string().default(""),
+  originStory: z.string().default(""),
+  founderMotivation: z.string().default(""),
+  whyNow: z.string().default(""),
+  customerInsight: z.string().default(""),
+  categoryConviction: z.string().default(""),
+  credibilityProof: z.array(z.string()).default([]),
+  unfairAdvantages: z.array(z.string()).default([]),
+  constraints: z.array(z.string()).default([]),
+  openQuestions: z.array(z.string()).default([]),
+});
+export type FounderStorySignals = z.infer<typeof FounderStorySignalsSchema>;
+
+export const FounderStoryEvidenceSchema = z.object({
+  id: z.string(),
+  sourceType: z
+    .enum(["manual", "website", "document", "press", "interview", "other"])
+    .default("other"),
+  title: z.string().default(""),
+  url: z.string().nullable().default(null),
+  excerpt: z.string().default(""),
+  summary: z.string().default(""),
+});
+export type FounderStoryEvidence = z.infer<typeof FounderStoryEvidenceSchema>;
+
+const EMPTY_FOUNDER_STORY_SIGNALS = {
+  founderBackground: "",
+  originStory: "",
+  founderMotivation: "",
+  whyNow: "",
+  customerInsight: "",
+  categoryConviction: "",
+  credibilityProof: [],
+  unfairAdvantages: [],
+  constraints: [],
+  openQuestions: [],
+};
+
+export const FounderStorySectionSchema = z.object({
+  signals: FounderStorySignalsSchema.default(EMPTY_FOUNDER_STORY_SIGNALS),
+  // signal key -> evidence ids. Keeps provenance usable without forcing prose
+  // to carry ids or citations.
+  evidenceIds: z.record(z.array(z.string())).default({}),
+  evidence: z.array(FounderStoryEvidenceSchema).default([]),
+  sources: z.array(z.string()).default([]),
+  confidence: z.number().min(0).max(1).default(0),
+  generatedAt: z.string().nullable().default(null),
+});
+export type FounderStorySection = z.infer<typeof FounderStorySectionSchema>;
+
+const EMPTY_FOUNDER_STORY = {
+  signals: EMPTY_FOUNDER_STORY_SIGNALS,
+  evidenceIds: {},
+  evidence: [],
+  sources: [],
+  confidence: 0,
+  generatedAt: null,
+};
+
 // ---------------------------------------------------------------------------
 // Generated playbook: an LLM-enriched, web-grounded deepening of the run's
 // world model into a founder-ready, per-module action plan. Regenerated on
@@ -1132,7 +1208,367 @@ export const GeneratedPlaybookSchema = z.object({
 });
 export type GeneratedPlaybook = z.infer<typeof GeneratedPlaybookSchema>;
 
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Investor OS. Project-level operating system that turns the
+// research canvas into investor-grade evidence, execution tasks and fundraise
+// artifacts. Most evidence is derived from existing runs/documents; manual
+// entries and generated kits live in owner_dashboard.investorOS.
+// ---------------------------------------------------------------------------
+
+export const InvestorStageSchema = z.enum([
+  "define",
+  "validate",
+  "build",
+  "launch",
+  "prove",
+  "fundraise",
+  "grow",
+]);
+export type InvestorStage = z.infer<typeof InvestorStageSchema>;
+
+export const EvidenceSourceTypeSchema = z.enum([
+  "conclusion",
+  "document",
+  "financial",
+  "simulation",
+  "outcome",
+  "report",
+  "founder",
+  "website",
+  "market_data",
+  "manual",
+]);
+export type EvidenceSourceType = z.infer<typeof EvidenceSourceTypeSchema>;
+
+export const EvidenceItemSchema = z.object({
+  id: z.string(),
+  sourceType: EvidenceSourceTypeSchema,
+  title: z.string(),
+  summary: z.string().default(""),
+  confidence: z.number().min(0).max(1).default(0.5),
+  citation: z.string().nullable().default(null),
+  investorRelevance: z.string().default(""),
+  linkedRunId: z.string().nullable().default(null),
+  linkedConclusionIds: z.array(z.string()).default([]),
+  linkedDocumentId: z.string().nullable().default(null),
+  metricKey: z.string().nullable().default(null),
+  tags: z.array(z.string()).default([]),
+  createdAt: z.string().default(""),
+});
+export type EvidenceItem = z.infer<typeof EvidenceItemSchema>;
+
+export const ReadinessGateStatusSchema = z.enum([
+  "blocked",
+  "partial",
+  "ready",
+]);
+export type ReadinessGateStatus = z.infer<typeof ReadinessGateStatusSchema>;
+
+export const ReadinessGateSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  stage: InvestorStageSchema,
+  score: z.number().min(0).max(100),
+  status: ReadinessGateStatusSchema,
+  critical: z.boolean().default(false),
+  summary: z.string().default(""),
+  blockers: z.array(z.string()).default([]),
+  requiredEvidence: z.array(z.string()).default([]),
+  evidenceIds: z.array(z.string()).default([]),
+});
+export type ReadinessGate = z.infer<typeof ReadinessGateSchema>;
+
+export const RoadmapItemStatusSchema = z.enum(["todo", "doing", "done"]);
+export type RoadmapItemStatus = z.infer<typeof RoadmapItemStatusSchema>;
+
+export const RoadmapItemTypeSchema = z.enum([
+  "task",
+  "experiment",
+  "document",
+  "metric",
+]);
+export type RoadmapItemType = z.infer<typeof RoadmapItemTypeSchema>;
+
+export const RoadmapItemSchema = z.object({
+  id: z.string(),
+  stage: InvestorStageSchema,
+  type: RoadmapItemTypeSchema,
+  title: z.string(),
+  detail: z.string().default(""),
+  status: RoadmapItemStatusSchema.default("todo"),
+  ownerRole: z.string().default("Founder"),
+  dueDate: z.string().nullable().default(null),
+  linkedGateIds: z.array(z.string()).default([]),
+  requiredProof: z.array(z.string()).default([]),
+  evidenceIds: z.array(z.string()).default([]),
+  createdAt: z.string().default(""),
+  updatedAt: z.string().default(""),
+});
+export type RoadmapItem = z.infer<typeof RoadmapItemSchema>;
+
+export const InvestorDeckSlideSchema = z.object({
+  title: z.string(),
+  bullets: z.array(z.string()).default([]),
+  evidenceIds: z.array(z.string()).default([]),
+  provenance: z
+    .enum(["sourced", "simulated", "founder_entered", "actual", "estimated"])
+    .default("estimated"),
+});
+export type InvestorDeckSlide = z.infer<typeof InvestorDeckSlideSchema>;
+
+export const InvestorMemoSectionSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  evidenceIds: z.array(z.string()).default([]),
+});
+export type InvestorMemoSection = z.infer<typeof InvestorMemoSectionSchema>;
+
+export const InvestorKitArtifactsSchema = z.object({
+  pitchDeck: z.object({
+    title: z.string(),
+    slides: z.array(InvestorDeckSlideSchema).default([]),
+  }),
+  investorMemo: z.object({
+    title: z.string(),
+    sections: z.array(InvestorMemoSectionSchema).default([]),
+  }),
+  financialModelSummary: z.object({
+    status: z.string(),
+    bullets: z.array(z.string()).default([]),
+    evidenceIds: z.array(z.string()).default([]),
+  }),
+  dataRoomIndex: z.array(z.string()).default([]),
+  investorQA: z
+    .array(
+      z.object({
+        question: z.string(),
+        answer: z.string(),
+        evidenceIds: z.array(z.string()).default([]),
+      })
+    )
+    .default([]),
+  useOfFundsPlan: z.array(z.string()).default([]),
+});
+export type InvestorKitArtifacts = z.infer<typeof InvestorKitArtifactsSchema>;
+
+export const InvestorKitSchema = z.object({
+  id: z.string(),
+  sourceRunId: z.string().nullable().default(null),
+  readinessScore: z.number().min(0).max(100),
+  readinessStatus: z.enum(["draft", "investor_ready"]),
+  readinessSnapshot: z.array(ReadinessGateSchema).default([]),
+  artifacts: InvestorKitArtifactsSchema,
+  caveats: z.array(z.string()).default([]),
+  // Stable keys of sections the founder hand-edited (e.g. "slide:Problem",
+  // "memo:Economics", "qa:What are the unit economics?", "useOfFunds",
+  // "financials"). Drives the "edited" badges and survives regeneration.
+  editedSections: z.array(z.string()).default([]),
+  createdAt: z.string(),
+});
+export type InvestorKit = z.infer<typeof InvestorKitSchema>;
+
+// Founder overrides for a generated kit. Stored once per project (not per kit)
+// so edits persist when the kit is regenerated from fresh evidence. Keyed by
+// the stable section identifiers above. A null whole-list override means "use
+// the generated content".
+export const InvestorKitEditsSchema = z.object({
+  deckSlides: z.record(z.string(), z.array(z.string())).default({}),
+  memoSections: z.record(z.string(), z.string()).default({}),
+  qaAnswers: z.record(z.string(), z.string()).default({}),
+  useOfFundsPlan: z.array(z.string()).nullable().default(null),
+  financialBullets: z.array(z.string()).nullable().default(null),
+  updatedAt: z.string().nullable().default(null),
+});
+export type InvestorKitEdits = z.infer<typeof InvestorKitEditsSchema>;
+
+const EMPTY_INVESTOR_KIT_EDITS = {
+  deckSlides: {},
+  memoSections: {},
+  qaAnswers: {},
+  useOfFundsPlan: null,
+  financialBullets: null,
+  updatedAt: null,
+};
+
+export const InvestorOSSectionSchema = z.object({
+  manualEvidence: z.array(EvidenceItemSchema).default([]),
+  roadmap: z.array(RoadmapItemSchema).default([]),
+  kits: z.array(InvestorKitSchema).default([]),
+  edits: InvestorKitEditsSchema.default(EMPTY_INVESTOR_KIT_EDITS),
+  updatedAt: z.string().nullable().default(null),
+});
+export type InvestorOSSection = z.infer<typeof InvestorOSSectionSchema>;
+
+const EMPTY_INVESTOR_OS = {
+  manualEvidence: [],
+  roadmap: [],
+  kits: [],
+  edits: EMPTY_INVESTOR_KIT_EDITS,
+  updatedAt: null,
+};
+
+// Owner Dashboard › Design Studio. The brand's CONCRETE design tokens — real
+// hex colors, real font families, a logo direction — distilled from the
+// (descriptive) brand kit + venture profile. Every downstream generator
+// (collateral, logos, website) consumes these so a flyer and a landing page
+// look like the same brand. Hex/font strings are kept loose (plain strings) so
+// a slightly-off model output never fails the whole section's validation.
+export const DesignPaletteColorSchema = z.object({
+  name: z.string(), // role/label, e.g. "primary", "ink", "sand"
+  hex: z.string(), // "#1A1A1A" — normalized client/server-side, not regex-gated
+  usage: z.string().default(""), // where to use it
+});
+
+export const DesignTokensSchema = z.object({
+  palette: z.object({
+    primary: z.string(),
+    secondary: z.string(),
+    accent: z.string(),
+    neutralDark: z.string(),
+    neutralLight: z.string(),
+    extra: z.array(DesignPaletteColorSchema).default([]),
+  }),
+  typography: z.object({
+    headingFamily: z.string(), // Google Font family name, e.g. "Poppins"
+    bodyFamily: z.string(),
+    headingGoogleUrl: z.string().nullable().default(null),
+    bodyGoogleUrl: z.string().nullable().default(null),
+    weights: z.array(z.string()).default([]), // e.g. ["400", "600", "700"]
+    pairingRationale: z.string().default(""),
+  }),
+  logo: z.object({
+    direction: z.string(), // the concept, in words
+    style: z.string(), // "wordmark" | "lettermark" | "emblem" | "combination"
+    motifSuggestions: z.array(z.string()).default([]),
+  }),
+  motifs: z.array(z.string()).default([]), // recurring visual elements / shapes
+  imagery: z.string().default(""), // photography / illustration direction
+  rationale: z.string().default(""), // why these tokens fit the brand
+});
+export type DesignTokens = z.infer<typeof DesignTokensSchema>;
+
+// One generated marketing-collateral piece. The LLM writes only the COPY
+// (content); the layout is rendered deterministically by lib/design from the
+// design tokens, so a card/flyer/poster all share the brand identity.
+export const CollateralTypeSchema = z.enum([
+  "business-card",
+  "flyer",
+  "poster",
+]);
+export type CollateralType = z.infer<typeof CollateralTypeSchema>;
+
+export const CollateralContentSchema = z.object({
+  brandName: z.string(),
+  tagline: z.string().default(""),
+  headline: z.string().default(""),
+  subhead: z.string().default(""),
+  body: z.array(z.string()).default([]), // short lines / bullets
+  cta: z.string().default(""),
+  contact: z
+    .object({
+      name: z.string().default(""),
+      role: z.string().default(""),
+      email: z.string().default(""),
+      phone: z.string().default(""),
+      website: z.string().default(""),
+    })
+    .default({}),
+});
+export type CollateralContent = z.infer<typeof CollateralContentSchema>;
+
+// A rendered asset: self-contained SVG (text shaped to vector paths) plus the
+// copy it was built from, so it's editable, downloadable, and Figma-importable.
+export const DesignAssetSchema = z.object({
+  id: z.string(),
+  type: CollateralTypeSchema,
+  title: z.string(),
+  format: z.literal("svg").default("svg"),
+  svg: z.string(),
+  width: z.number(),
+  height: z.number(),
+  content: CollateralContentSchema,
+  createdAt: z.string(),
+});
+export type DesignAsset = z.infer<typeof DesignAssetSchema>;
+
+// A logo: one concept with several portable SVG variants. "icon" marks are
+// LLM-generated geometric SVGs (no text → render anywhere); the "wordmark" is
+// rendered deterministically (brand name shaped to vector paths) so there is
+// always a guaranteed, font-portable variant.
+export const LogoVariantKindSchema = z.enum(["icon", "wordmark", "lockup"]);
+export type LogoVariantKind = z.infer<typeof LogoVariantKindSchema>;
+
+export const LogoVariantSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  kind: LogoVariantKindSchema.default("icon"),
+  svg: z.string(),
+});
+export type LogoVariant = z.infer<typeof LogoVariantSchema>;
+
+// What the logo-marks LLM call returns: a concept + the raw geometric marks.
+// (The wordmark variant is added deterministically server-side.)
+export const LogoMarksOutputSchema = z.object({
+  concept: z.string(),
+  style: z.string(), // wordmark | lettermark | emblem | combination
+  marks: z
+    .array(z.object({ label: z.string(), svg: z.string() }))
+    .min(1)
+    .max(4),
+});
+export type LogoMarksOutput = z.infer<typeof LogoMarksOutputSchema>;
+
+export const LogoAssetSchema = z.object({
+  id: z.string(),
+  brandName: z.string(),
+  style: z.string(),
+  concept: z.string(),
+  variants: z.array(LogoVariantSchema).default([]),
+  createdAt: z.string(),
+});
+export type LogoAsset = z.infer<typeof LogoAssetSchema>;
+
+// A generated one-page website: a self-contained HTML document (inline CSS,
+// Google-Fonts <link> allowed, no scripts) built from the design tokens + venture
+// copy. deployUrl is set once the founder publishes it to Vercel.
+export const SiteAssetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  brandName: z.string(),
+  html: z.string(),
+  deployUrl: z.string().nullable().default(null),
+  createdAt: z.string(),
+});
+export type SiteAsset = z.infer<typeof SiteAssetSchema>;
+
+// What the site-generator LLM call returns (the HTML is sanitized before use).
+export const SiteGenOutputSchema = z.object({
+  title: z.string(),
+  html: z.string(),
+});
+export type SiteGenOutput = z.infer<typeof SiteGenOutputSchema>;
+
+export const DesignStudioSectionSchema = z.object({
+  tokens: DesignTokensSchema.nullable().default(null),
+  assets: z.array(DesignAssetSchema).default([]),
+  logos: z.array(LogoAssetSchema).default([]),
+  sites: z.array(SiteAssetSchema).default([]),
+  generatedAt: z.string().nullable().default(null), // ISO
+  sourceRunId: z.string().nullable().default(null),
+});
+export type DesignStudioSection = z.infer<typeof DesignStudioSectionSchema>;
+
+const EMPTY_DESIGN_STUDIO = {
+  tokens: null,
+  assets: [],
+  logos: [],
+  sites: [],
+  generatedAt: null,
+  sourceRunId: null,
+};
+
 export const OwnerDashboardSchema = z.object({
+  founderStory: FounderStorySectionSchema.default(EMPTY_FOUNDER_STORY),
   brandSocial: BrandSocialSectionSchema.default({
     kit: null,
     checks: {},
@@ -1150,6 +1586,11 @@ export const OwnerDashboardSchema = z.object({
   inspirationByRun: z.record(InspirationSectionSchema).default({}),
   // LLM-generated playbooks, keyed by runId (regenerable per run).
   playbooks: z.record(GeneratedPlaybookSchema).default({}),
+  // Project-level investor readiness, execution roadmap and fundraise kits.
+  investorOS: InvestorOSSectionSchema.default(EMPTY_INVESTOR_OS),
+  // Project-level brand design tokens (palette, type, logo direction) that the
+  // design generators (collateral, logos, website) all consume.
+  designStudio: DesignStudioSectionSchema.default(EMPTY_DESIGN_STUDIO),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 
@@ -1424,6 +1865,9 @@ export const LaunchSimInputsSchema = z.object({
   shippingPerOrder: z.number().nonnegative().default(120),
   paymentFeePct: z.number().min(0).max(1).default(0.02),
   fixedCostsPerMonth: z.number().nonnegative().default(0),
+  // Up-front launch/setup cash reserve. null → computed by the route from fixed
+  // costs + media runway; 0 → explicitly no reserve.
+  launchInvestmentReserve: z.number().nonnegative().nullable().default(null),
 
   // --- refunds / returns ---
   returnWindowDays: z.number().int().min(0).max(180).default(30),
@@ -1603,6 +2047,7 @@ export const AssumptionFieldSchema = z.enum([
   "organicReachPerStep",
   "targetingQuality",
   "monthlyGrowthPct",
+  "launchInvestmentReserve",
 ]);
 export type AssumptionField = z.infer<typeof AssumptionFieldSchema>;
 

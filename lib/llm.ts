@@ -24,7 +24,17 @@ import {
   type IntakePrefill,
   CohortSimOutputSchema,
   BrandKitSchema,
+  DesignTokensSchema,
+  type DesignTokens,
+  CollateralContentSchema,
+  type CollateralContent,
+  type CollateralType,
+  LogoMarksOutputSchema,
+  type LogoMarksOutput,
+  SiteGenOutputSchema,
+  type SiteGenOutput,
   InspirationKitSchema,
+  FounderStorySectionSchema,
   type InspirationKit,
   FinancialInputsSchema,
   FinalReportSchema,
@@ -42,6 +52,7 @@ import {
   type IntakeOutput,
   type CohortSimOutput,
   type BrandKit,
+  type FounderStorySection,
   type FinancialInputs,
   type FinancialModel,
   type FinalReport,
@@ -86,6 +97,8 @@ import {
   queryV2User,
   FINAL_REPORT_SYSTEM,
   finalReportUser,
+  FOUNDER_STORY_SYSTEM,
+  founderStoryUser,
   audienceChatSystem,
   audienceChatUser,
   personaReplySystem,
@@ -95,6 +108,14 @@ import {
   type PersonaCtx,
   BRAND_KIT_SYSTEM,
   brandKitUser,
+  DESIGN_TOKENS_SYSTEM,
+  designTokensUser,
+  COLLATERAL_COPY_SYSTEM,
+  collateralCopyUser,
+  LOGO_MARKS_SYSTEM,
+  logoMarksUser,
+  SITE_GEN_SYSTEM,
+  siteGenUser,
   INSPIRATION_SYSTEM,
   inspirationUser,
   FINANCIALS_SYSTEM,
@@ -152,6 +173,7 @@ const MARKET_DATA_TIMEOUT_MS = 90_000;
 const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
 const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
 const FINANCIALS_COMPLETION_BUDGET = 6000;
+const PRODUCT_IMAGE_TIMEOUT_MS = 25_000;
 
 function baseParams(
   model: string = config.model
@@ -932,12 +954,45 @@ export async function callQuery(
   });
 }
 
+export async function callFounderStory(
+  context: unknown
+): Promise<FounderStorySection> {
+  if (config.mockMode) {
+    return FounderStorySectionSchema.parse({
+      signals: {
+        founderBackground: "Mock founder background extracted from supplied evidence.",
+        originStory: "Mock origin story for the venture.",
+        founderMotivation: "Mock founder motivation.",
+        whyNow: "Mock why-now signal.",
+        customerInsight: "Mock customer insight.",
+        categoryConviction: "Mock category conviction.",
+        credibilityProof: ["Mock proof asset"],
+        unfairAdvantages: ["Mock unfair advantage"],
+        constraints: ["Mock constraint"],
+        openQuestions: ["Which founder details should be confirmed before publishing?"],
+      },
+      evidenceIds: {},
+      evidence: [],
+      sources: [],
+      confidence: 0.2,
+    });
+  }
+  return callJson({
+    runId: null,
+    system: FOUNDER_STORY_SYSTEM,
+    user: founderStoryUser(context),
+    schema: FounderStorySectionSchema,
+    maxCompletionTokens: 6000,
+  });
+}
+
 export async function callFinalReport(
   runId: string,
   profile: ClientProfile,
   blocks: Pick<Block, "id" | "name" | "domain" | "kind" | "conclusions">[],
   aggregate: AudienceAggregate | null,
-  financials: FinancialModel | null = null
+  financials: FinancialModel | null = null,
+  founderStory: FounderStorySection | null = null
 ): Promise<FinalReport> {
   if (config.mockMode) {
     return FinalReportSchema.parse({
@@ -998,7 +1053,7 @@ export async function callFinalReport(
   return callJson({
     runId,
     system: FINAL_REPORT_SYSTEM,
-    user: finalReportUser(profile, blocks, aggregate, financials),
+    user: finalReportUser(profile, blocks, aggregate, financials, founderStory),
     schema: FinalReportSchema,
     maxCompletionTokens: 16000,
   });
@@ -1278,14 +1333,16 @@ export async function callBrandKit(
   runId: string,
   profile: ClientProfile,
   conclusions: Conclusion[],
-  aggregate: AudienceAggregate | null
+  aggregate: AudienceAggregate | null,
+  founderStory: FounderStorySection | null = null
 ): Promise<BrandKit> {
   if (config.mockMode) return BrandKitSchema.parse(mockBrandKit);
 
   const system = `${BRAND_KIT_SYSTEM}\n\n--- INPUT ---\n${brandKitUser(
     profile,
     conclusions,
-    aggregate
+    aggregate,
+    founderStory
   )}`;
 
   // Preferred path: Responses API with web_search so accounts are verifiable.
@@ -1343,7 +1400,7 @@ export async function callBrandKit(
       return await callJson({
         runId,
         system: BRAND_KIT_SYSTEM,
-        user: brandKitUser(profile, conclusions, aggregate),
+        user: brandKitUser(profile, conclusions, aggregate, founderStory),
         schema: BrandKitSchema,
         maxCompletionTokens: 8000,
         requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
@@ -1359,6 +1416,176 @@ export async function callBrandKit(
       );
     }
   }
+}
+
+// Deterministic fallback tokens — a neutral, legible system used in mock mode
+// and when the model call fails. Never the headline experience, just a floor so
+// the Design Studio always has something coherent to render from.
+const FALLBACK_DESIGN_TOKENS: DesignTokens = {
+  palette: {
+    primary: "#1F2937",
+    secondary: "#4F46E5",
+    accent: "#F59E0B",
+    neutralDark: "#111827",
+    neutralLight: "#F9FAFB",
+    extra: [],
+  },
+  typography: {
+    headingFamily: "Poppins",
+    bodyFamily: "Inter",
+    headingGoogleUrl:
+      "https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700&display=swap",
+    bodyGoogleUrl:
+      "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap",
+    weights: ["400", "600", "700"],
+    pairingRationale:
+      "A geometric heading over a neutral grotesque body reads as modern and trustworthy.",
+  },
+  logo: {
+    direction: "Clean wordmark in the heading family with a tight, confident set.",
+    style: "wordmark",
+    motifSuggestions: ["Single accent dot", "Subtle baseline underline"],
+  },
+  motifs: ["Rounded corners", "Generous whitespace"],
+  imagery: "Bright, uncluttered product shots on the light neutral.",
+  rationale: "A safe, legible default until brand-specific tokens are generated.",
+};
+
+/**
+ * Distill the brand's CONCRETE design tokens (hex palette, Google-Font pairing,
+ * logo direction) from the venture profile + (optional) brand kit, founder
+ * story and product-image notes. A pure synthesis call (no web search). On
+ * provider/parse failure, returns the neutral fallback so the Design Studio
+ * always has a coherent system to render downstream assets from.
+ */
+export async function callDesignTokens(
+  runId: string | null,
+  profile: ClientProfile,
+  brandKit: BrandKit | null,
+  founderStory: FounderStorySection | null = null,
+  productImageNotes: string[] = []
+): Promise<DesignTokens> {
+  if (config.mockMode) return DesignTokensSchema.parse(FALLBACK_DESIGN_TOKENS);
+  try {
+    return await callJson({
+      runId,
+      system: DESIGN_TOKENS_SYSTEM,
+      user: designTokensUser(profile, brandKit, founderStory, productImageNotes),
+      schema: DesignTokensSchema,
+      maxCompletionTokens: 3000,
+      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+      requestMaxRetries: 0,
+    });
+  } catch (e) {
+    console.error(`[design-tokens] generation failed, using fallback:`, e);
+    return DesignTokensSchema.parse(FALLBACK_DESIGN_TOKENS);
+  }
+}
+
+/**
+ * Write the COPY for one collateral piece (business card / flyer / poster). The
+ * layout is rendered deterministically from the design tokens, so this returns
+ * words only. A pure synthesis call; throws on provider/parse failure (the
+ * route surfaces it — there is no sensible generic copy fallback).
+ */
+export async function callCollateralCopy(
+  runId: string | null,
+  type: CollateralType,
+  profile: ClientProfile,
+  brandKit: BrandKit | null,
+  brief: string
+): Promise<CollateralContent> {
+  if (config.mockMode) {
+    return CollateralContentSchema.parse({
+      brandName: profile.product || "Your Brand",
+      tagline: "(mock) crafted for you",
+      headline: "Launch with confidence",
+      subhead: "(mock) collateral copy",
+      body: ["Benefit one", "Benefit two", "Benefit three"],
+      cta: "Get started today",
+      contact: {},
+    });
+  }
+  return callJson({
+    runId,
+    system: COLLATERAL_COPY_SYSTEM,
+    user: collateralCopyUser(type, profile, brandKit, brief),
+    schema: CollateralContentSchema,
+    maxCompletionTokens: 1200,
+    requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+    requestMaxRetries: 0,
+  });
+}
+
+/**
+ * Author 2-3 raw SVG logo MARKS (geometry only, no text) for the venture from
+ * its design tokens. The SVGs are sanitized by the caller before use. A pure
+ * synthesis call; throws on provider/parse failure (the route surfaces it and
+ * falls back to the deterministic wordmark).
+ */
+export async function callLogoMarks(
+  runId: string | null,
+  profile: ClientProfile,
+  tokens: DesignTokens,
+  brandKit: BrandKit | null
+): Promise<LogoMarksOutput> {
+  if (config.mockMode) {
+    return LogoMarksOutputSchema.parse({
+      concept: "(mock) a simple geometric mark.",
+      style: "emblem",
+      marks: [
+        {
+          label: "Mock circle",
+          svg: `<svg width="256" height="256" viewBox="0 0 256 256"><circle cx="128" cy="128" r="96" fill="${tokens.palette.primary}"/></svg>`,
+        },
+      ],
+    });
+  }
+  return callJson({
+    runId,
+    system: LOGO_MARKS_SYSTEM,
+    user: logoMarksUser(profile, tokens, brandKit),
+    schema: LogoMarksOutputSchema,
+    maxCompletionTokens: 4000,
+    requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
+    requestMaxRetries: 0,
+  });
+}
+
+/**
+ * Generate a complete, self-contained one-page landing site (HTML + inline CSS,
+ * no scripts) styled from the design tokens. The HTML is sanitized by the
+ * caller before preview/deploy. Larger token budget since it returns a full
+ * document; throws on provider/parse failure (the route surfaces it).
+ */
+export async function callSiteGenerator(
+  runId: string | null,
+  profile: ClientProfile,
+  tokens: DesignTokens,
+  brandKit: BrandKit | null,
+  brief: string
+): Promise<SiteGenOutput> {
+  if (config.mockMode) {
+    return SiteGenOutputSchema.parse({
+      title: `${profile.product || "Brand"} — mock site`,
+      html: `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${
+        profile.product || "Brand"
+      }</title></head><body style="font-family:system-ui;padding:48px;background:${
+        tokens.palette.neutralLight
+      };color:${tokens.palette.neutralDark}"><h1 style="color:${
+        tokens.palette.primary
+      }">${profile.product || "Brand"}</h1><p>(mock) landing site.</p></body></html>`,
+    });
+  }
+  return callJson({
+    runId,
+    system: SITE_GEN_SYSTEM,
+    user: siteGenUser(profile, tokens, brandKit, brief),
+    schema: SiteGenOutputSchema,
+    maxCompletionTokens: 12000,
+    requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
+    requestMaxRetries: 0,
+  });
 }
 
 /**
@@ -1516,7 +1743,8 @@ function fallbackPlaybook(
 export async function callGeneratePlaybook(
   runId: string,
   profile: ClientProfile,
-  conclusionsByDomain: Record<string, { claim: string; value: string }[]>
+  conclusionsByDomain: Record<string, { claim: string; value: string }[]>,
+  founderStory: FounderStorySection | null = null
 ): Promise<GeneratedPlaybook> {
   if (config.mockMode) {
     return GeneratedPlaybookSchema.parse({
@@ -1543,7 +1771,7 @@ export async function callGeneratePlaybook(
           {
             role: "user",
             content:
-              playbookUser(profile, conclusionsByDomain) +
+              playbookUser(profile, conclusionsByDomain, founderStory) +
               "\n\nSearch only for the highest-impact current tax/duty rates and named competitors for this product and market. Keep the playbook concise and output JSON only.",
           },
         ],
@@ -1645,6 +1873,59 @@ export async function callWebsiteAnalysis(
       requestMaxRetries: 0,
     });
   }
+}
+
+const ProductImageAnalysisSchema = z.object({
+  visualSummary: z.string().min(1).max(900),
+  tags: z.array(z.string().min(1).max(40)).max(12).default([]),
+});
+export type ProductImageAnalysis = z.infer<typeof ProductImageAnalysisSchema>;
+
+export async function callProductImageAnalysis(args: {
+  fileName: string;
+  dataUrl: string;
+  product?: string;
+}): Promise<ProductImageAnalysis> {
+  if (config.mockMode) {
+    return {
+      visualSummary: `(mock) Product reference image ${args.fileName} for ${args.product ?? "the venture"}.`,
+      tags: ["product reference"],
+    };
+  }
+
+  const response = await client().responses.create(
+    {
+      model: config.model,
+      input: [
+        {
+          role: "system",
+          content:
+            "You inspect founder-uploaded product reference images for business simulation. Describe only visible product traits: category, silhouette or shape, materials, color, finish, styling cues, construction details, use case, and likely positioning. Avoid guessing brand claims, price, location, identity, or demographics. Output JSON only.",
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "input_text",
+              text: `Product context: ${args.product ?? "unknown"}\nImage file: ${args.fileName}\nReturn {"visualSummary":"...","tags":["..."]}.`,
+            },
+            {
+              type: "input_image",
+              image_url: args.dataUrl,
+              detail: "low",
+            },
+          ],
+        } as never,
+      ],
+      max_output_tokens: 1200,
+      reasoning: { effort: "low" },
+    },
+    { timeout: PRODUCT_IMAGE_TIMEOUT_MS, maxRetries: 0 }
+  );
+
+  return ProductImageAnalysisSchema.parse(
+    JSON.parse(stripFences(response.output_text ?? ""))
+  );
 }
 
 /**

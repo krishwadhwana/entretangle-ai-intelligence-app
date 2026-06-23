@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { callGeneratePlaybook } from "@/lib/llm";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
-import { savePlaybook, getPlaybook } from "@/lib/store";
+import { savePlaybook, getPlaybook, getFounderStory } from "@/lib/store";
 import { config } from "@/lib/config";
 import { ClientProfileSchema } from "@/lib/schema";
 
@@ -60,7 +60,15 @@ export async function POST(
   }
 
   try {
-    const generated = await callGeneratePlaybook(run.id, profile, byDomain);
+    const founderStory = run.projectId
+      ? await getFounderStory(run.projectId).catch(() => null)
+      : null;
+    const generated = await callGeneratePlaybook(
+      run.id,
+      profile,
+      byDomain,
+      founderStory
+    );
     const playbook = {
       ...generated,
       generatedAt: new Date().toISOString(),

@@ -43,6 +43,16 @@ export const SOURCES: Record<string, { title: string; file: string; url: string 
     file: "data/benchmarks/collected/worldbank-macro.json",
     url: "https://api.worldbank.org/v2",
   },
+  "worldbank-wdi-demographics": {
+    title: "World Bank — World Development Indicators demographic profile",
+    file: "data/benchmarks/collected/demographics.json",
+    url: "https://api.worldbank.org/v2",
+  },
+  "us-census-acs-profile": {
+    title: "US Census Bureau — ACS 5-year data profile",
+    file: "data/benchmarks/collected/demographics.json",
+    url: "https://api.census.gov/data",
+  },
   // Reported-tier sources: primary company disclosures, figure corroborated but
   // not transcribed to a saved page + quote (file intentionally blank).
   "go-fashion-ar-2023-24": {

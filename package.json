@@ -10,7 +10,9 @@
     "start": "next start",
     "lint": "next lint",
     "postinstall": "prisma generate",
-    "db:migrate": "prisma db push"
+    "db:migrate": "prisma db push",
+    "intel:companies": "tsx scripts/intel/refresh-companies.ts",
+    "intel:founders": "tsx scripts/intel/refresh-founders.ts"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
@@ -26,6 +28,7 @@
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
     "recharts": "^3.8.1",
+    "satori": "^0.12.2",
     "tsx": "^4.20.5",
     "zod": "^3.24.0"
   },

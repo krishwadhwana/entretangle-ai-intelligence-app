@@ -8,9 +8,17 @@ import {
   BrandSocialSectionSchema,
   ClientProfileSchema,
   FinancialsSectionSchema,
+  FounderStorySectionSchema,
+  DesignStudioSectionSchema,
   InspirationSectionSchema,
   InterviewTranscriptSchema,
+  InvestorOSSectionSchema,
   WebsiteAnalysisSchema,
+  type DesignAsset,
+  type DesignStudioSection,
+  type DesignTokens,
+  type LogoAsset,
+  type FounderStorySection,
   type WebsiteAnalysis,
   type MarketDatum,
   type BrandKit,
@@ -20,6 +28,11 @@ import {
   type InspirationKit,
   type InspirationSection,
   type InterviewTranscript,
+  type EvidenceItem,
+  type InvestorKit,
+  type InvestorKitEdits,
+  type InvestorOSSection,
+  type RoadmapItem,
   type OwnerDashboard,
   type RunStatus,
   type SimulationRunRecord,
@@ -59,6 +72,7 @@ export type ProjectFull = ProjectSummary & {
 };
 
 export type OwnerDashboardRunSlice = {
+  founderStory: OwnerDashboard["founderStory"] | null;
   brandSocial: OwnerDashboard["brandSocial"] | null;
   financials: OwnerDashboard["financials"] | null;
   inspiration: OwnerDashboard["inspiration"] | null;
@@ -66,6 +80,25 @@ export type OwnerDashboardRunSlice = {
 
 // Default state for a freshly-initialised owner dashboard.
 const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
+  founderStory: {
+    signals: {
+      founderBackground: "",
+      originStory: "",
+      founderMotivation: "",
+      whyNow: "",
+      customerInsight: "",
+      categoryConviction: "",
+      credibilityProof: [],
+      unfairAdvantages: [],
+      constraints: [],
+      openQuestions: [],
+    },
+    evidenceIds: {},
+    evidence: [],
+    sources: [],
+    confidence: 0,
+    generatedAt: null,
+  },
   brandSocial: { kit: null, checks: {}, generatedAt: null, sourceRunId: null },
   brandSocialByRun: {},
   financials: {
@@ -80,6 +113,28 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
   inspiration: { kit: null, generatedAt: null, sourceRunId: null },
   inspirationByRun: {},
   playbooks: {},
+  investorOS: {
+    manualEvidence: [],
+    roadmap: [],
+    kits: [],
+    edits: {
+      deckSlides: {},
+      memoSections: {},
+      qaAnswers: {},
+      useOfFundsPlan: null,
+      financialBullets: null,
+      updatedAt: null,
+    },
+    updatedAt: null,
+  },
+  designStudio: {
+    tokens: null,
+    assets: [],
+    logos: [],
+    sites: [],
+    generatedAt: null,
+    sourceRunId: null,
+  },
 };
 
 // Parse the owner_dashboard JSONB SECTION BY SECTION. A whole-object parse
@@ -102,7 +157,10 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
   const inspByRun = z.record(InspirationSectionSchema).safeParse(
     obj.inspirationByRun
   );
+  const founderStory = FounderStorySectionSchema.safeParse(obj.founderStory);
   const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
+  const investorOS = InvestorOSSectionSchema.safeParse(obj.investorOS);
+  const designStudio = DesignStudioSectionSchema.safeParse(obj.designStudio);
   const brandSocialByRun = brandByRun.success ? { ...brandByRun.data } : {};
   if (
     brand.success &&
@@ -128,6 +186,9 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     inspirationByRun[insp.data.sourceRunId] = insp.data;
   }
   return {
+    founderStory: founderStory.success
+      ? founderStory.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.founderStory),
     brandSocial: brand.success
       ? brand.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.brandSocial),
@@ -141,6 +202,12 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
       : structuredClone(EMPTY_OWNER_DASHBOARD.inspiration),
     inspirationByRun,
     playbooks: pb.success ? pb.data : {},
+    investorOS: investorOS.success
+      ? investorOS.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.investorOS),
+    designStudio: designStudio.success
+      ? designStudio.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.designStudio),
   };
 }
 
@@ -533,6 +600,26 @@ export async function getPlaybook(
   return owner.playbooks[runId] ?? null;
 }
 
+export async function saveFounderStory(
+  id: string,
+  section: FounderStorySection
+): Promise<FounderStorySection> {
+  const parsed = FounderStorySectionSchema.parse(section);
+  const owner = await readOwnerDashboard(id);
+  owner.founderStory = parsed;
+  await writeOwnerDashboard(id, owner);
+  return parsed;
+}
+
+export async function getFounderStory(
+  id: string
+): Promise<FounderStorySection | null> {
+  const owner = await readOwnerDashboard(id);
+  return owner.founderStory.evidence.length || owner.founderStory.confidence > 0
+    ? owner.founderStory
+    : null;
+}
+
 export async function saveBrandKit(
   id: string,
   kit: BrandKit,
@@ -558,6 +645,88 @@ export async function saveBrandKit(
   owner.brandSocial = section;
   await writeOwnerDashboard(id, owner);
   return section;
+}
+
+// ---------------------------------------------------------------------------
+// Owner Dashboard › Design Studio. Project-level (not per-run): the brand's
+// design tokens are one identity for the whole venture, shared by every asset
+// generator. sourceRunId is recorded for provenance only.
+// ---------------------------------------------------------------------------
+
+export async function saveDesignTokens(
+  id: string,
+  tokens: DesignTokens,
+  sourceRunId: string | null,
+  generatedAt: string
+): Promise<DesignStudioSection> {
+  const section = DesignStudioSectionSchema.parse({
+    tokens,
+    generatedAt,
+    sourceRunId,
+  });
+  const owner = await readOwnerDashboard(id);
+  owner.designStudio = section;
+  await writeOwnerDashboard(id, owner);
+  return section;
+}
+
+export async function getDesignStudio(
+  id: string
+): Promise<DesignStudioSection | null> {
+  const owner = await readOwnerDashboard(id);
+  return owner.designStudio.tokens || owner.designStudio.assets.length
+    ? owner.designStudio
+    : null;
+}
+
+/** Append (or replace by id) a rendered collateral asset, newest first. */
+export async function saveDesignAsset(
+  id: string,
+  asset: DesignAsset
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  const rest = owner.designStudio.assets.filter((a) => a.id !== asset.id);
+  owner.designStudio.assets = [asset, ...rest];
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
+/** Remove a generated asset by id. */
+export async function deleteDesignAsset(
+  id: string,
+  assetId: string
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  owner.designStudio.assets = owner.designStudio.assets.filter(
+    (a) => a.id !== assetId
+  );
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
+/** Append (or replace by id) a generated logo, newest first. */
+export async function saveLogoAsset(
+  id: string,
+  logo: LogoAsset
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  const rest = owner.designStudio.logos.filter((l) => l.id !== logo.id);
+  owner.designStudio.logos = [logo, ...rest];
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
+/** Remove a generated logo by id. */
+export async function deleteLogoAsset(
+  id: string,
+  logoId: string
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  owner.designStudio.logos = owner.designStudio.logos.filter(
+    (l) => l.id !== logoId
+  );
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
 }
 
 export async function saveOwnerChecks(
@@ -665,6 +834,74 @@ export async function getFinancialModel(
 ): Promise<FinancialModel | null> {
   const section = await getFinancialsSection(projectId, runId);
   return section?.model ?? null;
+}
+
+export async function getInvestorOS(
+  projectId: string
+): Promise<InvestorOSSection> {
+  const owner = await readOwnerDashboard(projectId);
+  return owner.investorOS;
+}
+
+export async function saveInvestorOS(
+  projectId: string,
+  section: InvestorOSSection
+): Promise<InvestorOSSection> {
+  const parsed = InvestorOSSectionSchema.parse(section);
+  const owner = await readOwnerDashboard(projectId);
+  owner.investorOS = parsed;
+  await writeOwnerDashboard(projectId, owner);
+  return parsed;
+}
+
+export async function addInvestorEvidence(
+  projectId: string,
+  evidence: EvidenceItem
+): Promise<InvestorOSSection> {
+  const owner = await readOwnerDashboard(projectId);
+  owner.investorOS.manualEvidence = [
+    ...owner.investorOS.manualEvidence.filter((e) => e.id !== evidence.id),
+    evidence,
+  ];
+  owner.investorOS.updatedAt = new Date().toISOString();
+  await writeOwnerDashboard(projectId, owner);
+  return owner.investorOS;
+}
+
+export async function saveInvestorRoadmap(
+  projectId: string,
+  roadmap: RoadmapItem[]
+): Promise<InvestorOSSection> {
+  const owner = await readOwnerDashboard(projectId);
+  owner.investorOS.roadmap = roadmap;
+  owner.investorOS.updatedAt = new Date().toISOString();
+  await writeOwnerDashboard(projectId, owner);
+  return owner.investorOS;
+}
+
+export async function saveInvestorKit(
+  projectId: string,
+  kit: InvestorKit
+): Promise<InvestorOSSection> {
+  const owner = await readOwnerDashboard(projectId);
+  owner.investorOS.kits = [
+    kit,
+    ...owner.investorOS.kits.filter((existing) => existing.id !== kit.id),
+  ].slice(0, 10);
+  owner.investorOS.updatedAt = new Date().toISOString();
+  await writeOwnerDashboard(projectId, owner);
+  return owner.investorOS;
+}
+
+export async function saveInvestorKitEdits(
+  projectId: string,
+  edits: InvestorKitEdits
+): Promise<InvestorOSSection> {
+  const owner = await readOwnerDashboard(projectId);
+  owner.investorOS.edits = { ...edits, updatedAt: new Date().toISOString() };
+  owner.investorOS.updatedAt = new Date().toISOString();
+  await writeOwnerDashboard(projectId, owner);
+  return owner.investorOS;
 }
 
 /**
@@ -884,8 +1121,13 @@ export async function getOwnerDashboardRunSlice(
     select: { ownerDashboard: true },
   });
   if (!row) return null;
+  const owner = parseOwnerDashboard(row.ownerDashboard);
 
   return {
+    founderStory:
+      owner.founderStory.evidence.length || owner.founderStory.confidence > 0
+        ? owner.founderStory
+        : null,
     brandSocial: parseRunSection(
       row.ownerDashboard,
       runId,

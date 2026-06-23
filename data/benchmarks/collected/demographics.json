@@ -1,0 +1,84 @@
+{
+  "countries": {
+    "IN": {
+      "country": "India",
+      "iso2": "IN",
+      "population": {
+        "value": 1450935791,
+        "year": "2024"
+      },
+      "urbanSharePct": {
+        "value": 35.4,
+        "year": "2024"
+      },
+      "ageSharesPct": {
+        "children0To14": {
+          "value": 24.6,
+          "year": "2024"
+        },
+        "working15To64": {
+          "value": 68.2,
+          "year": "2024"
+        },
+        "senior65Plus": {
+          "value": 7.1,
+          "year": "2024"
+        }
+      },
+      "gdpPerCapitaUsd": {
+        "value": 2695,
+        "year": "2024"
+      },
+      "indiaConsumption": {
+        "source": "NSSO HCES 2022-23",
+        "currency": "INR",
+        "monthlyPerCapita": {
+          "avgRural": 3773,
+          "avgUrban": 6459,
+          "bottom5Rural": 1373,
+          "bottom5Urban": 2001,
+          "top5Rural": 10501,
+          "top5Urban": 20824
+        }
+      }
+    },
+    "US": {
+      "country": "United States",
+      "iso2": "US",
+      "population": {
+        "value": 340110988,
+        "year": "2024"
+      },
+      "urbanSharePct": {
+        "value": 80.1,
+        "year": "2024"
+      },
+      "ageSharesPct": {
+        "children0To14": {
+          "value": 17.3,
+          "year": "2024"
+        },
+        "working15To64": {
+          "value": 64.7,
+          "year": "2024"
+        },
+        "senior65Plus": {
+          "value": 17.9,
+          "year": "2024"
+        }
+      },
+      "gdpPerCapitaUsd": {
+        "value": 84534,
+        "year": "2024"
+      }
+    }
+  },
+  "metadata": {
+    "worldBankLastUpdated": "2026-04-08",
+    "censusAcs": {
+      "status": "skipped",
+      "year": "2024",
+      "reason": "CENSUS_API_KEY not set"
+    }
+  }
+}

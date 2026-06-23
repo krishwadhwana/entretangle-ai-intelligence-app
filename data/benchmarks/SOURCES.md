@@ -54,6 +54,27 @@ public regulatory/government documents redistributed for internal reference.
   - Note: single-company figure (digital-first BPC) — a strong anchor for the
     beauty category's *upper* margin range, not the whole category.
 
+## API snapshots
+
+### `worldbank-wdi-demographics`
+- **File:** [`collected/demographics.json`](./collected/demographics.json)
+- **Publisher:** World Bank, World Development Indicators
+- **URL:** https://api.worldbank.org/v2
+- **Used for:** India/US country-level population, urban share, broad age
+  structure and GDP/capita proxy.
+- **Current snapshot:** India and United States, latest available WDI year in
+  the API response. The collector records the data year per figure and the WDI
+  `lastupdated` metadata.
+
+### `us-census-acs-profile`
+- **File:** [`collected/demographics.json`](./collected/demographics.json)
+- **Publisher:** US Census Bureau, ACS 5-year Data Profile
+- **URL:** https://api.census.gov/data
+- **Used for:** US median household income and median age when
+  `CENSUS_API_KEY` is configured.
+- **Current snapshot:** skipped in this workspace because `CENSUS_API_KEY` was
+  not set; the collector still writes the status so the gap is visible.
+
 ---
 
 ## Honest coverage status
@@ -63,6 +84,7 @@ public regulatory/government documents redistributed for internal reference.
 | Gross margin (beauty) | **sourced** (Honasa DRHP) | Yes — company filings |
 | Gross margin (other categories) | estimate | Yes — needs one filing per category (Nykaa, Vedant Fashions, Campus, Go Fashion, Metro Brands, etc.) |
 | Income / spend by tier | **sourced** (NSSO) | Yes — NSSO HCES |
+| India/US demographic spine | **sourced / sourced_proxy** (World Bank WDI, NSSO; ACS optional) | Yes — WDI + Census ACS |
 | AOV by category | estimate | Partial — Unicommerce / GoKwik reports (vendor, methodology-stated) |
 | RTO / COD share / returns | estimate | Partial — GoKwik / Unicommerce reports (vendor) |
 | Festive seasonality | estimate | Partial — RedSeer festive reports (vendor) |

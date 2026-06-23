@@ -59,6 +59,15 @@ export type Dossier = {
   sections: DossierSection[];
 };
 
+export type DossierDownloadOptions = {
+  /** Keep the reliable printable PDF artifact. Defaults to true. */
+  pdf?: boolean;
+  /** Also create a self-contained animated browser report. Defaults to true. */
+  animated?: boolean;
+  /** Open the animated report after downloading it. Defaults to true. */
+  openAnimated?: boolean;
+};
+
 const MARGIN = 48;
 const LINE = 1.38;
 const INK: RGB = [23, 23, 23];
@@ -590,6 +599,858 @@ function renderDossier(D: Doc, d: Dossier) {
   chrome(D, d.title);
 }
 
+// --- animated HTML companion -----------------------------------------------
+
+function toneClass(t?: KPI["tone"]): "good" | "bad" | "neutral" {
+  return t === "good" || t === "bad" ? t : "neutral";
+}
+
+function esc(value: string | number | undefined): string {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function safeHttpUrl(url: string | undefined): string {
+  if (!url) return "";
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "http:" || parsed.protocol === "https:"
+      ? parsed.href
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+function paragraphHtml(body: string | undefined): string {
+  if (!body) return "";
+  return body
+    .split(/\n{2,}/)
+    .map((p) => `<p>${esc(p).replace(/\n/g, "<br />")}</p>`)
+    .join("");
+}
+
+function kpisHtml(kpis: KPI[] | undefined): string {
+  if (!kpis?.length) return "";
+  return `
+    <div class="kpi-grid">
+      ${kpis
+        .map(
+          (k, i) => `
+            <article class="kpi tone-${toneClass(k.tone)}" style="--i:${i}">
+              <span>${esc(k.label)}</span>
+              <strong>${esc(k.value)}</strong>
+              ${k.sub ? `<em>${esc(k.sub)}</em>` : ""}
+            </article>
+          `
+        )
+        .join("")}
+    </div>
+  `;
+}
+
+function chartValue(value: number, unit: string | undefined, money: boolean | undefined): string {
+  return money ? fmtNum(value) : `${fmtNum(value)}${unit ?? ""}`;
+}
+
+function barsHtml(c: NonNullable<DossierSection["bars"]> | undefined): string {
+  if (!c) return "";
+  const data = c.data.filter((d) => isFinite(d.value));
+  if (!data.length) return "";
+  const max = Math.max(...data.map((d) => Math.abs(d.value)), 1);
+  return `
+    <div class="chart-card">
+      ${c.title ? `<div class="chart-title">${esc(c.title)}</div>` : ""}
+      <div class="bar-list">
+        ${data
+          .map((row, i) => {
+            const width = Math.max(2, (Math.abs(row.value) / max) * 100);
+            const tone =
+              row.value < 0 ? "bad" : i % 3 === 1 ? "good" : i % 3 === 2 ? "warm" : "neutral";
+            return `
+              <div class="bar-row" style="--i:${i};--w:${width}%">
+                <div class="bar-label">${esc(row.label)}</div>
+                <div class="bar-track"><div class="bar-fill tone-${tone}"></div></div>
+                <div class="bar-value">${esc(chartValue(row.value, c.unit, c.money))}</div>
+              </div>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function shareHtml(c: NonNullable<DossierSection["share"]> | undefined): string {
+  if (!c) return "";
+  const data = c.data.filter((d) => d.value > 0).slice(0, 10);
+  if (!data.length) return "";
+  const total = data.reduce((sum, d) => sum + d.value, 0) || 1;
+  return `
+    <div class="chart-card">
+      ${c.title ? `<div class="chart-title">${esc(c.title)}</div>` : ""}
+      <div class="share-bar" aria-label="${esc(c.title ?? "Share chart")}">
+        ${data
+          .map((row, i) => {
+            const width = Math.max(1.5, (row.value / total) * 100);
+            return `<span class="share-segment tone-${i % 6}" style="--i:${i};--w:${width}%"></span>`;
+          })
+          .join("")}
+      </div>
+      <div class="legend">
+        ${data
+          .map((row, i) => {
+            const pct = Math.round((row.value / total) * 100);
+            return `
+              <span><i class="tone-${i % 6}"></i>${esc(row.label)} ${pct}%</span>
+            `;
+          })
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function lineHtml(c: NonNullable<DossierSection["line"]> | undefined, sectionIndex: number): string {
+  if (!c?.series?.some((s) => s.points.length > 1)) return "";
+  return `
+    <div class="chart-card">
+      ${c.title ? `<div class="chart-title">${esc(c.title)}</div>` : ""}
+      <div class="line-host" data-section="${sectionIndex}"></div>
+      <div class="legend">
+        ${c.series
+          .map(
+            (s, i) => `
+              <span><i class="tone-${i % 6}"></i>${esc(s.name)}</span>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
+}
+
+function tableHtml(t: NonNullable<DossierSection["table"]> | undefined): string {
+  if (!t?.columns.length) return "";
+  return `
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>${t.columns.map((c) => `<th>${esc(c)}</th>`).join("")}</tr>
+        </thead>
+        <tbody>
+          ${t.rows
+            .map(
+              (row, i) => `
+                <tr style="--i:${i}">
+                  ${row.map((cell) => `<td>${esc(cell)}</td>`).join("")}
+                </tr>
+              `
+            )
+            .join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function listHtml(items: string[] | undefined): string {
+  if (!items?.length) return "";
+  return `
+    <ul class="note-list">
+      ${items.map((item, i) => `<li style="--i:${i}">${esc(item)}</li>`).join("")}
+    </ul>
+  `;
+}
+
+function linkListHtml(c: NonNullable<DossierSection["linkList"]> | undefined): string {
+  if (!c?.items.length) return "";
+  return `
+    <ul class="link-list">
+      ${c.items
+        .map((item, i) => {
+          const url = safeHttpUrl(item.url);
+          const label = url
+            ? `<a href="${esc(url)}" target="_blank" rel="noopener noreferrer">${esc(item.text)}</a>`
+            : `<strong>${esc(item.text)}</strong>`;
+          return `
+            <li style="--i:${i}">
+              ${label}
+              ${item.sub ? `<span>${esc(item.sub)}</span>` : ""}
+            </li>
+          `;
+        })
+        .join("")}
+    </ul>
+  `;
+}
+
+function sectionHtml(section: DossierSection, index: number): string {
+  const hasContent =
+    section.heading ||
+    section.body ||
+    section.kpis?.length ||
+    section.bars ||
+    section.share ||
+    section.line ||
+    section.table ||
+    section.linkList?.items.length ||
+    section.bullets?.length;
+  if (!hasContent) return "";
+  return `
+    <section class="panel reveal" style="--i:${index}">
+      ${
+        section.heading
+          ? `<div class="section-head"><h2>${esc(section.heading)}</h2></div>`
+          : ""
+      }
+      ${section.body ? `<div class="body-copy">${paragraphHtml(section.body)}</div>` : ""}
+      ${kpisHtml(section.kpis)}
+      ${barsHtml(section.bars)}
+      ${shareHtml(section.share)}
+      ${lineHtml(section.line, index)}
+      ${tableHtml(section.table)}
+      ${linkListHtml(section.linkList)}
+      ${listHtml(section.bullets)}
+    </section>
+  `;
+}
+
+function safeJsonForHtml(d: Dossier): string {
+  return JSON.stringify(d)
+    .replace(/</g, "\\u003c")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
+}
+
+function buildAnimatedDossierHtml(d: Dossier): string {
+  const chartCount = d.sections.filter((s) => s.bars || s.share || s.line).length;
+  const safeJson = safeJsonForHtml(d);
+  const title = esc(d.title);
+  const sections = d.sections.map(sectionHtml).join("");
+  const coverKpis = d.cover?.kpis?.length ? kpisHtml(d.cover.kpis) : "";
+  const meta = d.meta?.length
+    ? `<div class="meta">${d.meta.map((m) => `<span>${esc(m)}</span>`).join("")}</div>`
+    : "";
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>${title}</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171717;
+      --muted: #737373;
+      --line: #e5e7eb;
+      --panel: rgba(255,255,255,0.92);
+      --indigo: #6366f1;
+      --green: #10b981;
+      --red: #dc2626;
+      --amber: #f59e0b;
+      --sky: #0ea5e9;
+      --teal: #14b8a6;
+      --rose: #f472b6;
+      --shadow: 0 14px 46px rgba(15,23,42,0.10);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--ink);
+      background:
+        linear-gradient(120deg, rgba(99,102,241,0.10), transparent 34%),
+        linear-gradient(240deg, rgba(20,184,166,0.10), transparent 32%),
+        linear-gradient(180deg, #fafafa, #f8fafc 52%, #fff7ed);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(15,23,42,0.052) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(15,23,42,0.042) 1px, transparent 1px);
+      background-size: 44px 44px;
+      mask-image: linear-gradient(180deg, rgba(0,0,0,0.50), transparent 72%);
+      animation: grid-drift 18s linear infinite;
+    }
+    .shell {
+      position: relative;
+      width: min(1160px, calc(100vw - 32px));
+      margin: 0 auto;
+      padding: 32px 0 64px;
+    }
+    .hero {
+      min-height: 84vh;
+      display: grid;
+      align-content: center;
+      gap: 22px;
+      padding-bottom: 34px;
+    }
+    .eyebrow {
+      color: var(--indigo);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: .14em;
+      text-transform: uppercase;
+    }
+    h1 {
+      margin: 10px 0 14px;
+      max-width: 980px;
+      font-size: clamp(40px, 7vw, 84px);
+      line-height: .95;
+      letter-spacing: 0;
+    }
+    h2 {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.25;
+    }
+    p { margin: 0; }
+    .subtitle {
+      max-width: 780px;
+      color: #404040;
+      font-size: 17px;
+      line-height: 1.62;
+    }
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }
+    .meta span {
+      border: 1px solid rgba(99,102,241,0.22);
+      background: rgba(255,255,255,0.74);
+      border-radius: 999px;
+      padding: 7px 11px;
+      color: #4b5563;
+      font-size: 12px;
+      font-weight: 700;
+      backdrop-filter: blur(12px);
+    }
+    .hero-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(300px, .8fr);
+      gap: 18px;
+      align-items: stretch;
+    }
+    .verdict {
+      border-left: 4px solid var(--indigo);
+      background: rgba(255,255,255,0.78);
+      border-radius: 8px;
+      padding: 18px 20px;
+      color: #27272a;
+      line-height: 1.58;
+      box-shadow: var(--shadow);
+      animation: rise .7s ease both .12s;
+    }
+    .toolbar {
+      position: sticky;
+      top: 12px;
+      z-index: 5;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 18px;
+      border: 1px solid rgba(229,231,235,.95);
+      background: rgba(255,255,255,.84);
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 10px 34px rgba(15,23,42,.09);
+      backdrop-filter: blur(16px);
+    }
+    .toolbar span {
+      color: #525252;
+      font-size: 12px;
+      font-weight: 800;
+    }
+    button {
+      border: 0;
+      border-radius: 8px;
+      background: var(--indigo);
+      color: white;
+      cursor: pointer;
+      font-weight: 800;
+      padding: 9px 12px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .panel {
+      border: 1px solid rgba(229,231,235,.95);
+      background: var(--panel);
+      border-radius: 8px;
+      padding: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .reveal {
+      animation: rise .6s cubic-bezier(.2,.8,.2,1) both;
+      animation-delay: calc(var(--i) * 45ms);
+    }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding-left: 10px;
+      border-left: 4px solid var(--indigo);
+    }
+    .body-copy {
+      display: grid;
+      gap: 10px;
+      color: #404040;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .kpi {
+      position: relative;
+      min-height: 112px;
+      overflow: hidden;
+      border: 1px solid rgba(229,231,235,.95);
+      background: rgba(255,255,255,.82);
+      border-radius: 8px;
+      padding: 14px;
+      animation: rise .65s cubic-bezier(.2,.8,.2,1) both;
+      animation-delay: calc(var(--i) * 70ms + 120ms);
+    }
+    .kpi::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(110deg, transparent, rgba(255,255,255,.72), transparent);
+      transform: translateX(-120%);
+      animation: shimmer 4s ease-in-out infinite;
+      animation-delay: calc(var(--i) * 180ms + .8s);
+    }
+    .kpi span {
+      display: block;
+      color: #a3a3a3;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+    .kpi strong {
+      display: block;
+      margin-top: 8px;
+      font-size: clamp(22px, 3vw, 34px);
+      line-height: 1.02;
+      word-break: break-word;
+    }
+    .kpi em {
+      display: block;
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      font-style: normal;
+      line-height: 1.3;
+    }
+    .tone-good strong, .tone-text-good { color: var(--green); }
+    .tone-bad strong, .tone-text-bad { color: var(--red); }
+    .chart-card {
+      margin-top: 14px;
+      border: 1px solid rgba(229,231,235,.95);
+      background: rgba(255,255,255,.62);
+      border-radius: 8px;
+      padding: 14px;
+    }
+    .chart-title {
+      margin-bottom: 12px;
+      color: #525252;
+      font-size: 12px;
+      font-weight: 850;
+    }
+    .bar-list {
+      display: grid;
+      gap: 10px;
+    }
+    .bar-row {
+      display: grid;
+      grid-template-columns: minmax(120px, 1fr) minmax(140px, 2fr) minmax(70px, auto);
+      gap: 10px;
+      align-items: center;
+      animation: rise .48s ease both;
+      animation-delay: calc(var(--i) * 45ms);
+    }
+    .bar-label {
+      min-width: 0;
+      color: #404040;
+      font-size: 12px;
+      font-weight: 700;
+      line-height: 1.25;
+    }
+    .bar-track {
+      height: 12px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #eef2ff;
+    }
+    .bar-fill {
+      width: var(--w);
+      height: 100%;
+      min-width: 2px;
+      border-radius: inherit;
+      transform-origin: left center;
+      animation: grow 1.1s cubic-bezier(.2,.8,.2,1) both;
+      animation-delay: calc(var(--i) * 55ms + .18s);
+    }
+    .bar-fill.tone-neutral { background: linear-gradient(90deg, #a5b4fc, var(--indigo)); }
+    .bar-fill.tone-good { background: linear-gradient(90deg, #6ee7b7, var(--green)); }
+    .bar-fill.tone-bad { background: linear-gradient(90deg, #fda4af, var(--red)); }
+    .bar-fill.tone-warm { background: linear-gradient(90deg, #fcd34d, var(--amber)); }
+    .bar-value {
+      color: #404040;
+      font-size: 12px;
+      font-weight: 850;
+      text-align: right;
+      white-space: nowrap;
+    }
+    .share-bar {
+      display: flex;
+      height: 20px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #eef2ff;
+    }
+    .share-segment {
+      width: var(--w);
+      min-width: 2px;
+      transform-origin: left center;
+      animation: grow 1s cubic-bezier(.2,.8,.2,1) both;
+      animation-delay: calc(var(--i) * 70ms + .12s);
+    }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 9px 12px;
+      margin-top: 11px;
+      color: #525252;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .legend i {
+      display: inline-block;
+      width: 20px;
+      height: 4px;
+      margin-right: 6px;
+      border-radius: 999px;
+      vertical-align: middle;
+    }
+    .tone-0 { background: var(--indigo); stroke: var(--indigo); }
+    .tone-1 { background: var(--green); stroke: var(--green); }
+    .tone-2 { background: var(--sky); stroke: var(--sky); }
+    .tone-3 { background: var(--amber); stroke: var(--amber); }
+    .tone-4 { background: var(--teal); stroke: var(--teal); }
+    .tone-5 { background: var(--rose); stroke: var(--rose); }
+    .line-host svg {
+      display: block;
+      width: 100%;
+      height: 300px;
+      overflow: visible;
+    }
+    .axis-label {
+      fill: #9ca3af;
+      font-size: 10px;
+      font-weight: 700;
+    }
+    .line-path {
+      fill: none;
+      stroke-width: 2.4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+    .point-dot {
+      animation: pop .45s ease both;
+      animation-delay: .9s;
+    }
+    .table-wrap {
+      margin-top: 14px;
+      overflow-x: auto;
+      border: 1px solid rgba(229,231,235,.95);
+      border-radius: 8px;
+    }
+    table {
+      width: 100%;
+      min-width: 620px;
+      border-collapse: collapse;
+      background: rgba(255,255,255,.68);
+      font-size: 12px;
+    }
+    th, td {
+      padding: 10px 11px;
+      border-bottom: 1px solid #e5e7eb;
+      text-align: left;
+      vertical-align: top;
+    }
+    th {
+      color: #fff;
+      background: var(--indigo);
+      font-size: 11px;
+      letter-spacing: .03em;
+      text-transform: uppercase;
+    }
+    tbody tr {
+      animation: rise .42s ease both;
+      animation-delay: calc(var(--i) * 30ms);
+    }
+    tbody tr:nth-child(even) td { background: rgba(248,250,252,.86); }
+    .note-list, .link-list {
+      display: grid;
+      gap: 9px;
+      margin: 14px 0 0;
+      padding: 0;
+      list-style: none;
+    }
+    .note-list li, .link-list li {
+      border-left: 3px solid var(--indigo);
+      background: #f8fafc;
+      border-radius: 7px;
+      color: #404040;
+      line-height: 1.45;
+      padding: 10px 12px;
+      animation: rise .48s ease both;
+      animation-delay: calc(var(--i) * 45ms);
+    }
+    .link-list a, .link-list strong {
+      color: #3730a3;
+      font-size: 13px;
+      font-weight: 850;
+      text-decoration: none;
+    }
+    .link-list a:hover { text-decoration: underline; }
+    .link-list span {
+      display: block;
+      margin-top: 4px;
+      color: #525252;
+      font-size: 12px;
+    }
+    .footer {
+      color: #737373;
+      font-size: 12px;
+      padding-top: 26px;
+      text-align: center;
+    }
+    @keyframes rise {
+      from { opacity: 0; transform: translateY(18px) scale(.986); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+    @keyframes grow {
+      from { transform: scaleX(0); }
+      to { transform: scaleX(1); }
+    }
+    @keyframes shimmer {
+      0%, 38% { transform: translateX(-120%); }
+      62%, 100% { transform: translateX(120%); }
+    }
+    @keyframes draw {
+      to { stroke-dashoffset: 0; }
+    }
+    @keyframes pop {
+      from { opacity: 0; transform: scale(.4); }
+      to { opacity: 1; transform: scale(1); }
+    }
+    @keyframes grid-drift {
+      from { background-position: 0 0, 0 0; }
+      to { background-position: 44px 44px, 44px 44px; }
+    }
+    @media (max-width: 840px) {
+      .hero { min-height: auto; padding-top: 30px; }
+      .hero-grid, .grid { grid-template-columns: 1fr; }
+      .kpi-grid { grid-template-columns: 1fr; }
+      .toolbar { align-items: flex-start; flex-direction: column; }
+      .bar-row { grid-template-columns: 1fr; gap: 6px; }
+      .bar-value { text-align: left; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="hero">
+      <div>
+        <div class="eyebrow">Animated Dossier</div>
+        <h1>${title}</h1>
+        ${d.subtitle ? `<p class="subtitle">${esc(d.subtitle)}</p>` : ""}
+        ${meta}
+      </div>
+      <div class="hero-grid">
+        ${
+          d.cover?.verdict
+            ? `<div class="verdict">${esc(d.cover.verdict)}</div>`
+            : `<div class="verdict">This animated report is generated from the same dossier data as the PDF.</div>`
+        }
+        ${coverKpis}
+      </div>
+    </section>
+
+    <div class="toolbar">
+      <span>${d.sections.length} sections${chartCount ? ` - ${chartCount} chart groups` : ""}</span>
+      <button id="replay" type="button">Replay animations</button>
+    </div>
+
+    <div class="grid">
+      ${sections}
+    </div>
+    <p class="footer">Generated by EntreTangle</p>
+  </main>
+  <script>
+    const dossier = ${safeJson};
+    const ns = "http://www.w3.org/2000/svg";
+    const colors = ["#6366f1", "#10b981", "#0ea5e9", "#f59e0b", "#14b8a6", "#f472b6"];
+
+    function compact(n) {
+      const value = Number(n) || 0;
+      const abs = Math.abs(value);
+      if (abs >= 10000000) return (value / 10000000).toFixed(1) + "Cr";
+      if (abs >= 100000) return (value / 100000).toFixed(1) + "L";
+      if (abs >= 1000) return (value / 1000).toFixed(1) + "k";
+      return Math.round(value * 100) / 100;
+    }
+    function make(tag, attrs) {
+      const el = document.createElementNS(ns, tag);
+      Object.entries(attrs || {}).forEach(function(entry) {
+        el.setAttribute(entry[0], String(entry[1]));
+      });
+      return el;
+    }
+    function svgText(svg, value, x, y, attrs) {
+      const el = make("text", Object.assign({ x, y, class: "axis-label" }, attrs || {}));
+      el.textContent = value;
+      svg.appendChild(el);
+    }
+    function renderLine(host) {
+      const section = dossier.sections[Number(host.dataset.section)];
+      const line = section && section.line;
+      if (!line || !line.series || !line.series.length) return;
+      const rect = host.getBoundingClientRect();
+      const width = Math.max(620, Math.round(rect.width || 900));
+      const height = 300;
+      const box = { left: 58, right: 18, top: 16, bottom: 42 };
+      const plotW = width - box.left - box.right;
+      const plotH = height - box.top - box.bottom;
+      const all = line.series.flatMap(function(series) {
+        return (series.points || []).map(function(point) { return Number(point) || 0; });
+      });
+      let min = Math.min(0, ...all);
+      let max = Math.max(0, ...all);
+      if (min === max) max = min + 1;
+      const maxLen = Math.max(...line.series.map(function(series) { return (series.points || []).length; }), 2);
+      const svg = make("svg", { viewBox: "0 0 " + width + " " + height, role: "img", "aria-label": line.title || "Line chart" });
+      for (let i = 0; i <= 4; i += 1) {
+        const y = box.top + (i / 4) * plotH;
+        svg.appendChild(make("line", { x1: box.left, y1: y, x2: box.left + plotW, y2: y, stroke: "#e5e7eb", "stroke-width": 1 }));
+        const val = max - (i / 4) * (max - min);
+        svgText(svg, compact(val), box.left - 10, y + 4, { "text-anchor": "end" });
+      }
+      if (min < 0 && max > 0) {
+        const zeroY = box.top + plotH - ((0 - min) / (max - min)) * plotH;
+        svg.appendChild(make("line", { x1: box.left, y1: zeroY, x2: box.left + plotW, y2: zeroY, stroke: "#94a3b8", "stroke-width": 1.2 }));
+      }
+      const labels = line.xLabels || [];
+      if (labels.length) {
+        svgText(svg, labels[0] || "", box.left, height - 16, {});
+        svgText(svg, labels[Math.floor(labels.length / 2)] || "", box.left + plotW / 2, height - 16, { "text-anchor": "middle" });
+        svgText(svg, labels[labels.length - 1] || "", box.left + plotW, height - 16, { "text-anchor": "end" });
+      }
+      function x(index) {
+        return box.left + (maxLen <= 1 ? 0 : (index / (maxLen - 1)) * plotW);
+      }
+      function y(value) {
+        return box.top + plotH - ((value - min) / (max - min)) * plotH;
+      }
+      line.series.forEach(function(series, seriesIndex) {
+        const points = (series.points || []).map(function(point) { return Number(point) || 0; });
+        if (points.length < 2) return;
+        const pathData = points
+          .map(function(point, index) {
+            return (index === 0 ? "M" : "L") + x(index).toFixed(2) + " " + y(point).toFixed(2);
+          })
+          .join(" ");
+        const path = make("path", {
+          d: pathData,
+          class: "line-path",
+          stroke: colors[seriesIndex % colors.length],
+        });
+        svg.appendChild(path);
+        const len = path.getTotalLength();
+        path.style.strokeDasharray = String(len);
+        path.style.strokeDashoffset = String(len);
+        path.style.animation = "draw 1.45s cubic-bezier(.2,.8,.2,1) forwards";
+        path.style.animationDelay = String(seriesIndex * 120 + 120) + "ms";
+        const last = points[points.length - 1];
+        svg.appendChild(make("circle", {
+          cx: x(points.length - 1),
+          cy: y(last),
+          r: 4,
+          fill: colors[seriesIndex % colors.length],
+          class: "point-dot",
+        }));
+      });
+      host.innerHTML = "";
+      host.appendChild(svg);
+    }
+    function renderAllLines() {
+      document.querySelectorAll(".line-host").forEach(renderLine);
+    }
+    document.getElementById("replay").addEventListener("click", function() {
+      document.body.style.animation = "none";
+      document.querySelectorAll(".reveal,.kpi,.bar-row,.bar-fill,.share-segment,tbody tr,.note-list li,.link-list li").forEach(function(el) {
+        el.style.animation = "none";
+      });
+      void document.body.offsetWidth;
+      document.body.style.animation = "";
+      document.querySelectorAll(".reveal,.kpi,.bar-row,.bar-fill,.share-segment,tbody tr,.note-list li,.link-list li").forEach(function(el) {
+        el.style.animation = "";
+      });
+      renderAllLines();
+    });
+    window.addEventListener("resize", renderAllLines);
+    renderAllLines();
+  </script>
+</body>
+</html>`;
+}
+
+function filenameBase(filename: string): string {
+  return (filename || "dossier").replace(/\.(pdf|html)$/i, "");
+}
+
+function downloadAnimatedDossier(d: Dossier, filename: string, openAnimated: boolean): void {
+  const html = buildAnimatedDossierHtml(d);
+  const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${filenameBase(filename)}-animated.html`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  if (openAnimated) window.open(url, "_blank", "noopener");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 // jsPDF's core Helvetica is Latin-1 only. A single non-Latin-1 char (₹, smart
 // quotes, en/em dashes, …) makes jsPDF re-encode the WHOLE line as wide 2-byte
 // text, which renders with broken letter-spacing. Map the common offenders to
@@ -668,12 +1529,23 @@ function sanitize(d: Dossier): Dossier {
   };
 }
 
-/** Build + download one PDF from a dossier. */
-export function downloadDossier(d: Dossier, filename: string): void {
+/** Build + download one PDF from a dossier, plus an animated HTML companion. */
+export function downloadDossier(
+  d: Dossier,
+  filename: string,
+  options: DossierDownloadOptions = {}
+): void {
   const safe = sanitize(d);
-  const D = new Doc(safe.accent ?? INDIGO);
-  renderDossier(D, safe);
-  D.d.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+  const shouldSavePdf = options.pdf ?? true;
+  const shouldSaveAnimated = options.animated ?? true;
+  if (shouldSavePdf) {
+    const D = new Doc(safe.accent ?? INDIGO);
+    renderDossier(D, safe);
+    D.d.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+  }
+  if (shouldSaveAnimated) {
+    downloadAnimatedDossier(safe, filename, options.openAnimated ?? true);
+  }
 }
 
 // A short, filesystem-safe slug for filenames.

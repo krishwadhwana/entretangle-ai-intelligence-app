@@ -132,6 +132,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   shippingPerOrder: 120,
   paymentFeePct: 0.02,
   fixedCostsPerMonth: 0,
+  launchInvestmentReserve: null,
   returnWindowDays: 30,
   refundRateMult: 1,
   targetRefundRatePct: null, // null → server anchors to the benchmark returns rate
@@ -751,6 +752,14 @@ export default function LaunchSimulation({
                   onChange={(v) => set("fixedCostsPerMonth", v)}
                   small
                 />
+                <NullableNumField
+                  label="Launch reserve"
+                  unit={engineCurrency}
+                  help="Blank = auto reserve. Enter 0 to remove it, or enter your actual setup/runway cash."
+                  value={inputs.launchInvestmentReserve}
+                  onChange={(v) => set("launchInvestmentReserve", v)}
+                  small
+                />
                 <NumField
                   label="Initial inventory"
                   unit="units"
@@ -1140,6 +1149,47 @@ function Results({
   const growthSource = growthAssumption
     ? sourceLabel(growthAssumption.source)
     : "computed";
+  const fixedCostAssumption = result.assumptions.find(
+    (a) => a.key === "fixedCostsPerMonth"
+  );
+  const launchReserveAssumption = result.assumptions.find(
+    (a) =>
+      a.key === "launchInvestmentReserve" ||
+      a.key === "launchInvestmentFloor"
+  );
+  const openingInventoryAssumption = result.assumptions.find(
+    (a) => a.key === "initialInventoryUnits"
+  );
+  const paybackTooltip = [
+    "Cash payback is cumulative cash, not cumulative net profit.",
+    fixedCostAssumption
+      ? `Fixed costs: ${formatAssumptionValue(
+          fixedCostAssumption.value,
+          fixedCostAssumption.unit,
+          fmt
+        )}`
+      : null,
+    launchReserveAssumption
+      ? `Launch reserve: ${formatAssumptionValue(
+          launchReserveAssumption.value,
+          launchReserveAssumption.unit,
+          fmt
+        )}`
+      : null,
+    openingInventoryAssumption
+      ? `Opening inventory: ${formatAssumptionValue(
+          openingInventoryAssumption.value,
+          openingInventoryAssumption.unit,
+          fmt
+        )}`
+      : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+  const paybackSensitivity = useMemo(
+    () => buildPaybackSensitivityRows(record, result, fmt),
+    [record, result, fmt]
+  );
   const [visible, setVisible] = useState(timeline.length);
   const [playing, setPlaying] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1325,9 +1375,9 @@ function Results({
         sub: `${s.returningCustomerSharePct}% returning`,
       },
       {
-        label: "Capital payback",
+        label: "Cash payback",
         value: s.breakEvenLabel ?? "Never",
-        sub: `peak capital ${fmt.money(s.peakCapitalNeeded)}`,
+        sub: `peak cash need ${fmt.money(s.peakCapitalNeeded)}`,
         tone: s.breakEvenLabel ? "good" : "bad",
       },
       {
@@ -1453,8 +1503,8 @@ function Results({
           },
         },
         {
-          heading: "Capital payback trajectory",
-          body: `Money charted in ${fmt.displayCurrency}. Cumulative cash includes launch investment and working-capital inventory outflows.`,
+          heading: "Cash payback trajectory",
+          body: `Money charted in ${fmt.displayCurrency}. Cumulative cash includes launch reserve and working-capital inventory outflows.`,
           line: {
             title: "Cumulative net profit vs cumulative cash",
             xLabels: timelineLabels,
@@ -1704,9 +1754,9 @@ function Results({
             tone: "neutral",
           },
           {
-            label: "Capital payback",
+            label: "Cash payback",
             value: s.breakEvenLabel ?? "Never",
-            sub: `peak capital ${fmt.money(s.peakCapitalNeeded)}`,
+            sub: `peak cash need ${fmt.money(s.peakCapitalNeeded)}`,
             tone: s.breakEvenLabel ? "good" : "bad",
           },
           {
@@ -1992,10 +2042,11 @@ function Results({
         />
         <Stat label="Ad spend / conversion" value={fmt.money(s.adSpendPerConversion)} sub={`CAC ${fmt.money(s.blendedCac)}`} />
         <Stat
-          label="Capital payback"
+          label="Cash payback"
           value={s.breakEvenLabel ?? "Never"}
           tone={s.breakEvenLabel ? "good" : "bad"}
-          sub={`peak capital ${fmt.money(s.peakCapitalNeeded)}`}
+          sub={`peak cash need ${fmt.money(s.peakCapitalNeeded)}`}
+          title={paybackTooltip}
         />
         <Stat
           label="Deadstock"
@@ -2010,6 +2061,8 @@ function Results({
           sub="lost sales (units)"
         />
       </div>
+
+      <PaybackSensitivityStrip rows={paybackSensitivity} />
 
       {/* Trajectory chart with playback */}
       <section className="rounded-xl border border-neutral-200 bg-white p-4">
@@ -2196,11 +2249,13 @@ function Stat({
   value,
   sub,
   tone = "neutral",
+  title,
 }: {
   label: string;
   value: string;
   sub?: string;
   tone?: "good" | "bad" | "neutral";
+  title?: string;
 }) {
   const color =
     tone === "good"
@@ -2209,7 +2264,7 @@ function Stat({
         ? "text-red-600"
         : "text-neutral-900";
   return (
-    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+    <div className="rounded-xl border border-neutral-200 bg-white p-3" title={title}>
       <p className="text-[10px] font-medium uppercase tracking-wide text-neutral-400">
         {label}
       </p>
@@ -2219,6 +2274,235 @@ function Stat({
       {sub && <p className="text-[10px] text-neutral-400">{sub}</p>}
     </div>
   );
+}
+
+type PaybackSensitivityRow = {
+  label: string;
+  value: string;
+  sub: string;
+  tone: "good" | "bad" | "neutral";
+  title: string;
+};
+
+function PaybackSensitivityStrip({
+  rows,
+}: {
+  rows: PaybackSensitivityRow[];
+}) {
+  if (rows.length === 0) return null;
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="mb-3 flex items-baseline justify-between gap-3">
+        <h3 className="text-xs font-semibold text-neutral-700">
+          Cash payback sensitivity
+        </h3>
+        <span className="text-[10px] text-neutral-400">
+          same demand curve
+        </span>
+      </div>
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            title={row.title}
+            className="rounded-lg border border-neutral-100 bg-neutral-50 px-3 py-2"
+          >
+            <p className="truncate text-[10px] font-medium uppercase tracking-wide text-neutral-400">
+              {row.label}
+            </p>
+            <p
+              className={`mt-0.5 text-sm font-semibold tabular-nums ${
+                row.tone === "good"
+                  ? "text-emerald-600"
+                  : row.tone === "bad"
+                    ? "text-red-600"
+                    : "text-neutral-900"
+              }`}
+            >
+              {row.value}
+            </p>
+            <p className="truncate text-[10px] text-neutral-400">{row.sub}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function buildPaybackSensitivityRows(
+  record: LaunchSimRecord,
+  result: LaunchSimRecord["result"],
+  fmt: Formatters
+): PaybackSensitivityRow[] {
+  const inputs = result.resolvedInputs;
+  const raw = record.inputs;
+  const currentReserve = assumptionNumber(
+    result.assumptions,
+    "launchInvestmentReserve",
+    "launchInvestmentFloor"
+  );
+  const currentFixed = inputs.fixedCostsPerMonth ?? 0;
+  const baseFixed = launchBaseFixedCost(inputs.currency, inputs.businessModel);
+  const baseReserve =
+    raw.launchInvestmentReserve == null
+      ? launchReserveFor(inputs.businessModel, inputs.adSpendPerMonth, baseFixed)
+      : raw.launchInvestmentReserve;
+  const hasFounderActuals =
+    raw.fixedCostsPerMonth > 0 || raw.launchInvestmentReserve != null;
+
+  const currentStep = result.summary.breakEvenStep;
+  const currentTone = result.summary.breakEvenLabel ? "neutral" : "bad";
+  const rows: PaybackSensitivityRow[] = [
+    {
+      label: "Current",
+      value: result.summary.breakEvenLabel ?? "Never",
+      sub: `peak ${fmt.money(result.summary.peakCapitalNeeded)}`,
+      tone: currentTone,
+      title: `Current fixed costs ${fmt.money(currentFixed)}/month; launch reserve ${fmt.money(currentReserve)}.`,
+    },
+  ];
+
+  rows.push(
+    sensitivityRow(
+      "No reserve",
+      adjustedPayback(result, currentFixed, 0, currentReserve),
+      currentStep,
+      fmt,
+      `Launch reserve removed; fixed costs stay at ${fmt.money(currentFixed)}/month.`
+    )
+  );
+
+  rows.push(
+    sensitivityRow(
+      "Base overhead",
+      adjustedPayback(result, baseFixed, baseReserve, currentReserve),
+      currentStep,
+      fmt,
+      `Fixed costs set to ${fmt.money(baseFixed)}/month; reserve recalculated to ${fmt.money(baseReserve)}.`
+    )
+  );
+
+  rows.push(
+    hasFounderActuals
+      ? {
+          label: "Founder actuals",
+          value: result.summary.breakEvenLabel ?? "Never",
+          sub: `peak ${fmt.money(result.summary.peakCapitalNeeded)}`,
+          tone: currentTone,
+          title: `Using entered fixed costs ${fmt.money(raw.fixedCostsPerMonth)}/month and ${
+            raw.launchInvestmentReserve == null
+              ? "auto launch reserve"
+              : `${fmt.money(raw.launchInvestmentReserve)} launch reserve`
+          }.`,
+        }
+      : {
+          label: "Founder actuals",
+          value: "Not set",
+          sub: "fixed/reserve blank",
+          tone: "neutral",
+          title: "No founder-entered fixed costs or launch reserve are stored on this scenario.",
+        }
+  );
+
+  return rows;
+}
+
+function sensitivityRow(
+  label: string,
+  payback: { label: string | null; step: number | null; peakCapitalNeeded: number },
+  currentStep: number | null,
+  fmt: Formatters,
+  title: string
+): PaybackSensitivityRow {
+  return {
+    label,
+    value: payback.label ?? "Never",
+    sub: `peak ${fmt.money(payback.peakCapitalNeeded)}`,
+    tone: paybackTone(payback.step, currentStep),
+    title,
+  };
+}
+
+function paybackTone(
+  step: number | null,
+  currentStep: number | null
+): "good" | "bad" | "neutral" {
+  if (step == null && currentStep == null) return "neutral";
+  if (step == null) return "bad";
+  if (currentStep == null) return "good";
+  if (step < currentStep) return "good";
+  if (step > currentStep) return "bad";
+  return "neutral";
+}
+
+function adjustedPayback(
+  result: LaunchSimRecord["result"],
+  fixedCostsPerMonth: number,
+  launchReserve: number,
+  currentReserve: number
+): { label: string | null; step: number | null; peakCapitalNeeded: number } {
+  const currentFixed = result.resolvedInputs.fixedCostsPerMonth ?? 0;
+  const stepsPerMonth = result.resolvedInputs.granularity === "day" ? 30 : 1;
+  let fixedDelta = 0;
+  let minCash = Infinity;
+  let breakEvenStep: number | null = null;
+
+  result.timeline.forEach((step, index) => {
+    const targetFixedStep =
+      currentFixed > 0
+        ? step.fixedCosts * (fixedCostsPerMonth / currentFixed)
+        : fixedCostsPerMonth / stepsPerMonth;
+    fixedDelta += step.fixedCosts - targetFixedStep;
+    const adjustedCash =
+      step.cumulativeCash + (currentReserve - launchReserve) + fixedDelta;
+    if (adjustedCash < minCash) minCash = adjustedCash;
+    if (breakEvenStep == null && adjustedCash >= 0 && index > 0) {
+      breakEvenStep = index;
+    }
+  });
+
+  return {
+    label:
+      breakEvenStep == null
+        ? null
+        : result.timeline[breakEvenStep]?.label ?? `Step ${breakEvenStep + 1}`,
+    step: breakEvenStep,
+    peakCapitalNeeded: Math.max(0, -minCash),
+  };
+}
+
+function launchBaseFixedCost(
+  currency: string,
+  businessModel: LaunchSimInputs["businessModel"]
+): number {
+  const base = currency.trim().toUpperCase() === "INR" ? 100_000 : 2_500;
+  const modelMultiplier =
+    businessModel === "saas" || businessModel === "services" ? 0.8 : 1;
+  return Math.round(base * modelMultiplier);
+}
+
+function launchReserveFor(
+  businessModel: LaunchSimInputs["businessModel"],
+  adSpendPerMonth: number,
+  fixedCostsPerMonth: number
+): number {
+  const runwayMonths =
+    businessModel === "saas" || businessModel === "services" ? 4 : 6;
+  const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
+  return Math.round(
+    Math.max(0, fixedCostsPerMonth) * runwayMonths +
+      Math.max(0, adSpendPerMonth) * launchMediaMonths
+  );
+}
+
+function assumptionNumber(
+  assumptions: LaunchSimRecord["result"]["assumptions"],
+  ...keys: string[]
+): number {
+  const row = assumptions.find((a) => keys.includes(a.key));
+  return typeof row?.value === "number" && Number.isFinite(row.value)
+    ? row.value
+    : 0;
 }
 
 function Pnl({
@@ -3153,10 +3437,10 @@ function buildAnimatedLaunchReportHtml(report: AnimatedLaunchReportData): string
 
     <section class="panel wide reveal">
       <div class="section-head">
-        <h2>Capital payback playback</h2>
+        <h2>Cash payback playback</h2>
         <small>cumulative profit and cash</small>
       </div>
-      <svg id="cashChart" class="chart" role="img" aria-label="Animated capital payback chart"></svg>
+      <svg id="cashChart" class="chart" role="img" aria-label="Animated cash payback chart"></svg>
       <div class="legend"><span><i style="background:#10b981"></i>Cumulative net profit</span><span><i style="background:#f59e0b"></i>Cumulative cash</span></div>
     </section>
 
@@ -3416,6 +3700,11 @@ function buildAdvancedSettingsBullets(
     `Operations & costs - Shipping/order: ${moneyPer(used.shippingPerOrder, "order")}`,
     `Operations & costs - Payment fee: ${pctLabel(used.paymentFeePct)}`,
     `Operations & costs - Fixed costs: ${moneyPer(used.fixedCostsPerMonth, "month")}`,
+    `Operations & costs - Launch reserve: ${
+      used.launchInvestmentReserve == null
+        ? "Auto"
+        : fmt.money(used.launchInvestmentReserve)
+    }${auto(raw.launchInvestmentReserve == null, "auto-resolved")}`,
     `Operations & costs - Initial inventory: ${fmt.num(used.initialInventoryUnits ?? 0)} units${auto(raw.initialInventoryUnits == null, "auto-sized")}`,
     `Operations & costs - Reordering: ${used.reorderEnabled ? "On" : "Off"}`,
     `Operations & costs - Reorder lead: ${fmt.num(used.reorderLeadTimeDays)} days`,
@@ -3559,6 +3848,89 @@ function NumField({
             // text so the user can keep typing. Commas/currency symbols pasted
             // from spreadsheets or dashboards are accepted and normalised later.
             onChange(parseNumericText(raw));
+          }}
+          className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
+            unit ? "pr-24" : ""
+          } ${small ? "py-1 text-xs" : "py-1.5 text-sm"}`}
+        />
+        {unit && (
+          <span className="pointer-events-none absolute inset-y-0 right-2 flex max-w-20 items-center truncate text-[10px] font-medium text-neutral-400">
+            {unit}
+          </span>
+        )}
+      </div>
+      {help && (
+        <p className="mt-1 text-[10px] leading-snug text-neutral-400">
+          {help}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function NullableNumField({
+  label,
+  unit,
+  help,
+  value,
+  onChange,
+  step,
+  small,
+}: {
+  label: string;
+  unit?: string;
+  help?: string;
+  value: number | null;
+  onChange: (v: number | null) => void;
+  step?: number;
+  small?: boolean;
+}) {
+  const [text, setText] = useState(
+    value != null && Number.isFinite(value) ? String(value) : ""
+  );
+  const editing = useRef(false);
+
+  useEffect(() => {
+    if (!editing.current) {
+      setText(value != null && Number.isFinite(value) ? String(value) : "");
+    }
+  }, [value]);
+
+  const commit = (raw: string) => {
+    if (raw.trim() === "") {
+      onChange(null);
+      setText("");
+      return;
+    }
+    const n = parseNumericText(raw);
+    onChange(n);
+    setText(Number.isFinite(n) ? String(n) : "");
+  };
+
+  return (
+    <div>
+      <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+        {label}
+      </label>
+      <div className="relative">
+        <input
+          type="text"
+          inputMode="decimal"
+          value={text}
+          placeholder="Auto"
+          step={step}
+          autoComplete="off"
+          onFocus={() => {
+            editing.current = true;
+          }}
+          onBlur={(e) => {
+            editing.current = false;
+            commit(e.currentTarget.value);
+          }}
+          onChange={(e) => {
+            const raw = e.target.value;
+            setText(raw);
+            onChange(raw.trim() === "" ? null : parseNumericText(raw));
           }}
           className={`w-full rounded-lg border border-neutral-300 px-2.5 outline-none focus:border-indigo-500 ${
             unit ? "pr-24" : ""

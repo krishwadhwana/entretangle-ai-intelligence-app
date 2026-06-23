@@ -288,9 +288,8 @@ export async function GET(
       inputs.fixedCostsPerMonth,
       scenarioFixedCostFloor
     );
-    const scenarioLaunchInvestmentFloor = launchInvestmentFloor(
-      inputs.businessModel,
-      inputs.adSpendPerMonth,
+    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(
+      inputs,
       effectiveFixedCosts
     );
     return {
@@ -403,9 +402,8 @@ export async function POST(
       inputs.fixedCostsPerMonth,
       scenarioFixedCostFloor
     );
-    const scenarioLaunchInvestmentFloor = launchInvestmentFloor(
-      inputs.businessModel,
-      inputs.adSpendPerMonth,
+    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(
+      inputs,
       effectiveFixedCosts
     );
     const result = simulateLaunch(scoped.personas, inputs, {
@@ -575,6 +573,10 @@ function reconcileLaunchCurrency(
     salePrice: convertMoneyRequired(inputs.salePrice, from, to, fx),
     adSpendPerMonth: convertMoneyRequired(inputs.adSpendPerMonth, from, to, fx),
     fixedCostsPerMonth: convertMoneyRequired(inputs.fixedCostsPerMonth, from, to, fx),
+    launchInvestmentReserve:
+      inputs.launchInvestmentReserve == null
+        ? null
+        : convertMoneyRequired(inputs.launchInvestmentReserve, from, to, fx),
   };
 
   if (from === "INR" && to === "USD") {
@@ -757,6 +759,19 @@ function launchInvestmentFloor(
     Math.max(0, fixedCostsPerMonth * runwayMonths) +
       Math.max(0, adSpendPerMonth) * launchMediaMonths
   );
+}
+
+function resolveLaunchInvestmentReserve(
+  inputs: LaunchSimInputs,
+  fixedCostsPerMonth: number
+): number {
+  return inputs.launchInvestmentReserve == null
+    ? launchInvestmentFloor(
+        inputs.businessModel,
+        inputs.adSpendPerMonth,
+        fixedCostsPerMonth
+      )
+    : inputs.launchInvestmentReserve;
 }
 
 function applyLegacyAcquisitionDefault(
