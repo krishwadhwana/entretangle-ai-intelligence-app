@@ -24,7 +24,9 @@ import {
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
 import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
-import NetworkView from "./NetworkView";
+import NetworkView, { type KnowHowNodeClick } from "./NetworkView";
+import KnowHowDrawer from "./KnowHowDrawer";
+import { moduleForNode } from "@/lib/knowHow";
 import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
@@ -230,6 +232,7 @@ export default function RunDashboard({
   const [view, setView] = useState<
     | "geo"
     | "network"
+    | "know-how"
     | "insights"
     | "playbook"
     | "owner"
@@ -238,6 +241,8 @@ export default function RunDashboard({
     | "domain"
     | "conclusion"
   >("geo");
+  // Which graph node's Know-How module is open in the drawer (know-how view).
+  const [knowHowNode, setKnowHowNode] = useState<KnowHowNodeClick | null>(null);
   const [ownerMounted, setOwnerMounted] = useState(false);
   const [activePanel, setActivePanel] = useState<
     "conclusion" | Domain | null
@@ -494,6 +499,7 @@ export default function RunDashboard({
       nextView:
         | "geo"
         | "network"
+        | "know-how"
         | "insights"
         | "playbook"
         | "owner"
@@ -501,6 +507,7 @@ export default function RunDashboard({
         | "export"
     ) => {
       setActivePanel(null);
+      if (nextView !== "know-how") setKnowHowNode(null);
       setView(nextView);
     },
     []
@@ -1072,6 +1079,7 @@ export default function RunDashboard({
         activeView={
           view === "geo" ||
           view === "network" ||
+          view === "know-how" ||
           view === "insights" ||
           view === "playbook" ||
           view === "owner"
@@ -1140,6 +1148,30 @@ export default function RunDashboard({
           <LaunchSimulation runId={runId} projectId={projectId} />
         ) : view === "export" ? (
           <ExportViability runId={runId} targetMarket={targetMarket} />
+        ) : view === "know-how" ? (
+          <>
+            <NetworkView
+              state={state}
+              highlightedBlocks={highlightedBlocks}
+              parentRunId={parentRunId}
+              childRunIds={childRunIds}
+              onQuery={onQuery}
+              onForkParam={onForkParam}
+              onSelectCohort={setSelectedCohortId}
+              knowHow
+              onOpenKnowHow={setKnowHowNode}
+            />
+            {knowHowNode && (
+              <KnowHowDrawer
+                key={knowHowNode.id}
+                runId={runId}
+                projectId={projectId}
+                module={moduleForNode(knowHowNode)}
+                nodeLabel={knowHowNode.label}
+                onClose={() => setKnowHowNode(null)}
+              />
+            )}
+          </>
         ) : (
           <NetworkView
             state={state}

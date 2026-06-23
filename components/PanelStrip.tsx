@@ -10,6 +10,7 @@ import {
   Globe,
   Globe2,
   Network,
+  Lightbulb,
   BarChart3,
   BookOpen,
   LayoutDashboard,
@@ -931,9 +932,22 @@ type Props = {
   state: CanvasState;
   activePanel: Domain | "conclusion" | null;
   onSelectPanel: (panel: Domain | "conclusion") => void;
-  activeView: "geo" | "network" | "insights" | "playbook" | "owner" | null;
+  activeView:
+    | "geo"
+    | "network"
+    | "know-how"
+    | "insights"
+    | "playbook"
+    | "owner"
+    | null;
   onSelectMainView: (
-    view: "geo" | "network" | "insights" | "playbook" | "owner"
+    view:
+      | "geo"
+      | "network"
+      | "know-how"
+      | "insights"
+      | "playbook"
+      | "owner"
   ) => void;
 };
 
@@ -1055,6 +1069,7 @@ export default function PanelStrip({
   const mainViews = [
     { id: "geo", label: "Geography", icon: Globe2 },
     { id: "network", label: "Network", icon: Network },
+    { id: "know-how", label: "Know-How", icon: Lightbulb },
     { id: "insights", label: "Insights", icon: BarChart3 },
     { id: "playbook", label: "Playbook", icon: BookOpen },
     { id: "owner", label: "Owner", icon: LayoutDashboard },
