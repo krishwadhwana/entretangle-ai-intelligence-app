@@ -44,6 +44,13 @@ type QueryFn = (
   opts?: { domains?: string[]; highlight?: boolean }
 ) => Promise<string>;
 
+// Playbook generation is a single web-grounded request that can take ~60s.
+// Cache the result AND the in-flight promise at MODULE scope (keyed by runId) so
+// switching dashboard tabs — which unmounts this view — doesn't abandon the work:
+// the request keeps running and the spinner + result reattach when you return.
+const pbResult = new Map<string, GeneratedPlaybook>();
+const pbInFlight = new Map<string, Promise<GeneratedPlaybook>>();
+
 function ConfidenceBar({ value }: { value: number }) {
   return (
     <span className="inline-flex items-center gap-1" title={`confidence ${Math.round(value * 100)}%`}>
@@ -244,41 +251,74 @@ export default function PlaybookView({
 
   // Deep playbook: an LLM-enriched, web-grounded deepening of the world model
   // (expanded taxes & competitors), regenerable independently of the simulation.
-  const [generated, setGenerated] = useState<GeneratedPlaybook | null>(null);
-  const [genBusy, setGenBusy] = useState(false);
+  const [generated, setGenerated] = useState<GeneratedPlaybook | null>(
+    () => pbResult.get(runId) ?? null
+  );
+  // Initialise "busy" from the module cache so returning to the tab mid-run
+  // immediately shows the spinner again.
+  const [genBusy, setGenBusy] = useState(() => pbInFlight.has(runId));
   const [genError, setGenError] = useState<string | null>(null);
 
+  // On mount / runId change: reattach to any in-flight generation, surface a
+  // cached result, or fetch the persisted one.
   useEffect(() => {
     let alive = true;
-    fetch(`/api/runs/${runId}/playbook`)
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (alive && d?.playbook) setGenerated(d.playbook as GeneratedPlaybook);
-      })
-      .catch(() => undefined);
+    const cached = pbResult.get(runId);
+    if (cached) setGenerated(cached);
+    const inflight = pbInFlight.get(runId);
+    if (inflight) {
+      setGenBusy(true);
+      inflight
+        .then((p) => alive && setGenerated(p))
+        .catch(
+          (e) =>
+            alive &&
+            setGenError(e instanceof Error ? e.message : "playbook generation failed")
+        )
+        .finally(() => alive && setGenBusy(false));
+    } else if (!cached) {
+      fetch(`/api/runs/${runId}/playbook`)
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (alive && d?.playbook) {
+            pbResult.set(runId, d.playbook);
+            setGenerated(d.playbook as GeneratedPlaybook);
+          }
+        })
+        .catch(() => undefined);
+    }
     return () => {
       alive = false;
     };
   }, [runId]);
 
   const generate = useCallback(async () => {
-    if (genBusy) return;
-    setGenBusy(true);
+    if (pbInFlight.has(runId)) return; // already running (possibly from another tab)
     setGenError(null);
-    try {
+    setGenBusy(true);
+    // The promise lives in the module map, NOT in the component — so it survives
+    // this view unmounting when the founder switches tabs.
+    const promise = (async () => {
       const res = await fetch(`/api/runs/${runId}/playbook`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok)
         throw new Error(
           typeof data?.error === "string" ? data.error : `failed (${res.status})`
         );
-      setGenerated(data.playbook as GeneratedPlaybook);
+      return data.playbook as GeneratedPlaybook;
+    })();
+    pbInFlight.set(runId, promise);
+    try {
+      const result = await promise;
+      pbResult.set(runId, result);
+      setGenerated(result);
     } catch (e) {
       setGenError(e instanceof Error ? e.message : "playbook generation failed");
     } finally {
+      pbInFlight.delete(runId);
       setGenBusy(false);
     }
-  }, [genBusy, runId]);
+  }, [runId]);
 
   const downloadPlaybookDossier = useCallback(async () => {
     if (!generated) return;
@@ -513,49 +553,51 @@ export default function PlaybookView({
 
         {orderedDomains.length > 0 && (
           <div className="sticky top-0 z-10 mt-5 border-y border-neutral-200 bg-white/95 py-2 backdrop-blur">
-            <div className="flex items-center gap-2">
+            <div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2">
               <button
                 type="button"
                 onClick={() => moveSelected(-1)}
-                className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
+                className="shrink-0 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
               >
                 Prev
               </button>
-              <div className="flex min-w-0 flex-1 gap-1.5 overflow-x-auto">
-                {orderedDomains.map((d) => {
-                  const meta = DOMAIN_META[d];
-                  const blocks = byDomain.get(d) ?? [];
-                  const count = blocks.flatMap((b) => b.conclusions).length;
-                  const active = selectedDomain === d;
-                  return (
-                    <button
-                      key={d}
-                      type="button"
-                      onClick={() => setSelectedDomain(d)}
-                      className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${
-                        active
-                          ? "border-neutral-900 bg-neutral-900 text-white"
-                          : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
-                      }`}
-                    >
-                      {meta.label}
-                      <span
-                        className={`rounded-full px-1.5 text-[9px] ${
+              <div className="min-w-0 overflow-hidden">
+                <div className="flex min-w-0 gap-1.5 overflow-x-auto overscroll-x-contain">
+                  {orderedDomains.map((d) => {
+                    const meta = DOMAIN_META[d];
+                    const blocks = byDomain.get(d) ?? [];
+                    const count = blocks.flatMap((b) => b.conclusions).length;
+                    const active = selectedDomain === d;
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setSelectedDomain(d)}
+                        className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${
                           active
-                            ? "bg-white/20 text-white"
-                            : "bg-neutral-100 text-neutral-500"
+                            ? "border-neutral-900 bg-neutral-900 text-white"
+                            : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
                         }`}
                       >
-                        {count}
-                      </span>
-                    </button>
-                  );
-                })}
+                        {meta.label}
+                        <span
+                          className={`rounded-full px-1.5 text-[9px] ${
+                            active
+                              ? "bg-white/20 text-white"
+                              : "bg-neutral-100 text-neutral-500"
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
               <button
                 type="button"
                 onClick={() => moveSelected(1)}
-                className="rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
+                className="shrink-0 whitespace-nowrap rounded-lg border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-neutral-400"
               >
                 Next
               </button>
