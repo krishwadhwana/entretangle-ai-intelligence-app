@@ -86,6 +86,8 @@ type Pin = {
   lng: number;
 };
 
+type ColorMode = "segment" | "zone";
+
 const SEGMENTS: Segment[] = ["budget", "middle", "affluent", "luxury"];
 const ROLES: Role[] = [
   "consumer",
@@ -97,6 +99,13 @@ const ROLES: Role[] = [
 
 function roleLabel(role: Role) {
   return role.replace("_", " ");
+}
+
+function cohortLegendKey(c: CohortWithPersonas, colorMode: ColorMode): string {
+  if (colorMode === "zone") {
+    return regionForLocality(c.locality, c.country)?.zone ?? "Other";
+  }
+  return c.segment;
 }
 
 function FitToCohorts({ cohorts }: { cohorts: CohortWithPersonas[] }) {
@@ -163,7 +172,8 @@ export default function MapView({
   const [searching, setSearching] = useState(false);
   const [pinMode, setPinMode] = useState(false);
   const [pin, setPin] = useState<Pin | null>(null);
-  const [colorMode, setColorMode] = useState<"segment" | "zone">("segment");
+  const [colorMode, setColorMode] = useState<ColorMode>("segment");
+  const [hoveredLegendKey, setHoveredLegendKey] = useState<string | null>(null);
   const [segment, setSegment] = useState<Segment>("middle");
   const [role, setRole] = useState<Role>("consumer");
   const [size, setSize] = useState(30);
@@ -316,12 +326,22 @@ export default function MapView({
         <DropPinLayer enabled={pinMode} onDrop={setPinFromLatLng} />
         {cohorts.map((c) => {
           const selected = c.id === selectedCohortId;
+          const legendKey = cohortLegendKey(c, colorMode);
+          const legendHovered = hoveredLegendKey !== null;
+          const highlighted = hoveredLegendKey === legendKey;
           const color =
             colorMode === "zone"
-              ? ZONE_COLORS[
-                  regionForLocality(c.locality, c.country)?.zone ?? "Other"
-                ] ?? ZONE_COLORS.Other
-              : SEGMENT_COLORS[c.segment] ?? "#6366f1";
+              ? (ZONE_COLORS[legendKey] ?? ZONE_COLORS.Other)
+              : (SEGMENT_COLORS[c.segment] ?? "#6366f1");
+          const baseFillOpacity =
+            c.state === "done" ? 0.24 : c.state === "failed" ? 0.08 : 0.14;
+          const fillOpacity = legendHovered
+            ? highlighted
+              ? c.state === "failed"
+                ? 0.18
+                : 0.5
+              : 0.04
+            : baseFillOpacity;
           return (
             <Circle
               key={c.id}
@@ -329,10 +349,10 @@ export default function MapView({
               radius={cohortAreaRadiusMeters(c)}
               pathOptions={{
                 color: selected ? "#171717" : color,
-                weight: selected ? 2.5 : 1.5,
+                weight: selected ? 2.5 : highlighted ? 3 : 1.5,
                 fillColor: color,
-                fillOpacity:
-                  c.state === "done" ? 0.24 : c.state === "failed" ? 0.08 : 0.14,
+                fillOpacity,
+                opacity: legendHovered && !highlighted ? 0.28 : 1,
                 dashArray: c.state === "done" ? undefined : "5 4",
               }}
               eventHandlers={{
@@ -386,7 +406,10 @@ export default function MapView({
             <button
               key={m}
               type="button"
-              onClick={() => setColorMode(m)}
+              onClick={() => {
+                setColorMode(m);
+                setHoveredLegendKey(null);
+              }}
               className={`rounded px-1.5 py-0.5 capitalize ${
                 colorMode === m
                   ? "bg-neutral-900 text-white"
@@ -398,24 +421,37 @@ export default function MapView({
           ))}
         </div>
         <div className="mt-1.5 flex max-w-[200px] flex-wrap gap-x-2 gap-y-1">
-          {Object.entries(colorMode === "zone" ? ZONE_COLORS : SEGMENT_COLORS).map(
-            ([k, v]) => (
-              <span
+          {Object.entries(
+            colorMode === "zone" ? ZONE_COLORS : SEGMENT_COLORS,
+          ).map(([k, v]) => {
+            const active = hoveredLegendKey === k;
+            return (
+              <button
                 key={k}
-                className="flex items-center gap-1 text-[10px] capitalize text-neutral-600"
+                type="button"
+                onMouseEnter={() => setHoveredLegendKey(k)}
+                onMouseLeave={() => setHoveredLegendKey(null)}
+                onFocus={() => setHoveredLegendKey(k)}
+                onBlur={() => setHoveredLegendKey(null)}
+                className={`flex items-center gap-1 rounded px-1 py-0.5 text-[10px] capitalize transition ${
+                  active
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100"
+                }`}
+                title={`Highlight ${k}`}
               >
                 <ValueTooltip
                   content={`${colorMode === "zone" ? "Region" : "Segment"}: ${k}`}
                 >
                   <span
-                    className="h-2 w-2 rounded-full"
+                    className={`h-2 w-2 rounded-full ${active ? "ring-1 ring-white/80" : ""}`}
                     style={{ background: v }}
                   />
                 </ValueTooltip>
                 {k}
-              </span>
-            )
-          )}
+              </button>
+            );
+          })}
         </div>
       </div>
 

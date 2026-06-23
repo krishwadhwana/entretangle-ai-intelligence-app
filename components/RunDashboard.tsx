@@ -42,6 +42,7 @@ const MapView = dynamic(() => import("./MapView"), {
 
 type SiblingRun = {
   id: string;
+  brief: string;
   focusQuestion: string | null;
   mode: string;
   status: string;
@@ -123,11 +124,12 @@ function RunSwitcher({
               }`}
             >
               <p className="truncate font-medium text-neutral-800">
-                {s.focusQuestion
-                  ? `“${s.focusQuestion}”`
-                  : i === siblings.length - 1
-                    ? "Initial simulation"
-                    : "Follow-up simulation"}
+                {s.brief?.trim() ||
+                  (s.focusQuestion
+                    ? `“${s.focusQuestion}”`
+                    : i === siblings.length - 1
+                      ? "Initial simulation"
+                      : "Follow-up simulation")}
               </p>
               <p className="text-[10px] text-neutral-400">
                 {new Date(s.createdAt).toLocaleString()} · {s.status}
@@ -991,7 +993,12 @@ export default function RunDashboard({
             }}
           />
         ) : view === "playbook" ? (
-          <PlaybookView state={state} onQuery={onQuery} />
+          <PlaybookView
+            state={state}
+            onQuery={onQuery}
+            runId={runId}
+            brief={brief}
+          />
         ) : view === "owner" ? (
           null
         ) : view === "launch" ? (

@@ -6,6 +6,7 @@ import type {
   FinalReport,
   LaunchSimRecord,
   ExportViabilityReport,
+  GeneratedPlaybook,
 } from "@/lib/schema";
 import type { Dossier, DossierSection, KPI } from "./pdf";
 
@@ -38,6 +39,32 @@ function money(n: number, currency: string): string {
     : a >= 1e5 ? `${(n / 1e5).toFixed(2)}L`
     : Math.round(n).toLocaleString();
   return `${s}${v}`;
+}
+
+/** A standalone, hyperlinked dossier for the generated business playbook. */
+export function buildPlaybookDossier(opts: {
+  title: string;
+  generated: GeneratedPlaybook;
+  generatedOn: string;
+}): Dossier {
+  const sections: DossierSection[] = opts.generated.modules.map((m, i) => ({
+    heading: m.module,
+    pageBreak: i > 0 && i % 2 === 0, // keep modules from crowding a page
+    body: m.summary || undefined,
+    linkList: {
+      items: m.entries.map((e) => ({
+        text: e.point,
+        sub: e.detail || undefined,
+        url: e.source && /^https?:\/\//.test(e.source) ? e.source : undefined,
+      })),
+    },
+  }));
+  return {
+    title: opts.title,
+    subtitle: "Business playbook — deepened & web-sourced",
+    meta: [`${opts.generated.modules.length} modules`, opts.generatedOn],
+    sections,
+  };
 }
 
 export type RunDossierInput = {

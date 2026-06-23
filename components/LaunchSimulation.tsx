@@ -32,6 +32,9 @@ import {
   Globe,
   FileDown,
   Trash2,
+  Pencil,
+  Check,
+  X,
 } from "lucide-react";
 import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
@@ -159,6 +162,8 @@ export default function LaunchSimulation({
   const [error, setError] = useState<string | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [name, setName] = useState("Scenario 1");
+  const [editingScenarioId, setEditingScenarioId] = useState<string | null>(null);
+  const [scenarioDraft, setScenarioDraft] = useState("");
   // Live market-data sourcing (web-grounded, cited): refreshes the benchmark
   // priors for this venture's country × category. Applied on the next run.
   const [sourcing, setSourcing] = useState(false);
@@ -289,14 +294,72 @@ export default function LaunchSimulation({
 
   const onDelete = useCallback(
     async (id: string) => {
-      await fetch(`/api/runs/${runId}/launch-sim?scenarioId=${id}`, {
-        method: "DELETE",
-      });
+      const target = scenarios.find((s) => s.id === id);
+      if (
+        target &&
+        !window.confirm(`Delete "${target.name}"? This launch simulation will be removed.`)
+      )
+        return;
+      const previous = scenarios;
       setScenarios((s) => s.filter((x) => x.id !== id));
       if (active?.id === id) setActive(null);
+      try {
+        const res = await fetch(`/api/runs/${runId}/launch-sim?scenarioId=${id}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) throw new Error(`delete failed (${res.status})`);
+      } catch (e) {
+        setScenarios(previous);
+        if (target && active?.id === id) setActive(target);
+        setError(e instanceof Error ? e.message : "Delete failed");
+      }
     },
-    [active?.id, runId]
+    [active?.id, runId, scenarios]
   );
+
+  const startScenarioEdit = useCallback((scenario: LaunchSimRecord) => {
+    setEditingScenarioId(scenario.id);
+    setScenarioDraft(scenario.name);
+  }, []);
+
+  const renameScenarioLocal = useCallback((id: string, nextName: string) => {
+    setScenarios((s) =>
+      s.map((scenario) =>
+        scenario.id === id ? { ...scenario, name: nextName } : scenario
+      )
+    );
+    setActive((cur) => (cur?.id === id ? { ...cur, name: nextName } : cur));
+  }, []);
+
+  const commitScenarioEdit = useCallback(async () => {
+    if (!editingScenarioId) return;
+    const nextName = scenarioDraft.trim();
+    const target = scenarios.find((s) => s.id === editingScenarioId);
+    if (!target || !nextName) {
+      setEditingScenarioId(null);
+      return;
+    }
+    setEditingScenarioId(null);
+    if (target.name === nextName) return;
+
+    renameScenarioLocal(target.id, nextName);
+    try {
+      const res = await fetch(
+        `/api/runs/${runId}/launch-sim?scenarioId=${target.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: nextName }),
+        }
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok)
+        throw new Error(apiErrorMessage(data?.error, `rename failed (${res.status})`));
+    } catch (e) {
+      renameScenarioLocal(target.id, target.name);
+      setError(e instanceof Error ? e.message : "Rename failed");
+    }
+  }, [editingScenarioId, renameScenarioLocal, runId, scenarioDraft, scenarios]);
 
   const set = <K extends keyof LaunchSimInputs>(
     key: K,
@@ -353,29 +416,72 @@ export default function LaunchSimulation({
                     : "border-neutral-300 text-neutral-600 hover:border-neutral-400"
                 }`}
               >
-                <button
-                  onClick={() => {
-                    setActive(s);
-                    setInputs(s.inputs);
-                  }}
-                  title={`${fmt.money(s.result.summary.netProfit)} net profit${
-                    s.inputs.region ? ` · ${s.inputs.region} region` : ""
-                  }`}
-                >
-                  {s.name}
-                  {s.inputs.region && (
-                    <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-px text-[9px] font-semibold text-indigo-600">
-                      {s.inputs.region}
-                    </span>
-                  )}
-                </button>
-                <button
-                  onClick={() => onDelete(s.id)}
-                  className="opacity-0 transition group-hover:opacity-100"
-                  title="Delete scenario"
-                >
-                  <Trash2 className="h-3 w-3 text-neutral-400 hover:text-red-500" />
-                </button>
+                {editingScenarioId === s.id ? (
+                  <>
+                    <input
+                      value={scenarioDraft}
+                      onChange={(e) => setScenarioDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          void commitScenarioEdit();
+                        } else if (e.key === "Escape") {
+                          e.preventDefault();
+                          setEditingScenarioId(null);
+                        }
+                      }}
+                      maxLength={80}
+                      autoFocus
+                      className="w-32 bg-transparent font-medium text-neutral-800 outline-none"
+                    />
+                    <button
+                      onClick={() => void commitScenarioEdit()}
+                      title="Save scenario name"
+                    >
+                      <Check className="h-3 w-3 text-emerald-600" />
+                    </button>
+                    <button
+                      onClick={() => setEditingScenarioId(null)}
+                      title="Cancel rename"
+                    >
+                      <X className="h-3 w-3 text-neutral-400 hover:text-neutral-700" />
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={() => {
+                        setActive(s);
+                        setInputs(s.inputs);
+                      }}
+                      className="min-w-0 truncate"
+                      title={`${fmt.money(s.result.summary.netProfit)} net profit${
+                        s.inputs.region ? ` · ${s.inputs.region} region` : ""
+                      }`}
+                    >
+                      {s.name}
+                      {s.inputs.region && (
+                        <span className="ml-1 rounded-full bg-indigo-100 px-1.5 py-px text-[9px] font-semibold text-indigo-600">
+                          {s.inputs.region}
+                        </span>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => startScenarioEdit(s)}
+                      className="opacity-0 transition group-hover:opacity-100"
+                      title="Rename scenario"
+                    >
+                      <Pencil className="h-3 w-3 text-neutral-400 hover:text-indigo-600" />
+                    </button>
+                    <button
+                      onClick={() => onDelete(s.id)}
+                      className="opacity-0 transition group-hover:opacity-100"
+                      title="Delete scenario"
+                    >
+                      <Trash2 className="h-3 w-3 text-neutral-400 hover:text-red-500" />
+                    </button>
+                  </>
+                )}
               </div>
             ))}
           </div>

@@ -54,6 +54,8 @@ import {
   type AudienceAggregate,
   AssumptionUpdateSchema,
   type AssumptionUpdate,
+  GeneratedPlaybookSchema,
+  type GeneratedPlaybook,
 } from "./schema";
 import {
   VENTURE_CONTEXT_SYSTEM,
@@ -73,6 +75,8 @@ import {
   websiteAnalysisUser,
   MARKET_DATA_SYSTEM,
   marketDataUser,
+  PLAYBOOK_SYSTEM,
+  playbookUser,
   DATA_QA_SYSTEM,
   dataQaUser,
   ASSUMPTION_UPDATE_SYSTEM,
@@ -1248,6 +1252,72 @@ export async function callMarketData(
   if (!parsed.success) {
     throw new Error(
       `market data failed validation: ${JSON.stringify(parsed.error.issues)}`
+    );
+  }
+  return parsed.data;
+}
+
+/**
+ * Deepen a run's world model into a founder-ready playbook — web-grounded so it
+ * can add current, cited tax rates and named competitors the simulation was thin
+ * on. Independent of the run engine, so it can be regenerated on demand. Throws
+ * on web/parse failure (the route surfaces it); metered to the run.
+ */
+export async function callGeneratePlaybook(
+  runId: string,
+  profile: ClientProfile,
+  conclusionsByDomain: Record<string, { claim: string; value: string }[]>
+): Promise<GeneratedPlaybook> {
+  if (config.mockMode) {
+    return GeneratedPlaybookSchema.parse({
+      modules: [
+        {
+          module: "Taxes & duties",
+          domain: "regulation",
+          summary: "(mock) tax + duty overview",
+          entries: [{ point: "GST 18% on this category", detail: "(mock)", source: "" }],
+        },
+      ],
+      sources: [],
+      generatedAt: "",
+      model: "mock",
+    });
+  }
+  const response = await client().responses.create({
+    model: config.model,
+    tools: [{ type: "web_search" } as never],
+    input: [
+      { role: "system", content: PLAYBOOK_SYSTEM },
+      {
+        role: "user",
+        content:
+          playbookUser(profile, conclusionsByDomain) +
+          "\n\nSearch the web for current tax/duty rates and named competitors for this exact product & market, then output JSON only.",
+      },
+    ],
+    max_output_tokens: 9000,
+    reasoning: { effort: "low" },
+  });
+  const searchCalls = Array.isArray(response.output)
+    ? response.output.filter((o: { type?: string }) =>
+        String(o.type ?? "").startsWith("web_search")
+      ).length
+    : 0;
+  if (response.usage) {
+    await recordUsage(
+      runId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      searchCalls
+    );
+  }
+  const parsed = GeneratedPlaybookSchema.safeParse(
+    JSON.parse(stripFences(response.output_text ?? ""))
+  );
+  if (!parsed.success) {
+    throw new Error(
+      `playbook failed validation: ${JSON.stringify(parsed.error.issues).slice(0, 200)}`
     );
   }
   return parsed.data;

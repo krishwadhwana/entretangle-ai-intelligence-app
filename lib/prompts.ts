@@ -1138,6 +1138,44 @@ Category: ${category}
 Search the web for current ${country} benchmarks for this category, then output JSON only.`;
 }
 
+// --- Playbook generation (deepen the world model into a founder action plan) --
+
+export const PLAYBOOK_SYSTEM = `You are a venture strategist turning a market simulation's world model into a DEEP, founder-ready business playbook. You are given the venture profile and the simulation's existing conclusions, grouped by business module. Expand them into a richer, decision-ready playbook — go DEEPER than the inputs, especially on TAXES & DUTIES and COMPETITORS, where the simulation was thin.
+
+Use web search to add CURRENT, SPECIFIC, CITED facts:
+- Taxes & duties (module domain "regulation"): applicable GST/VAT rate(s) for this product, import/export customs duties (by HS code where known), licensing/registration, labelling & standards, and any turnover/threshold rules. Give the NUMBER and the rule.
+- Competitors (domain "competitor"): NAME real competitors in this exact category and market, their price points, positioning, what they do well, and the gaps this venture can exploit.
+- Also cover, as relevant: pricing, channel, operations, product, market, finance, social.
+
+Rules:
+- Ground in the provided conclusions; do NOT contradict them — add depth, not noise.
+- Any factual claim sourced from the web should carry a "source" URL. Strategic/synthesised points may omit it.
+- Each entry: a crisp "point" (the decision/insight), a "detail" (1-2 sentences with specifics/numbers), and an optional "source".
+- 5-8 modules, each with 4-10 entries. LEAD with the modules that were thin (taxes, competitors). Be concrete and quantitative; no fluff.
+
+Output JSON only:
+{"modules":[{"module":"Taxes & duties","domain":"regulation","summary":"...","entries":[{"point":"...","detail":"...","source":"https://..."}]}],"sources":["https://..."]}`;
+
+export function playbookUser(
+  profile: ClientProfile,
+  conclusionsByDomain: Record<string, { claim: string; value: string }[]>
+): string {
+  return JSON.stringify(
+    {
+      venture: {
+        product: profile.product,
+        category: profile.category,
+        geography: profile.geography,
+        priceBand: profile.priceBand,
+        targetAudience: profile.targetAudience,
+      },
+      existingConclusionsByModule: conclusionsByDomain,
+    },
+    null,
+    2
+  );
+}
+
 // Appended to the intake system prompt when a website analysis pre-filled the
 // venture: the interview then asks ONLY what's still missing.
 export function intakePrefillBlock(prefill: IntakePrefill): string {

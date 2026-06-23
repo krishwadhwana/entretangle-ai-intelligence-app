@@ -1103,6 +1103,35 @@ const EMPTY_INSPIRATION = {
   sourceRunId: null,
 };
 
+// ---------------------------------------------------------------------------
+// Generated playbook: an LLM-enriched, web-grounded deepening of the run's
+// world model into a founder-ready, per-module action plan. Regenerated on
+// demand (independent of the simulation) so sparse modules — taxes/duties,
+// competitors — can be expanded with current, cited specifics.
+// ---------------------------------------------------------------------------
+export const PlaybookEntrySchema = z.object({
+  point: z.string(), // the decision-ready statement
+  detail: z.string().default(""), // 1–2 sentences of specifics
+  source: z.string().default(""), // URL or citation, if any
+});
+export type PlaybookEntry = z.infer<typeof PlaybookEntrySchema>;
+
+export const PlaybookModuleSchema = z.object({
+  module: z.string(), // e.g. "Taxes & duties", "Competitors", "Pricing"
+  domain: z.string().default(""), // maps to a DOMAIN_META key for the icon/colour
+  summary: z.string().default(""),
+  entries: z.array(PlaybookEntrySchema).default([]),
+});
+export type PlaybookModule = z.infer<typeof PlaybookModuleSchema>;
+
+export const GeneratedPlaybookSchema = z.object({
+  modules: z.array(PlaybookModuleSchema).default([]),
+  sources: z.array(z.string()).default([]),
+  generatedAt: z.string().default(""),
+  model: z.string().default(""),
+});
+export type GeneratedPlaybook = z.infer<typeof GeneratedPlaybookSchema>;
+
 export const OwnerDashboardSchema = z.object({
   brandSocial: BrandSocialSectionSchema.default({
     kit: null,
@@ -1112,6 +1141,8 @@ export const OwnerDashboardSchema = z.object({
   }),
   financials: FinancialsSectionSchema.default(EMPTY_FINANCIALS),
   inspiration: InspirationSectionSchema.default(EMPTY_INSPIRATION),
+  // LLM-generated playbooks, keyed by runId (regenerable per run).
+  playbooks: z.record(GeneratedPlaybookSchema).default({}),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 

@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { z } from "zod";
 import { prisma } from "@/lib/db";
+import { deleteSimulationRun, renameSimulationRun } from "@/lib/store";
 import { blockToWire, conclusionToWire } from "@/lib/orchestrator";
 import { cohortToWire, personaToWire } from "@/lib/wire";
 import { ClientProfileSchema } from "@/lib/schema";
@@ -75,4 +77,43 @@ export async function GET(
       : null,
     latestEvent,
   });
+}
+
+const PatchRunSchema = z.object({
+  brief: z.string().trim().min(1).max(500),
+});
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const body = PatchRunSchema.safeParse(await req.json().catch(() => ({})));
+  if (!body.success) {
+    return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+
+  try {
+    await renameSimulationRun(params.id, body.data.brief);
+  } catch {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+
+  return NextResponse.json({ ok: true, brief: body.data.brief });
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    await deleteSimulationRun(params.id);
+  } catch (e) {
+    if (e instanceof Error && e.message === "run not found") {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    console.error(`[runs] failed to delete run ${params.id}`, e);
+    return NextResponse.json({ error: "delete failed" }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true });
 }

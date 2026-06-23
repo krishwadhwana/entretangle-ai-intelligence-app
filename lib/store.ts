@@ -1,7 +1,10 @@
 import { Prisma } from "@prisma/client";
+import { z } from "zod";
 import { prisma } from "./db";
 import { config } from "./config";
 import {
+  GeneratedPlaybookSchema,
+  type GeneratedPlaybook,
   BrandSocialSectionSchema,
   ClientProfileSchema,
   FinancialsSectionSchema,
@@ -67,6 +70,7 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     followUp: [],
   },
   inspiration: { kit: null, generatedAt: null, sourceRunId: null },
+  playbooks: {},
 };
 
 // Parse the owner_dashboard JSONB SECTION BY SECTION. A whole-object parse
@@ -82,6 +86,7 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
   const brand = BrandSocialSectionSchema.safeParse(obj.brandSocial);
   const fin = FinancialsSectionSchema.safeParse(obj.financials);
   const insp = InspirationSectionSchema.safeParse(obj.inspiration);
+  const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
   return {
     brandSocial: brand.success
       ? brand.data
@@ -92,6 +97,7 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     inspiration: insp.success
       ? insp.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.inspiration),
+    playbooks: pb.success ? pb.data : {},
   };
 }
 
@@ -432,6 +438,26 @@ async function writeOwnerDashboard(
   });
 }
 
+/** Persist a generated playbook for a run (keyed by runId) on its project. */
+export async function savePlaybook(
+  projectId: string,
+  runId: string,
+  playbook: GeneratedPlaybook
+): Promise<void> {
+  const owner = await readOwnerDashboard(projectId);
+  owner.playbooks = { ...owner.playbooks, [runId]: playbook };
+  await writeOwnerDashboard(projectId, owner);
+}
+
+/** Fetch a previously-generated playbook for a run, if any. */
+export async function getPlaybook(
+  projectId: string,
+  runId: string
+): Promise<GeneratedPlaybook | null> {
+  const owner = await readOwnerDashboard(projectId);
+  return owner.playbooks[runId] ?? null;
+}
+
 export async function saveBrandKit(
   id: string,
   kit: BrandKit,
@@ -533,6 +559,84 @@ export async function appendSimulationRun(
         -- would write server-local wall time and corrupt recency ordering.
         updated_at = now() AT TIME ZONE 'utc'
     WHERE id = ${id}`;
+}
+
+/**
+ * User-facing run labels are stored as Run.brief. Completed runs also have a
+ * project-level JSON snapshot, so explicit rename/delete actions keep both
+ * sources aligned.
+ */
+export async function renameSimulationRun(
+  runId: string,
+  brief: string
+): Promise<void> {
+  const run = await prisma.run.update({
+    where: { id: runId },
+    data: { brief },
+    select: { projectId: true },
+  });
+  const projectId = run.projectId ?? "__no_project__";
+  const snapshotNeedle = JSON.stringify([{ runId }]);
+  await prisma.$executeRaw`
+    UPDATE projects p
+    SET simulation_runs = COALESCE((
+          SELECT jsonb_agg(
+            CASE
+              WHEN elem->>'runId' = ${runId}
+              THEN jsonb_set(elem, '{params,brief}', to_jsonb(${brief}::text), true)
+              ELSE elem
+            END
+            ORDER BY ord
+          )
+          FROM jsonb_array_elements(p.simulation_runs) WITH ORDINALITY AS t(elem, ord)
+        ), '[]'::jsonb),
+        updated_at = now() AT TIME ZONE 'utc'
+    WHERE p.id = ${projectId}
+       OR p.simulation_runs @> ${snapshotNeedle}::jsonb`;
+}
+
+export async function deleteSimulationRun(runId: string): Promise<void> {
+  const run = await prisma.run.findUnique({
+    where: { id: runId },
+    select: { id: true, projectId: true },
+  });
+  if (!run) throw new Error("run not found");
+
+  const projectId = run.projectId ?? "__no_project__";
+  const snapshotNeedle = JSON.stringify([{ runId }]);
+
+  await prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`
+      UPDATE projects p
+      SET simulation_runs = COALESCE((
+            SELECT jsonb_agg(elem ORDER BY ord)
+            FROM jsonb_array_elements(p.simulation_runs) WITH ORDINALITY AS t(elem, ord)
+            WHERE elem->>'runId' <> ${runId}
+          ), '[]'::jsonb),
+          updated_at = now() AT TIME ZONE 'utc'
+      WHERE p.id = ${projectId}
+         OR p.simulation_runs @> ${snapshotNeedle}::jsonb`;
+
+    await tx.run.updateMany({
+      where: { parentRunId: runId },
+      data: { parentRunId: null, forkPointBlockId: null },
+    });
+    await tx.run.updateMany({
+      where: { sourceRunId: runId },
+      data: { sourceRunId: null },
+    });
+    await tx.personaConversation.deleteMany({ where: { runId } });
+    await tx.launchOutcome.deleteMany({ where: { runId } });
+    await tx.launchSimulation.deleteMany({ where: { runId } });
+    await tx.persona.deleteMany({ where: { cohort: { runId } } });
+    await tx.conclusion.deleteMany({ where: { block: { runId } } });
+    await tx.cohort.deleteMany({ where: { runId } });
+    await tx.edge.deleteMany({ where: { runId } });
+    await tx.runEvent.deleteMany({ where: { runId } });
+    await tx.runJob.deleteMany({ where: { runId } });
+    await tx.block.deleteMany({ where: { runId } });
+    await tx.run.delete({ where: { id: runId } });
+  });
 }
 
 /**

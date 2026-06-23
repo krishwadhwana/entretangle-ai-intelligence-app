@@ -34,6 +34,8 @@ export type DossierSection = {
   line?: { title?: string; xLabels?: string[]; series: Series[]; money?: boolean };
   /** Simple table. */
   table?: { columns: string[]; rows: (string | number)[][] };
+  /** Bulleted list where each item can carry a clickable source link. */
+  linkList?: { items: { text: string; sub?: string; url?: string }[] };
   /** Force a page break before this section. */
   pageBreak?: boolean;
 };
@@ -370,6 +372,58 @@ function table(D: Doc, t: NonNullable<DossierSection["table"]>) {
   D.y += 12;
 }
 
+function linkList(D: Doc, c: NonNullable<DossierSection["linkList"]>) {
+  for (const it of c.items) {
+    // point (bold, bulleted)
+    D.font(true, 10);
+    D.ink(INK);
+    const pLines = D.d.splitTextToSize(it.text, D.maxW - 16) as string[];
+    const lh = 10 * LINE;
+    pLines.forEach((ln, i) => {
+      D.ensure(lh);
+      if (i === 0) {
+        D.fill(D.accent);
+        D.d.circle(MARGIN + 3, D.y + 5.5, 1.7, "F");
+      }
+      D.font(true, 10);
+      D.ink(INK);
+      D.d.text(ln, MARGIN + 14, D.y + 9);
+      D.y += lh;
+    });
+    // detail
+    if (it.sub) {
+      D.font(false, 9);
+      D.ink([95, 95, 95]);
+      const slh = 9 * LINE;
+      for (const ln of D.d.splitTextToSize(it.sub, D.maxW - 16) as string[]) {
+        D.ensure(slh);
+        D.d.text(ln, MARGIN + 14, D.y + 8);
+        D.y += slh;
+      }
+    }
+    // clickable source
+    if (it.url) {
+      let host = it.url;
+      try {
+        host = new URL(it.url).hostname.replace(/^www\./, "");
+      } catch {
+        /* keep raw */
+      }
+      const label = `Source: ${host}`;
+      D.ensure(13);
+      D.font(false, 8);
+      D.ink(INDIGO);
+      D.d.textWithLink(label, MARGIN + 14, D.y + 8, { url: it.url });
+      const w = D.d.getTextWidth(label);
+      D.stroke(INDIGO);
+      D.d.setLineWidth(0.4);
+      D.d.line(MARGIN + 14, D.y + 9.5, MARGIN + 14 + w, D.y + 9.5);
+      D.y += 13;
+    }
+    D.y += 6;
+  }
+}
+
 // --- cover + chrome ---------------------------------------------------------
 
 function coverPage(D: Doc, d: Dossier) {
@@ -465,6 +519,7 @@ function renderDossier(D: Doc, d: Dossier) {
     if (s.share) shareBar(D, s.share);
     if (s.line) lineChart(D, s.line);
     if (s.table) table(D, s.table);
+    if (s.linkList?.items?.length) linkList(D, s.linkList);
     if (s.bullets?.length) bullets(D, s.bullets);
     D.y += 8;
   }
@@ -532,6 +587,15 @@ function sanitize(d: Dossier): Dossier {
             rows: s.table.rows.map((r) =>
               r.map((c) => (typeof c === "string" ? clean(c) : c))
             ),
+          }
+        : undefined,
+      linkList: s.linkList
+        ? {
+            items: s.linkList.items.map((it) => ({
+              text: clean(it.text),
+              sub: it.sub ? clean(it.sub) : undefined,
+              url: it.url, // URLs are ASCII — keep verbatim for the link
+            })),
           }
         : undefined,
     })),

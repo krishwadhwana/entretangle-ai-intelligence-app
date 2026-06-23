@@ -84,6 +84,14 @@ function runStatusPresentation(status: SimulationRunRecord["status"]) {
   };
 }
 
+function simulationRunTitle(run: SimulationRunRecord): string {
+  return (
+    run.params?.brief?.trim() ||
+    run.params?.focusQuestion?.trim() ||
+    "Full simulation"
+  );
+}
+
 type ProjectData = {
   id: string;
   name: string;
@@ -302,6 +310,8 @@ function IntakePageInner() {
   // Text buffer for the audience-size field so it can be cleared/typed freely
   // (the bound number snaps to a floor otherwise, making it read as stuck text).
   const [agentCountText, setAgentCountText] = useState("6000");
+  const [editingRunId, setEditingRunId] = useState<string | null>(null);
+  const [runDraft, setRunDraft] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   function toProjectSummary(p: ProjectData): ProjectSummary {
@@ -550,6 +560,122 @@ function IntakePageInner() {
         }
       })
       .catch(() => undefined);
+  }
+
+  function patchRunInState(
+    runId: string,
+    update: (run: SimulationRunRecord) => SimulationRunRecord
+  ) {
+    const updatedAt = new Date().toISOString();
+    setSimRuns((prev) =>
+      prev.map((run) => (run.runId === runId ? update(run) : run))
+    );
+    setProjectPreviews((prev) =>
+      prev.map((project) => {
+        const hasRun = project.simulationRuns.some((run) => run.runId === runId);
+        if (!hasRun) return project;
+        return {
+          ...project,
+          updatedAt,
+          simulationRuns: project.simulationRuns.map((run) =>
+            run.runId === runId ? update(run) : run
+          ),
+        };
+      })
+    );
+    if (projectId) {
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId ? { ...project, updatedAt } : project
+        )
+      );
+    }
+  }
+
+  function removeRunFromState(runId: string) {
+    const updatedAt = new Date().toISOString();
+    setSimRuns((prev) => prev.filter((run) => run.runId !== runId));
+    setProjectPreviews((prev) =>
+      prev.map((project) => {
+        const hasRun = project.simulationRuns.some((run) => run.runId === runId);
+        if (!hasRun) return project;
+        return {
+          ...project,
+          updatedAt,
+          simulationRuns: project.simulationRuns.filter(
+            (run) => run.runId !== runId
+          ),
+        };
+      })
+    );
+    if (projectId) {
+      setProjects((prev) =>
+        prev.map((project) =>
+          project.id === projectId ? { ...project, updatedAt } : project
+        )
+      );
+    }
+  }
+
+  function startRunEdit(run: SimulationRunRecord) {
+    setEditingRunId(run.runId);
+    setRunDraft(simulationRunTitle(run));
+  }
+
+  async function commitRunEdit() {
+    if (!editingRunId) return;
+    const runId = editingRunId;
+    const name = runDraft.trim();
+    const target = simRuns.find((run) => run.runId === runId);
+    setEditingRunId(null);
+    if (!target || !name || name === simulationRunTitle(target)) return;
+
+    patchRunInState(runId, (run) => ({
+      ...run,
+      params: { ...run.params, brief: name },
+    }));
+    try {
+      const res = await fetch(`/api/runs/${runId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ brief: name }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const message =
+          typeof data?.error === "string" ? data.error : `Rename failed (${res.status})`;
+        throw new Error(message);
+      }
+    } catch (err) {
+      patchRunInState(runId, () => target);
+      setError(err instanceof Error ? err.message : "Rename failed");
+    }
+  }
+
+  async function deleteSimulationRun(run: SimulationRunRecord) {
+    const title = simulationRunTitle(run);
+    if (
+      !window.confirm(
+        `Delete "${title}"? This removes the simulator run and saved launch simulations attached to it.`
+      )
+    )
+      return;
+    const previousRuns = simRuns;
+    removeRunFromState(run.runId);
+    try {
+      const res = await fetch(`/api/runs/${run.runId}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`Delete failed (${res.status})`);
+    } catch (err) {
+      setSimRuns(previousRuns);
+      setProjectPreviews((prev) =>
+        prev.map((project) =>
+          project.id === projectId
+            ? { ...project, simulationRuns: previousRuns }
+            : project
+        )
+      );
+      setError(err instanceof Error ? err.message : "Delete failed");
+    }
   }
 
   // Analyse the founder's website + online consumer opinion, then seed the
@@ -1291,42 +1417,122 @@ function IntakePageInner() {
                 <ul className="space-y-2">
                   {sortedRuns.map((r) => {
                     const status = runStatusPresentation(r.status);
+                    const title = simulationRunTitle(r);
+                    const meta = `${new Date(r.timestamp).toLocaleString()} · ${
+                      status.label
+                    } · ${r.results.blocks.length} desks · ${
+                      r.results.audienceAggregate?.totalPersonas ?? 0
+                    } personas · $${r.results.costUsd.toFixed(2)}${
+                      r.params?.mode === "scoped" ? " · lighter" : ""
+                    }`;
                     return (
                       <li key={r.runId}>
-                        <a
-                          href={`/runs/${r.runId}`}
-                          className="group flex items-center gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40"
-                        >
-                          <span
-                            className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
-                            title={status.label}
-                          >
-                            {status.icon === "complete" ? (
-                              <CheckCircle2 className="h-4 w-4" />
-                            ) : status.icon === "failed" ||
-                              status.icon === "cancelled" ? (
-                              <XCircle className="h-4 w-4" />
-                            ) : (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            )}
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-neutral-800">
-                              {r.params?.focusQuestion
-                                ? r.params.focusQuestion
-                                : "Full simulation"}
-                            </span>
-                            <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
-                              {new Date(r.timestamp).toLocaleString()} ·{" "}
-                              {status.label} ·{" "}
-                              {r.results.blocks.length} desks ·{" "}
-                              {r.results.audienceAggregate?.totalPersonas ?? 0}{" "}
-                              personas · ${r.results.costUsd.toFixed(2)}
-                              {r.params?.mode === "scoped" ? " · lighter" : ""}
-                            </span>
-                          </span>
-                          <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-600" />
-                        </a>
+                        <div className="group flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40">
+                          {editingRunId === r.runId ? (
+                            <>
+                              <span
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
+                                title={status.label}
+                              >
+                                {status.icon === "complete" ? (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                ) : status.icon === "failed" ||
+                                  status.icon === "cancelled" ? (
+                                  <XCircle className="h-4 w-4" />
+                                ) : (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <input
+                                  value={runDraft}
+                                  maxLength={500}
+                                  autoFocus
+                                  onChange={(e) => setRunDraft(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      e.preventDefault();
+                                      void commitRunEdit();
+                                    } else if (e.key === "Escape") {
+                                      e.preventDefault();
+                                      setEditingRunId(null);
+                                    }
+                                  }}
+                                  className="block w-full rounded border border-indigo-300 bg-white px-2 py-1 text-sm font-medium text-neutral-900 outline-none"
+                                />
+                                <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                                  {meta}
+                                </span>
+                              </span>
+                            </>
+                          ) : (
+                            <a
+                              href={`/runs/${r.runId}`}
+                              className="flex min-w-0 flex-1 items-center gap-3"
+                            >
+                              <span
+                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
+                                title={status.label}
+                              >
+                                {status.icon === "complete" ? (
+                                  <CheckCircle2 className="h-4 w-4" />
+                                ) : status.icon === "failed" ||
+                                  status.icon === "cancelled" ? (
+                                  <XCircle className="h-4 w-4" />
+                                ) : (
+                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                )}
+                              </span>
+                              <span className="min-w-0 flex-1">
+                                <span
+                                  className="block truncate text-sm font-medium text-neutral-800"
+                                  title={title}
+                                >
+                                  {title}
+                                </span>
+                                <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                                  {meta}
+                                </span>
+                              </span>
+                              <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-600" />
+                            </a>
+                          )}
+                          {editingRunId === r.runId ? (
+                            <>
+                              <button
+                                onClick={() => void commitRunEdit()}
+                                title="Save run name"
+                                className="shrink-0 rounded p-1 text-neutral-400 hover:text-emerald-600"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => setEditingRunId(null)}
+                                title="Cancel rename"
+                                className="shrink-0 rounded p-1 text-neutral-400 hover:text-neutral-700"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => startRunEdit(r)}
+                                title="Rename run"
+                                className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-indigo-600 group-hover:opacity-100"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                onClick={() => void deleteSimulationRun(r)}
+                                title="Delete run"
+                                className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </>
+                          )}
+                        </div>
                       </li>
                     );
                   })}

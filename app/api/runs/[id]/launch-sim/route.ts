@@ -39,6 +39,10 @@ const BodySchema = z.object({
   projectId: z.string().nullable().optional(),
 });
 
+const RenameScenarioSchema = z.object({
+  name: z.string().trim().min(1).max(80),
+});
+
 // A persona plus the GoI region (zone) it belongs to, so a launch can be scoped
 // to one ring of the country.
 type ScopedPersona = LaunchPersona & { region: string };
@@ -327,10 +331,36 @@ export async function DELETE(
   if (!scenarioId) {
     return NextResponse.json({ error: "scenarioId required" }, { status: 400 });
   }
-  await prisma.launchSimulation.deleteMany({
+  const deleted = await prisma.launchSimulation.deleteMany({
     where: { id: scenarioId, runId: params.id },
   });
+  if (deleted.count === 0) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
   return NextResponse.json({ ok: true });
+}
+
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const scenarioId = new URL(req.url).searchParams.get("scenarioId");
+  if (!scenarioId) {
+    return NextResponse.json({ error: "scenarioId required" }, { status: 400 });
+  }
+  const body = RenameScenarioSchema.safeParse(await req.json().catch(() => ({})));
+  if (!body.success) {
+    return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+
+  const updated = await prisma.launchSimulation.updateMany({
+    where: { id: scenarioId, runId: params.id },
+    data: { name: body.data.name },
+  });
+  if (updated.count === 0) {
+    return NextResponse.json({ error: "not found" }, { status: 404 });
+  }
+  return NextResponse.json({ ok: true, name: body.data.name });
 }
 
 // Pull a numeric price out of a free-text price band (e.g. "₹1,200–1,800",

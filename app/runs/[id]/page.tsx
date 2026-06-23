@@ -55,6 +55,7 @@ export default async function RunPage({
         where: { projectId: run.projectId },
         select: {
           id: true,
+          brief: true,
           focusQuestion: true,
           mode: true,
           status: true,
@@ -78,6 +79,7 @@ export default async function RunPage({
       maxTokens={config.maxTokensPerRun}
       siblingRuns={siblings.map((s) => ({
         id: s.id,
+        brief: s.brief,
         focusQuestion: s.focusQuestion,
         mode: s.mode,
         status: s.status,
