@@ -243,10 +243,12 @@ export type RunDossierInput = {
 
 export function buildRunDossier(inp: RunDossierInput): Dossier {
   const {
-    brief, mode, targetMarket, currency, report, aggregate, worldModel,
-    blocks, launch, exportReport, generatedOn,
+    brief, mode, targetMarket, currency, audienceCurrency, report, aggregate,
+    worldModel, blocks, launch, exportReport, generatedOn,
   } = inp;
   const isExport = mode === "export";
+  const displayCurrency = normalizeCurrency(currency);
+  const wtpCurrency = normalizeCurrency(audienceCurrency ?? currency);
   const sections: DossierSection[] = [];
 
   // --- audience headline numbers ---
@@ -256,6 +258,7 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
   const nTot = segEntries.reduce((a, s) => a + s.n, 0) || 1;
   const blendedIntent = segEntries.reduce((a, s) => a + s.meanIntent * s.n, 0) / nTot;
   const blendedWtp = segEntries.reduce((a, s) => a + s.wtpP50 * s.n, 0) / nTot;
+  const blendedWtpDisplay = convertMoney(blendedWtp, wtpCurrency, displayCurrency);
 
   // --- cover KPIs ---
   const coverKpis: KPI[] = [];
@@ -263,7 +266,7 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
     coverKpis.push({ label: "Personas", value: aggregate.totalPersonas.toLocaleString() });
     coverKpis.push({ label: "Cohorts", value: String(aggregate.totalCohorts) });
     coverKpis.push({ label: "Avg intent", value: `${Math.round(blendedIntent * 100)}%` });
-    coverKpis.push({ label: "Median WTP", value: money(blendedWtp, currency) });
+    coverKpis.push({ label: "Median WTP", value: money(blendedWtpDisplay, displayCurrency) });
   } else if (worldModel) {
     coverKpis.push({ label: "Findings", value: String(worldModel.conclusionCount) });
     coverKpis.push({ label: "Research desks", value: String(worldModel.blockCount) });
@@ -282,7 +285,7 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
         { label: "Cohorts", value: String(aggregate.totalCohorts), sub: "locality × segment × role" },
         { label: "Avg purchase intent", value: `${Math.round(blendedIntent * 100)}%`,
           tone: blendedIntent >= 0.45 ? "good" : blendedIntent < 0.3 ? "bad" : "neutral" },
-        { label: "Median willingness-to-pay", value: money(blendedWtp, currency) },
+        { label: "Median willingness-to-pay", value: money(blendedWtpDisplay, displayCurrency) },
       ],
     };
     sections.push(aud);
@@ -290,10 +293,12 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
     if (segEntries.length)
       sections.push({
         bars: {
-          title: "Median willingness-to-pay by income segment",
+          title: `Median willingness-to-pay by income segment (${displayCurrency})`,
           money: true,
           data: segEntries.map((s) => ({
-            label: s.seg, value: Math.round(s.wtpP50), color: SEG_COLOR[s.seg],
+            label: s.seg,
+            value: Math.round(convertMoney(s.wtpP50, wtpCurrency, displayCurrency)),
+            color: SEG_COLOR[s.seg],
           })),
         },
       });
@@ -354,34 +359,42 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
   if (launch?.result) {
     const r = launch.result;
     const sm = r.summary;
-    const cur = launch.inputs.currency || currency;
+    const cur = normalizeCurrency(launch.inputs.currency || currency);
     sections.push({
       heading: `Launch outlook — ${launch.name}`,
       pageBreak: true,
       kpis: [
-        { label: "Net profit", value: money(sm.netProfit, cur),
+        { label: "Net profit", value: moneyAs(sm.netProfit, cur, displayCurrency),
           tone: sm.netProfit >= 0 ? "good" : "bad", sub: `${sm.netMarginPct}% margin` },
         { label: "Orders", value: sm.totalOrders.toLocaleString(),
           sub: `${sm.returningCustomerSharePct}% returning` },
-        { label: "Blended CAC", value: money(sm.blendedCac, cur) },
+        { label: "Blended CAC", value: moneyAs(sm.blendedCac, cur, displayCurrency) },
         { label: "Refund rate", value: `${sm.refundRatePct}%`,
           tone: sm.refundRatePct > 15 ? "bad" : "neutral" },
         { label: "Break-even", value: sm.breakEvenLabel ?? "Not reached",
-          tone: sm.breakEvenLabel ? "good" : "bad", sub: `peak capital ${money(sm.peakCapitalNeeded, cur)}` },
+          tone: sm.breakEvenLabel ? "good" : "bad", sub: `peak capital ${moneyAs(sm.peakCapitalNeeded, cur, displayCurrency)}` },
         { label: "Deadstock", value: `${Math.round(sm.deadstockUnits)} units`,
-          sub: money(sm.deadstockValue, cur) },
+          sub: moneyAs(sm.deadstockValue, cur, displayCurrency) },
       ],
     });
     const tl = r.timeline ?? [];
     if (tl.length > 1)
       sections.push({
         line: {
-          title: "Cumulative profit & cash trajectory",
+          title: `Cumulative profit & cash trajectory (${displayCurrency})`,
           money: true,
           xLabels: tl.map((s) => s.label),
           series: [
-            { name: "Cumulative net profit", color: [16, 185, 129], points: tl.map((s) => s.cumulativeNetProfit) },
-            { name: "Cumulative cash", color: [245, 158, 11], points: tl.map((s) => s.cumulativeCash) },
+            {
+              name: "Cumulative net profit",
+              color: [16, 185, 129],
+              points: tl.map((s) => convertMoney(s.cumulativeNetProfit, cur, displayCurrency)),
+            },
+            {
+              name: "Cumulative cash",
+              color: [245, 158, 11],
+              points: tl.map((s) => convertMoney(s.cumulativeCash, cur, displayCurrency)),
+            },
           ],
         },
       });
@@ -397,7 +410,7 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
 
   // --- export viability ---
   if (exportReport?.scenarios?.length) {
-    const cur = exportReport.resolvedInputs.destCurrency;
+    const cur = normalizeCurrency(exportReport.resolvedInputs.destCurrency);
     sections.push({
       heading: `Export viability → ${exportReport.resolvedInputs.destCountry}`,
       pageBreak: true,
@@ -409,10 +422,10 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
         rows: exportReport.scenarios.map((s) => [
           s.label,
           s.verdict,
-          money(s.landedCostPerUnit, cur),
-          money(s.requiredPrice, cur),
+          moneyAs(s.landedCostPerUnit, cur, displayCurrency),
+          moneyAs(s.requiredPrice, cur, displayCurrency),
           s.wtpCoveragePct == null ? "—" : `${s.wtpCoveragePct}%`,
-          s.launch ? money(s.launch.netProfit, cur) : "—",
+          s.launch ? moneyAs(s.launch.netProfit, cur, displayCurrency) : "—",
         ]),
       },
     });
@@ -421,23 +434,26 @@ export function buildRunDossier(inp: RunDossierInput): Dossier {
     if (rec?.waterfall?.length)
       sections.push({
         bars: {
-          title: `Landed-cost build-up — ${rec.label} (${cur})`,
+          title: `Landed-cost build-up — ${rec.label} (${displayCurrency})`,
           money: true,
-          data: rec.waterfall.map((w) => ({ label: w.label, value: w.amount })),
+          data: rec.waterfall.map((w) => ({
+            label: w.label,
+            value: convertMoney(w.amount, cur, displayCurrency),
+          })),
         },
       });
     const sens = exportReport.sensitivity;
     if (sens.basePath)
       sections.push({
         bars: {
-          title: "Required-price sensitivity (recommended path)",
+          title: `Required-price sensitivity (recommended path, ${displayCurrency})`,
           money: true,
           data: [
-            { label: "FX +10%", value: sens.fxPlus10Pct ?? 0 },
-            { label: "FX -10%", value: sens.fxMinus10Pct ?? 0 },
-            { label: "Duty-free", value: sens.dutyZero ?? 0 },
-            { label: "Duty doubled", value: sens.dutyDoubled ?? 0 },
-            { label: "De-minimis ends", value: sens.deMinimisOff ?? 0 },
+            { label: "FX +10%", value: convertMoney(sens.fxPlus10Pct ?? 0, cur, displayCurrency) },
+            { label: "FX -10%", value: convertMoney(sens.fxMinus10Pct ?? 0, cur, displayCurrency) },
+            { label: "Duty-free", value: convertMoney(sens.dutyZero ?? 0, cur, displayCurrency) },
+            { label: "Duty doubled", value: convertMoney(sens.dutyDoubled ?? 0, cur, displayCurrency) },
+            { label: "De-minimis ends", value: convertMoney(sens.deMinimisOff ?? 0, cur, displayCurrency) },
           ].filter((d) => d.value > 0),
         },
       });

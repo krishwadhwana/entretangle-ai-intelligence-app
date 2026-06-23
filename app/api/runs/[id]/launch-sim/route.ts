@@ -22,6 +22,7 @@ import {
 } from "@/lib/datasources/benchmarks";
 import { getAttentionMomentumPct } from "@/lib/datasources/structured";
 import { regionForLocality } from "@/lib/datasources/politicalGeography";
+import { DEFAULT_FX } from "@/lib/datasources/exportCosts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -148,30 +149,60 @@ export async function GET(
     : null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
-  const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
   const priors = await benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
+  const targetCurrency = normalizeCurrency(priors.currency || currency);
+  const modelCurrency = normalizeCurrency(model?.currency);
+  const modelMatchesTarget = Boolean(model && modelCurrency === targetCurrency);
+  const suggestedSalePrice = modelMatchesTarget
+    ? baseTier?.price.value ?? profileSalePrice ?? priors.aovInr.mid
+    : priors.aovInr.mid;
+  const suggestedCostPrice = modelMatchesTarget
+    ? model!.costStructure.reduce((s, c) => s + c.amount.value, 0)
+    : Math.max(
+        0,
+        Math.round(suggestedSalePrice * (1 - priors.grossMarginPct.mid / 100))
+      );
+  const fixedCostsPerMonth = modelMatchesTarget
+    ? model?.breakEven.fixedCostsPerMonth.value ?? null
+    : model
+      ? convertMoney(
+          model.breakEven.fixedCostsPerMonth.value,
+          modelCurrency,
+          targetCurrency
+        )
+      : null;
+  const blendedCac = modelMatchesTarget
+    ? model?.unitEconomics.blendedCac.value ?? null
+    : priors.cacInr.mid;
   const defaults = {
-    currency: model?.currency ?? currency,
+    currency: targetCurrency,
+    // UI display can convert destination-currency sim results back to the
+    // founder's home currency, but the engine itself must stay in the audience
+    // currency so WTP comparisons are apples-to-apples.
+    displayCurrency:
+      model && modelCurrency !== targetCurrency ? modelCurrency : targetCurrency,
+    displayFxRate:
+      model && modelCurrency !== targetCurrency
+        ? fxRate(targetCurrency, modelCurrency)
+        : 1,
     suggestedBusinessModel,
-    suggestedCostPrice: model
-      ? model.costStructure.reduce((s, c) => s + c.amount.value, 0)
-      : null,
-    suggestedSalePrice: baseTier?.price.value ?? profileSalePrice ?? null,
+    suggestedCostPrice,
+    suggestedSalePrice,
     suggestedAdSpendPerMonth: suggestAdSpendPerMonth(
       blendedCac,
       reachableProspectsPerMonth,
-      model?.breakEven.fixedCostsPerMonth.value ?? null,
-      baseTier?.price.value ?? null
+      fixedCostsPerMonth,
+      suggestedSalePrice
     ),
     reachableProspectsPerMonth,
     // Regions present in this run's audience — powers the launch-sim scope picker.
     availableRegions: regions,
     // Each region's share of the audience (proportional-slice budget hint).
     regionShares: regionSharesOf(personas),
-    fixedCostsPerMonth: model?.breakEven.fixedCostsPerMonth.value ?? null,
-    // Real category × geo priors (INR). Surfaced so the form prefills CPM and
-    // shipping with market numbers instead of the universal 250 / 120 defaults.
+    fixedCostsPerMonth,
+    // Real category × geo priors. Field names still say Inr internally for
+    // legacy reasons; values are in `targetCurrency` (USD for US audiences).
     benchmarks: {
       suggestedCpm: priors.cpmInr.mid,
       suggestedShippingPerOrder: priors.shippingPerOrderInr,
@@ -185,10 +216,15 @@ export async function GET(
   };
 
   const scenarios: LaunchSimRecord[] = rows.map((r) => {
+    const storedInputs = LaunchSimInputsSchema.parse(r.inputs);
+    const currencySafeInputs = reconcileLaunchCurrency(
+      storedInputs,
+      targetCurrency
+    );
     const inputs = applyBenchmarkRefund(
       applyDefaultBusinessModel(
         applyLegacyAcquisitionDefault(
-          LaunchSimInputsSchema.parse(r.inputs),
+          currencySafeInputs,
           defaults.suggestedAdSpendPerMonth
         ),
         suggestedBusinessModel
@@ -245,7 +281,7 @@ export async function POST(
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const { personas } = await loadPersonas(run.id);
+  const { personas, currency } = await loadPersonas(run.id);
   if (personas.length === 0) {
     return NextResponse.json(
       { error: "no simulated personas to run a launch against" },
@@ -267,9 +303,14 @@ export async function POST(
   const model = run.projectId ? await getFinancialModel(run.projectId) : null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
-  const blendedCac = model?.unitEconomics.blendedCac.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
   const priors = await benchmarkPriorsForRun(run, suggestedBusinessModel, personas);
+  const targetCurrency = normalizeCurrency(priors.currency || currency);
+  const modelCurrency = normalizeCurrency(model?.currency);
+  const modelMatchesTarget = Boolean(model && modelCurrency === targetCurrency);
+  const reachableBlendedCac = modelMatchesTarget
+    ? model?.unitEconomics.blendedCac.value ?? null
+    : priors.cacInr.mid;
 
   // Capture the attention/hype momentum once (frozen into the scenario), and
   // pin the launch month so seasonality applies deterministically on re-sim.
@@ -281,7 +322,10 @@ export async function POST(
   try {
     const inputs = applyDemandDefaults(
       applyBenchmarkRefund(
-        applyDefaultBusinessModel(body.data.inputs, suggestedBusinessModel),
+        applyDefaultBusinessModel(
+          reconcileLaunchCurrency(body.data.inputs, targetCurrency),
+          suggestedBusinessModel
+        ),
         priors
       ),
       momentumPct,
@@ -291,7 +335,7 @@ export async function POST(
       reachableProspectsPerMonth,
       audienceShare: scoped.share,
       // Benchmark CAC fallback → paid acquisition is always capped (see GET).
-      blendedCac: blendedCac ?? priors.cacInr.mid,
+      blendedCac: reachableBlendedCac ?? priors.cacInr.mid,
       seasonality: priors.seasonality,
     });
 
@@ -371,6 +415,82 @@ function priceFromBand(band?: string | null): number | null {
   const nums = band.replace(/,/g, "").match(/\d+(?:\.\d+)?/g);
   const vals = (nums ?? []).map(Number).filter((n) => n > 0);
   return vals.length ? Math.max(...vals) : null;
+}
+
+function normalizeCurrency(currency?: string | null): string {
+  return (currency || "INR").trim().toUpperCase();
+}
+
+function fxRate(from: string, to: string): number {
+  const src = normalizeCurrency(from);
+  const dst = normalizeCurrency(to);
+  if (src === dst) return 1;
+  const direct = DEFAULT_FX[`${src}:${dst}`];
+  if (direct && direct > 0) return direct;
+  const inverse = DEFAULT_FX[`${dst}:${src}`];
+  if (inverse && inverse > 0) return 1 / inverse;
+  return 1;
+}
+
+function convertMoney(n: number | null | undefined, from: string, to: string) {
+  if (n == null || !Number.isFinite(n)) return null;
+  return Math.round(n * fxRate(from, to) * 100) / 100;
+}
+
+function convertMoneyRequired(n: number, from: string, to: string) {
+  return convertMoney(n, from, to) ?? n;
+}
+
+// Saved scenarios from older builds can carry a home-market currency (INR) while
+// being run against a destination audience whose WTP is USD. Convert the core
+// business amounts into the destination/audience currency before simulating. Do
+// not blindly convert CPM/shipping: those are already benchmark-prefilled in the
+// target market for the broken rows we are repairing (e.g. US CPM 12, shipping 8).
+function reconcileLaunchCurrency(
+  inputs: LaunchSimInputs,
+  targetCurrency: string
+): LaunchSimInputs {
+  const from = normalizeCurrency(inputs.currency);
+  const to = normalizeCurrency(targetCurrency);
+  if (from === to) return { ...inputs, currency: to };
+
+  const next: LaunchSimInputs = {
+    ...inputs,
+    currency: to,
+    costPrice: convertMoneyRequired(inputs.costPrice, from, to),
+    salePrice: convertMoneyRequired(inputs.salePrice, from, to),
+    adSpendPerMonth: convertMoneyRequired(inputs.adSpendPerMonth, from, to),
+    fixedCostsPerMonth: convertMoneyRequired(inputs.fixedCostsPerMonth, from, to),
+  };
+
+  if (from === "INR" && to === "USD") {
+    if (inputs.cpm > 50) next.cpm = convertMoneyRequired(inputs.cpm, from, to);
+    if (inputs.shippingPerOrder > 50)
+      next.shippingPerOrder = convertMoneyRequired(
+        inputs.shippingPerOrder,
+        from,
+        to
+      );
+    if (inputs.returnShippingPerOrder != null && inputs.returnShippingPerOrder > 50) {
+      next.returnShippingPerOrder = convertMoneyRequired(
+        inputs.returnShippingPerOrder,
+        from,
+        to
+      );
+    }
+  } else {
+    next.cpm = convertMoneyRequired(inputs.cpm, from, to);
+    next.shippingPerOrder = convertMoneyRequired(inputs.shippingPerOrder, from, to);
+    if (inputs.returnShippingPerOrder != null) {
+      next.returnShippingPerOrder = convertMoneyRequired(
+        inputs.returnShippingPerOrder,
+        from,
+        to
+      );
+    }
+  }
+
+  return next;
 }
 
 // Resolve benchmark priors for a run: category from its profile (fall back to

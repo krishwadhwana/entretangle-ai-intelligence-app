@@ -510,11 +510,18 @@ export default function RunDashboard({
         import("./runDossier"),
         import("./pdf"),
       ]);
+      const cohortRows = Object.values(state.cohorts);
+      const audienceCurrency =
+        cohortRows.find((c) => c.stats?.wtpCurrency)?.stats?.wtpCurrency ??
+        cohortRows.flatMap((c) => c.personas).find((p) => p.wtpCurrency)
+          ?.wtpCurrency ??
+        currency;
       const dossier = buildRunDossier({
         brief,
         mode,
         targetMarket,
-        currency,
+        currency: "INR",
+        audienceCurrency,
         report: state.finalReport,
         aggregate: state.aggregate,
         worldModel: state.worldModel,

@@ -373,7 +373,8 @@ function normalizeChannels(
   inputs: LaunchSimInputs,
   preset: (typeof BUSINESS_PRESETS)[LaunchBusinessModel]
 ): LaunchChannelInput[] {
-  const base = inputs.channels.length > 0 ? inputs.channels : preset.defaultChannels;
+  const usingPresetChannels = inputs.channels.length === 0;
+  const base = usingPresetChannels ? preset.defaultChannels : inputs.channels;
   const parsed = base.map((c) => ({
     ...c,
     id: c.id || c.label.toLowerCase().replace(/\W+/g, "_"),
@@ -396,7 +397,10 @@ function normalizeChannels(
         : c.kind === "organic" || c.kind === "owned"
           ? inputs.organicReachPerStep
           : 0,
-    cpm: c.cpm > 0 ? c.cpm : inputs.cpm,
+    // Preset channel CPMs are legacy INR-era defaults. When the caller has not
+    // supplied custom channels, use the market benchmark CPM resolved into the
+    // scenario currency (USD for US audiences, INR for India, etc.).
+    cpm: usingPresetChannels ? inputs.cpm : c.cpm > 0 ? c.cpm : inputs.cpm,
     frequencyCap: c.frequencyCap > 0 ? c.frequencyCap : inputs.frequencyCap,
   }));
 }

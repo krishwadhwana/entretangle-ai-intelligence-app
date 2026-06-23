@@ -55,6 +55,8 @@ import type {
 
 type Defaults = {
   currency: string;
+  displayCurrency?: string;
+  displayFxRate?: number;
   suggestedBusinessModel: LaunchSimInputs["businessModel"];
   suggestedCostPrice: number | null;
   suggestedSalePrice: number | null;
@@ -170,7 +172,9 @@ export default function LaunchSimulation({
   const [sourcing, setSourcing] = useState(false);
   const [sourced, setSourced] = useState<string | null>(null);
 
-  const currency = inputs.currency || defaults?.currency || "INR";
+  const engineCurrency = inputs.currency || defaults?.currency || "INR";
+  const displayCurrency = defaults?.displayCurrency || engineCurrency;
+  const displayFxRate = defaults?.displayFxRate ?? 1;
 
   const sourceMarketData = useCallback(async () => {
     if (!projectId || sourcing) return;
@@ -197,7 +201,10 @@ export default function LaunchSimulation({
       setSourcing(false);
     }
   }, [projectId, sourcing]);
-  const fmt = useMemo(() => makeFormatters(currency), [currency]);
+  const fmt = useMemo(
+    () => makeFormatters(displayCurrency, displayFxRate, engineCurrency),
+    [displayCurrency, displayFxRate, engineCurrency]
+  );
 
   // Load defaults + saved scenarios once.
   useEffect(() => {
@@ -493,19 +500,19 @@ export default function LaunchSimulation({
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <NumField
               label="Cost price"
-              unit={`${currency}/unit`}
+              unit={`${engineCurrency}/unit`}
               value={inputs.costPrice}
               onChange={(v) => set("costPrice", v)}
             />
             <NumField
               label="Sale price"
-              unit={`${currency}/unit`}
+              unit={`${engineCurrency}/unit`}
               value={inputs.salePrice}
               onChange={(v) => set("salePrice", v)}
             />
             <NumField
               label="Ad spend"
-              unit={`${currency}/month`}
+              unit={`${engineCurrency}/month`}
               value={inputs.adSpendPerMonth}
               onChange={(v) => set("adSpendPerMonth", v)}
             />
@@ -619,8 +626,8 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="CPM"
-                  unit={`${currency}/1k`}
-                  help={`Cost per 1,000 paid impressions. Cheap reach: ${currency}100-250; premium/niche: ${currency}500-1,500+.`}
+                  unit={`${engineCurrency}/1k`}
+                  help={`Cost per 1,000 paid impressions. Cheap reach: ${engineCurrency}100-250; premium/niche: ${engineCurrency}500-1,500+.`}
                   value={inputs.cpm}
                   onChange={(v) => set("cpm", v)}
                   small
@@ -702,7 +709,7 @@ export default function LaunchSimulation({
               >
                 <NumField
                   label="Shipping/order"
-                  unit={`${currency}/order`}
+                  unit={`${engineCurrency}/order`}
                   help="Outbound fulfillment cost per shipped order."
                   value={inputs.shippingPerOrder}
                   onChange={(v) => set("shippingPerOrder", v)}
@@ -719,7 +726,7 @@ export default function LaunchSimulation({
                 />
                 <NumField
                   label="Fixed costs"
-                  unit={`${currency}/month`}
+                  unit={`${engineCurrency}/month`}
                   help="Monthly overhead before variable costs: tools, retainers, salaries, rent, storage, and production admin."
                   value={inputs.fixedCostsPerMonth}
                   onChange={(v) => set("fixedCostsPerMonth", v)}
@@ -1104,6 +1111,8 @@ function Results({
 }) {
   const { result } = record;
   const { summary: s, timeline, breakdowns: b } = result;
+  const convertedDisplay =
+    fmt.sourceCurrency !== fmt.displayCurrency && fmt.moneyRate !== 1;
   const growthAssumption = result.assumptions.find(
     (a) => a.key === "monthlyGrowthPct"
   );
@@ -1324,6 +1333,13 @@ function Results({
           <FileDown className="h-3.5 w-3.5" /> Create PDF
         </button>
       </div>
+      {convertedDisplay && (
+        <p className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-[11px] text-neutral-500">
+          Money shown in {fmt.displayCurrency}; simulation math runs in{" "}
+          {fmt.sourceCurrency} at 1 {fmt.sourceCurrency} ={" "}
+          {fmt.moneyRate.toLocaleString()} {fmt.displayCurrency}.
+        </p>
+      )}
 
       {/* Ask about this scenario */}
       <div className="rounded-xl border border-neutral-200 bg-white p-3">
@@ -1559,7 +1575,7 @@ function Results({
             <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
             <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" minTickGap={28} />
             <YAxis yAxisId="left" tick={{ fontSize: 9 }} tickFormatter={fmt.compact} />
-            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} tickFormatter={fmt.compact} />
+            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 9 }} tickFormatter={fmt.compactMoney} />
             <Tooltip
               contentStyle={{ fontSize: 11 }}
               formatter={(v, name) => [
@@ -2062,10 +2078,19 @@ function formatAssumptionValue(
   fmt: Formatters
 ): string {
   if (typeof value === "string") return value;
+  const unitCurrency =
+    unit === fmt.sourceCurrency || unit.startsWith(`${fmt.sourceCurrency}/`);
   const formatted =
     Math.abs(value) < 10 && !Number.isInteger(value)
       ? value.toFixed(2).replace(/\.?0+$/, "")
       : fmt.num(value);
+  if (
+    unitCurrency &&
+    fmt.displayCurrency !== fmt.sourceCurrency &&
+    fmt.moneyRate !== 1
+  ) {
+    return `${fmt.money(value)} (${formatted} ${unit})`;
+  }
   return unit ? `${formatted} ${unit}` : formatted;
 }
 
@@ -2177,19 +2202,29 @@ type Formatters = {
   money: (n: number) => string;
   num: (n: number) => string;
   compact: (n: number) => string;
+  compactMoney: (n: number) => string;
+  displayCurrency: string;
+  sourceCurrency: string;
+  moneyRate: number;
 };
 
-function makeFormatters(currency: string): Formatters {
+function makeFormatters(
+  displayCurrency: string,
+  moneyRate = 1,
+  sourceCurrency = displayCurrency
+): Formatters {
   let money: (n: number) => string;
+  const convert = (n: number) => n * moneyRate;
   try {
     const f = new Intl.NumberFormat(undefined, {
       style: "currency",
-      currency,
+      currency: displayCurrency,
       maximumFractionDigits: 0,
     });
-    money = (n) => f.format(n);
+    money = (n) => f.format(convert(n));
   } catch {
-    money = (n) => `${currency} ${Math.round(n).toLocaleString()}`;
+    money = (n) =>
+      `${displayCurrency} ${Math.round(convert(n)).toLocaleString()}`;
   }
   const compactF = new Intl.NumberFormat(undefined, {
     notation: "compact",
@@ -2199,6 +2234,10 @@ function makeFormatters(currency: string): Formatters {
     money,
     num: (n) => Math.round(n).toLocaleString(),
     compact: (n) => compactF.format(n),
+    compactMoney: (n) => compactF.format(convert(n)),
+    displayCurrency,
+    sourceCurrency,
+    moneyRate,
   };
 }
 
