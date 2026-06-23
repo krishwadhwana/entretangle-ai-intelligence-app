@@ -38,7 +38,14 @@ import {
 } from "lucide-react";
 import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
-import { downloadDossier, slug, type DossierSection } from "./pdf";
+import {
+  downloadDossier,
+  slug,
+  type Bar as PdfBar,
+  type DossierSection,
+  type KPI as PdfKPI,
+  type Series as PdfSeries,
+} from "./pdf";
 import type {
   AssumptionUpdate,
   LaunchSimInputs,
@@ -1274,20 +1281,278 @@ function Results({
     const d = result.diagnostics;
     const usedInputs = result.resolvedInputs ?? record.inputs;
     const cur = usedInputs.currency;
+    const moneyPoint = (n: number) => n * fmt.moneyRate;
+    const sampledTimeline = sampleLaunchTimeline(timeline, 60);
+    const timelineLabels = sampledTimeline.map((t) => t.label);
+    const headlineKpis: PdfKPI[] = [
+      {
+        label: "Net profit",
+        value: fmt.money(s.netProfit),
+        sub: `${s.netMarginPct}% net margin`,
+        tone: s.netProfit >= 0 ? "good" : "bad",
+      },
+      {
+        label: "Net revenue",
+        value: fmt.money(s.netRevenue),
+        sub: `${fmt.money(s.grossRevenue)} gross`,
+      },
+      {
+        label: "Orders",
+        value: fmt.num(s.totalOrders),
+        sub: `${s.returningCustomerSharePct}% returning`,
+      },
+      {
+        label: "Capital payback",
+        value: s.breakEvenLabel ?? "Never",
+        sub: `peak capital ${fmt.money(s.peakCapitalNeeded)}`,
+        tone: s.breakEvenLabel ? "good" : "bad",
+      },
+      {
+        label: "Refund rate",
+        value: `${s.refundRatePct}%`,
+        sub: `${fmt.num(s.refunds)} refunds`,
+        tone: s.refundRatePct > 15 ? "bad" : "neutral",
+      },
+      {
+        label: "Blended CAC",
+        value: fmt.money(s.blendedCac),
+        sub: `${fmt.money(s.adSpendPerConversion)} ad spend / conversion`,
+      },
+      {
+        label: "Deadstock",
+        value: fmt.num(s.deadstockUnits),
+        sub: `${fmt.money(s.deadstockValue)} tied up`,
+        tone: s.deadstockValue > s.grossRevenue * 0.2 ? "bad" : "neutral",
+      },
+      {
+        label: "Stockouts",
+        value: fmt.num(s.stockoutUnits),
+        sub: "lost sales units",
+        tone: s.stockoutUnits > s.unitsSold * 0.1 ? "bad" : "neutral",
+      },
+    ];
+    const pnlRows = [
+      {
+        name: "Gross revenue",
+        value: s.grossRevenue,
+        color: PDF_CHART_COLORS.emerald,
+      },
+      {
+        name: "Refunded revenue",
+        value: -(s.grossRevenue - s.netRevenue),
+        color: PDF_CHART_COLORS.red,
+      },
+      ...costStack.map((c) => ({
+        name: c.name,
+        value: -c.value,
+        color: PDF_CHART_COLORS.rose,
+      })),
+      {
+        name: "Net profit",
+        value: s.netProfit,
+        color: s.netProfit >= 0 ? PDF_CHART_COLORS.green : PDF_CHART_COLORS.red,
+      },
+    ].filter((row) => row.name === "Net profit" || Math.abs(row.value) > 0);
+    const funnelBars: PdfBar[] = [
+      { label: "Impressions", value: s.totalImpressions, color: PDF_CHART_COLORS.indigoSoft },
+      { label: "Reached", value: s.totalReached, color: PDF_CHART_COLORS.indigo },
+      { label: "Engaged", value: s.totalEngaged, color: PDF_CHART_COLORS.sky },
+      { label: "Product visits", value: s.totalProductVisits, color: PDF_CHART_COLORS.cyan },
+      { label: "Checkout starts", value: s.totalCheckoutsStarted, color: PDF_CHART_COLORS.teal },
+      { label: "Scrolled past", value: s.totalScrolledPast, color: PDF_CHART_COLORS.rose },
+      { label: "Orders", value: s.totalOrders, color: PDF_CHART_COLORS.violet },
+    ];
+    const orderTrajectory: PdfSeries[] = [
+      {
+        name: "Orders",
+        color: PDF_CHART_COLORS.indigo,
+        points: sampledTimeline.map((t) => t.newOrders + t.repeatOrders),
+      },
+      {
+        name: "Refunds",
+        color: PDF_CHART_COLORS.red,
+        points: sampledTimeline.map((t) => t.refunds),
+      },
+      {
+        name: "Product visits",
+        color: PDF_CHART_COLORS.sky,
+        points: sampledTimeline.map((t) => t.productVisits),
+      },
+    ];
+    const cashTrajectory: PdfSeries[] = [
+      {
+        name: "Cumulative net profit",
+        color: PDF_CHART_COLORS.green,
+        points: sampledTimeline.map((t) => moneyPoint(t.cumulativeNetProfit)),
+      },
+      {
+        name: "Cumulative cash",
+        color: PDF_CHART_COLORS.amber,
+        points: sampledTimeline.map((t) => moneyPoint(t.cumulativeCash)),
+      },
+    ];
+    const inventoryTrajectory: PdfSeries[] = [
+      {
+        name: "Inventory on hand",
+        color: PDF_CHART_COLORS.teal,
+        points: sampledTimeline.map((t) => t.inventoryOnHand),
+      },
+      {
+        name: "Stockouts",
+        color: PDF_CHART_COLORS.red,
+        points: sampledTimeline.map((t) => t.unitsStockedOut),
+      },
+      {
+        name: "Refunds",
+        color: PDF_CHART_COLORS.amber,
+        points: sampledTimeline.map((t) => t.refunds),
+      },
+    ];
+    const acquiredBars = orderBars(
+      b.byAcquisitionChannel.map((row) => ({ name: row.name, orders: row.orders }))
+    );
+    const unitsPurchased =
+      s.unitsPurchased > 0 ? s.unitsPurchased : s.unitsSold + s.deadstockUnits;
     const sections: DossierSection[] = [];
-    if (d.headline) sections.push({ heading: "Verdict", body: d.headline });
     sections.push({
       heading: "Key metrics",
+      kpis: headlineKpis,
       bullets: [
-        `Net profit: ${fmt.money(s.netProfit)} (${s.netMarginPct}% net margin)`,
-        `Net revenue: ${fmt.money(s.netRevenue)} (gross ${fmt.money(s.grossRevenue)})`,
-        `Orders: ${fmt.num(s.totalOrders)} · ${s.returningCustomerSharePct}% returning`,
-        `MoM growth assumed: ${growthLabel} (${growthSource})`,
-        `Refund rate: ${s.refundRatePct}% (${fmt.num(s.refunds)} refunds)`,
-        `Blended CAC: ${fmt.money(s.blendedCac)}`,
-        `Capital payback: ${s.breakEvenLabel ?? "Never"}`,
+        `MoM growth assumed: ${growthLabel} (${growthSource} assumption)`,
+        `Deterministic seed #${result.seed}; each persona represents ${fmt.num(result.scaleFactor)} prospects.`,
       ],
     });
+    if (d.headline) sections.push({ heading: "Verdict", body: d.headline });
+    if (sampledTimeline.length > 1) {
+      sections.push(
+        {
+          heading: "Demand trajectory",
+          body: `Sampled from the full ${fmt.num(timeline.length)}-${usedInputs.granularity} timeline for PDF readability.`,
+          line: {
+            title: "Orders, refunds, and product visits over time",
+            xLabels: timelineLabels,
+            series: orderTrajectory,
+          },
+        },
+        {
+          heading: "Capital payback trajectory",
+          body: `Money charted in ${fmt.displayCurrency}. Cumulative cash includes launch investment and working-capital inventory outflows.`,
+          line: {
+            title: "Cumulative net profit vs cumulative cash",
+            xLabels: timelineLabels,
+            series: cashTrajectory,
+            money: true,
+          },
+        }
+      );
+    }
+    sections.push({
+      heading: "Revenue, costs, and profit",
+      bars: {
+        title: `P&L bridge (${fmt.displayCurrency})`,
+        data: pnlRows.map((row) => ({
+          label: row.name,
+          value: moneyPoint(row.value),
+          color: row.color,
+        })),
+        money: true,
+      },
+      table: {
+        columns: ["Line", "Value"],
+        rows: pnlRows.map((row) => [row.name, fmt.money(row.value)]),
+      },
+    });
+    sections.push({
+      heading: "Acquisition funnel",
+      bars: {
+        title: "Impressions to orders",
+        data: funnelBars,
+      },
+      table: {
+        columns: ["Step", "Count"],
+        rows: funnelBars.map((row) => [row.label, fmt.num(row.value)]),
+      },
+    });
+    if (acquiredBars.length) {
+      sections.push({
+        heading: "Acquisition by channel",
+        bars: {
+          title: "Orders by acquisition channel",
+          data: acquiredBars,
+        },
+        table: {
+          columns: ["Channel", "Kind", "Visits", "Orders", "Spend", "CAC"],
+          rows: b.byAcquisitionChannel.slice(0, 8).map((row) => [
+            row.name,
+            row.kind,
+            fmt.num(row.productVisits),
+            fmt.num(row.orders),
+            fmt.money(row.adSpend),
+            row.cac > 0 ? fmt.money(row.cac) : "-",
+          ]),
+        },
+      });
+    }
+    sections.push({
+      heading: "New vs returning",
+      share: {
+        title: "Order mix",
+        data: [
+          {
+            label: "New customers",
+            value: b.newVsReturning.newCustomers,
+            color: PDF_CHART_COLORS.indigo,
+          },
+          {
+            label: "Returning orders",
+            value: b.newVsReturning.returningOrders,
+            color: PDF_CHART_COLORS.green,
+          },
+        ],
+      },
+      bullets: [
+        `${s.returningCustomerSharePct}% of all orders came from repeat buyers.`,
+      ],
+    });
+    addBreakdownSection(sections, "Orders by channel", b.byChannel, fmt);
+    addBreakdownSection(sections, "Orders by segment", b.bySegment, fmt, (name) =>
+      hexRgb(SEGMENT_COLORS[name] ?? "#6366f1")
+    );
+    addBreakdownSection(sections, "Buyers by location", b.byLocality, fmt);
+    addBreakdownSection(sections, "Buyers by age", b.byAgeBand, fmt);
+    addBreakdownSection(sections, "Buyers by gender", b.byGender, fmt);
+    sections.push({
+      heading: "Inventory and returns",
+      kpis: [
+        { label: "Units purchased", value: fmt.num(unitsPurchased) },
+        { label: "Units sold", value: fmt.num(s.unitsSold) },
+        { label: "Deadstock", value: fmt.num(s.deadstockUnits), sub: fmt.money(s.deadstockValue) },
+        { label: "In transit", value: fmt.num(s.unitsInTransitEnd) },
+        { label: "Refunds", value: fmt.num(s.refunds), sub: `${s.refundRatePct}% refund rate` },
+        { label: "Stockouts", value: fmt.num(s.stockoutUnits), sub: "lost sales units" },
+      ],
+      bars: {
+        title: "Unit reconciliation",
+        data: [
+          { label: "Units purchased", value: unitsPurchased, color: PDF_CHART_COLORS.teal },
+          { label: "Units sold", value: s.unitsSold, color: PDF_CHART_COLORS.green },
+          { label: "Deadstock", value: s.deadstockUnits, color: PDF_CHART_COLORS.amber },
+          { label: "In transit", value: s.unitsInTransitEnd, color: PDF_CHART_COLORS.sky },
+          { label: "Refunds", value: s.refunds, color: PDF_CHART_COLORS.rose },
+          { label: "Stockouts", value: s.stockoutUnits, color: PDF_CHART_COLORS.red },
+        ],
+      },
+    });
+    if (sampledTimeline.length > 1) {
+      sections.push({
+        heading: "Inventory trajectory",
+        line: {
+          title: "Inventory, refunds, and stockouts over time",
+          xLabels: timelineLabels,
+          series: inventoryTrajectory,
+        },
+      });
+    }
     sections.push({
       heading: "Advanced settings used",
       body: "Final values reflect the settings the simulation actually ran with after Auto/default fields were resolved.",
@@ -1314,15 +1579,22 @@ function Results({
       );
     downloadDossier(
       {
-        title: `Launch simulation — ${record.name}`,
+        title: `Launch simulation - ${record.name}`,
         subtitle: record.inputs.region
           ? `${record.inputs.region} region`
           : "Whole audience",
         meta: [
           `${record.inputs.horizon} ${record.inputs.granularity === "day" ? "days" : "months"}`,
-          cur,
+          convertedDisplay
+            ? `${fmt.displayCurrency} display, ${cur} simulation`
+            : cur,
           new Date().toLocaleDateString(),
         ],
+        accent: PDF_CHART_COLORS.indigo,
+        cover: {
+          verdict: d.headline,
+          kpis: headlineKpis.slice(0, 4),
+        },
         sections,
       },
       `launch-${slug(record.name)}-dossier`
@@ -1337,7 +1609,7 @@ function Results({
         </div>
         <button
           onClick={exportPdf}
-          title="Export this launch scenario's conclusion as a PDF"
+          title="Export this launch scenario's charts and conclusions as a PDF"
           className="flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 hover:border-neutral-400"
         >
           <FileDown className="h-3.5 w-3.5" /> Create PDF
@@ -2076,6 +2348,104 @@ function Assumptions({
       </div>
     </section>
   );
+}
+
+type PdfRgb = [number, number, number];
+
+const PDF_CHART_COLORS = {
+  indigo: [99, 102, 241] as PdfRgb,
+  indigoSoft: [199, 210, 254] as PdfRgb,
+  violet: [139, 92, 246] as PdfRgb,
+  sky: [14, 165, 233] as PdfRgb,
+  cyan: [6, 182, 212] as PdfRgb,
+  teal: [20, 184, 166] as PdfRgb,
+  emerald: [16, 185, 129] as PdfRgb,
+  green: [16, 150, 105] as PdfRgb,
+  amber: [245, 158, 11] as PdfRgb,
+  rose: [244, 114, 182] as PdfRgb,
+  red: [220, 38, 38] as PdfRgb,
+  slate: [100, 116, 139] as PdfRgb,
+};
+
+const PDF_CHART_PALETTE: PdfRgb[] = [
+  PDF_CHART_COLORS.indigo,
+  PDF_CHART_COLORS.green,
+  PDF_CHART_COLORS.sky,
+  PDF_CHART_COLORS.amber,
+  PDF_CHART_COLORS.violet,
+  PDF_CHART_COLORS.teal,
+  PDF_CHART_COLORS.rose,
+  PDF_CHART_COLORS.slate,
+];
+
+function sampleLaunchTimeline<T>(items: T[], maxPoints: number): T[] {
+  if (items.length <= maxPoints || maxPoints < 2) return items;
+  const lastIndex = items.length - 1;
+  const sampled: T[] = [];
+  let previous = -1;
+  for (let i = 0; i < maxPoints; i += 1) {
+    const index = Math.round((i / (maxPoints - 1)) * lastIndex);
+    if (index !== previous) sampled.push(items[index]);
+    previous = index;
+  }
+  return sampled;
+}
+
+function orderBars(
+  data: { name: string; orders: number }[],
+  colorBy?: (name: string, index: number) => PdfRgb
+): PdfBar[] {
+  return data
+    .slice(0, 8)
+    .filter((row) => row.orders > 0)
+    .map((row, index) => ({
+      label: row.name,
+      value: row.orders,
+      color: colorBy?.(row.name, index) ?? PDF_CHART_PALETTE[index % PDF_CHART_PALETTE.length],
+    }));
+}
+
+function addBreakdownSection(
+  sections: DossierSection[],
+  heading: string,
+  data: { name: string; orders: number; revenue: number }[],
+  fmt: Formatters,
+  colorBy?: (name: string, index: number) => PdfRgb
+) {
+  const bars = orderBars(data, colorBy);
+  if (!bars.length) return;
+  sections.push({
+    heading,
+    bars: {
+      title: "Orders",
+      data: bars,
+    },
+    table: {
+      columns: ["Group", "Orders", "Revenue"],
+      rows: data.slice(0, 8).map((row) => [
+        row.name,
+        fmt.num(row.orders),
+        fmt.money(row.revenue),
+      ]),
+    },
+  });
+}
+
+function hexRgb(hex: string, fallback = PDF_CHART_COLORS.indigo): PdfRgb {
+  const raw = hex.replace("#", "").trim();
+  const expanded =
+    raw.length === 3
+      ? raw
+          .split("")
+          .map((ch) => `${ch}${ch}`)
+          .join("")
+      : raw;
+  if (!/^[0-9a-fA-F]{6}$/.test(expanded)) return fallback;
+  return [
+    parseInt(expanded.slice(0, 2), 16),
+    parseInt(expanded.slice(2, 4), 16),
+    parseInt(expanded.slice(4, 6), 16),
+  ];
 }
 
 function sourceLabel(source: string): string {
