@@ -19,7 +19,10 @@ import {
   type ExportContext,
 } from "./exportRun";
 import { calibrateCohortPlan } from "./datasources/demographics";
-import { expandPanIndiaCohortPlan } from "./audienceCoverage";
+import {
+  expandPanIndiaCohortPlan,
+  singleIndiaMarketFromProfile,
+} from "./audienceCoverage";
 import {
   fetchStructuredForDesk,
   formatStructured,
@@ -32,6 +35,11 @@ import {
   formatIndustryKnowledge,
   formatPlanningTemplate,
 } from "./datasources/knowledge";
+import {
+  clampCohortPlanToSingleLocality,
+  parseSingleDestinationLocality,
+  singleProfileLocalityTarget,
+} from "./exportMarket";
 import {
   spawnCohorts,
   simulateAllCohorts,
@@ -467,13 +475,45 @@ export async function executeRun(runId: string): Promise<void> {
       profile,
       config.maxCohorts
     );
-    const plan = { ...rawPlan, cohortPlan: expandedCohortPlan };
+    const singleDestinationLocality =
+      run.mode === "export"
+        ? parseSingleDestinationLocality(run.additionalContext)
+        : null;
+    const singleProfileLocality = singleIndiaMarketFromProfile(profile);
+    const genericProfileLocality = singleProfileLocality
+      ? null
+      : singleProfileLocalityTarget(profile, expandedCohortPlan);
+    const singleLocality = singleDestinationLocality ?? singleProfileLocality;
+    const selectedSingleLocality = singleLocality ?? genericProfileLocality;
+    const finalCohortPlan = singleLocality
+      ? clampCohortPlanToSingleLocality(expandedCohortPlan, {
+          label: "label" in singleLocality ? singleLocality.label : singleLocality.name,
+          country: singleLocality.country,
+          lat: singleLocality.lat,
+          lng: singleLocality.lng,
+        })
+      : genericProfileLocality
+        ? clampCohortPlanToSingleLocality(
+            expandedCohortPlan,
+            genericProfileLocality
+          )
+      : expandedCohortPlan;
+    const plan = { ...rawPlan, cohortPlan: finalCohortPlan };
     if (
       expandedCohortPlan.localities.length !== rawPlan.cohortPlan.localities.length ||
       expandedCohortPlan.cohorts.length !== rawPlan.cohortPlan.cohorts.length
     ) {
       console.log(
         `[orchestrator] PAN-India audience expanded ${rawPlan.cohortPlan.localities.length}->${expandedCohortPlan.localities.length} localities, ${rawPlan.cohortPlan.cohorts.length}->${expandedCohortPlan.cohorts.length} cohorts`
+      );
+    }
+    if (selectedSingleLocality) {
+      console.log(
+        `[orchestrator] audience pinned to single locality: ${
+          "label" in selectedSingleLocality
+            ? selectedSingleLocality.label
+            : selectedSingleLocality.name
+        }`
       );
     }
     const desks = plan.desks.slice(0, config.maxDesksPerRun);

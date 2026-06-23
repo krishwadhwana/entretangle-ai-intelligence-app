@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enqueueRunJob } from "@/lib/jobs";
 import { ClientProfileSchema, RunModeSchema } from "@/lib/schema";
+import { formatSingleDestinationContext } from "@/lib/exportMarket";
 import {
   isPanIndiaProfile,
   PAN_INDIA_MIN_RELEVANT_SPOTS,
@@ -27,6 +28,15 @@ const CreateRunSchema = z.object({
   // country (e.g. "United States") whose audience/economics we re-simulate.
   parentRunId: z.string().optional(),
   targetMarket: z.string().min(1).max(120).optional(),
+  targetMarketScope: z.enum(["market", "locality"]).optional(),
+  targetMarketLocality: z
+    .object({
+      label: z.string().min(1).max(120),
+      country: z.string().min(1).max(120).optional(),
+      lat: z.number().min(-90).max(90).optional(),
+      lng: z.number().min(-180).max(180).optional(),
+    })
+    .optional(),
   // Export-only: tweak the inherited parent profile for the destination market
   // (e.g. a different US target audience / price band) before the branch runs.
   // Only these fields are overridable; everything else is inherited verbatim.
@@ -65,6 +75,7 @@ export async function POST(req: NextRequest) {
   let parentRunId: string | null = null;
   let targetMarket: string | null = null;
   let brief = body.data.brief;
+  let additionalContext = body.data.additionalContext ?? null;
   if (mode === "export") {
     if (!body.data.parentRunId || !body.data.targetMarket) {
       return NextResponse.json(
@@ -92,8 +103,17 @@ export async function POST(req: NextRequest) {
       );
     }
     parentRunId = parent.id;
-    targetMarket = body.data.targetMarket;
+    targetMarket = body.data.targetMarket.trim();
     clientProfile = { ...base, geography: [targetMarket] };
+    if (body.data.targetMarketScope === "locality") {
+      const locality = body.data.targetMarketLocality ?? { label: targetMarket };
+      additionalContext = [
+        formatSingleDestinationContext(locality),
+        additionalContext?.trim(),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+    }
     // Apply the founder's destination-market tweaks on top of the inherited profile.
     const ov = body.data.profileOverrides;
     if (ov) {
@@ -142,7 +162,7 @@ export async function POST(req: NextRequest) {
       status: "planning",
       projectId: body.data.projectId ?? null,
       focusQuestion: body.data.focusQuestion ?? null,
-      additionalContext: body.data.additionalContext ?? null,
+      additionalContext,
       mode,
       sourceRunId,
       parentRunId,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import type { AudienceAggregate, Cohort, Domain, Persona } from "@/lib/schema";
@@ -17,6 +18,8 @@ import {
   Ship,
   Square,
   FileDown,
+  MapPin,
+  Search,
   X,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
@@ -30,6 +33,7 @@ import { providerErrorMessage } from "@/lib/providerErrors";
 import ExportViability from "./ExportViability";
 import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
+import { searchKnownLocalities } from "@/lib/localityAnchors";
 
 // Leaflet touches `window` — render the geography layer client-side only.
 const MapView = dynamic(() => import("./MapView"), {
@@ -76,6 +80,19 @@ type AudienceBatchResult = {
   aggregate: AudienceAggregate | null;
   tokensUsed?: number;
   costUsd?: number;
+};
+
+type ExportDestinationScope = "market" | "locality";
+
+type ExportLocality = {
+  label: string;
+  country?: string;
+  lat?: number;
+  lng?: number;
+};
+
+type ExportSearchResult = ExportLocality & {
+  source: "known" | "geocoder";
 };
 
 /** Header dropdown to hop between sibling runs in the same project. */
@@ -162,6 +179,37 @@ const EXPORT_MARKETS = [
   "Singapore",
 ];
 
+function capDestinationLabel(label: string): string {
+  const trimmed = label.trim();
+  return trimmed.length <= 120 ? trimmed : `${trimmed.slice(0, 117).trimEnd()}...`;
+}
+
+function compactDestinationLabel(result: ExportSearchResult): string {
+  const country = result.country?.trim();
+  if (result.source === "known") {
+    const includesCountry =
+      !!country && result.label.toLowerCase().includes(country.toLowerCase());
+    return capDestinationLabel(
+      country && !includesCountry ? `${result.label}, ${country}` : result.label
+    );
+  }
+
+  const parts = result.label
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const primary = parts[0] ?? result.label;
+  const countryLower = country?.toLowerCase();
+  const region = parts.find((part, index) => {
+    if (index === 0) return false;
+    const lower = part.toLowerCase();
+    if (countryLower && lower === countryLower) return false;
+    return !/\b(county|district|division|municipality|region)\b/.test(lower);
+  });
+  const base = [primary, region].filter(Boolean).join(", ");
+  return capDestinationLabel(country ? `${base}, ${country}` : base);
+}
+
 export default function RunDashboard({
   runId,
   projectId,
@@ -201,6 +249,19 @@ export default function RunDashboard({
   // The "Test in another market" edit-profile modal: which market it's open for,
   // plus the editable (pre-filled) destination-market overrides.
   const [exportMarket, setExportMarket] = useState<string | null>(null);
+  const [exportMarketScope, setExportMarketScope] =
+    useState<ExportDestinationScope>("market");
+  const [exportLocality, setExportLocality] = useState<ExportLocality | null>(
+    null
+  );
+  const [exportMarketQuery, setExportMarketQuery] = useState("");
+  const [exportMarketResults, setExportMarketResults] = useState<
+    ExportSearchResult[]
+  >([]);
+  const [exportMarketSearching, setExportMarketSearching] = useState(false);
+  const [exportMarketSearchError, setExportMarketSearchError] = useState<
+    string | null
+  >(null);
   const [ovAudience, setOvAudience] = useState("");
   const [ovPriceBand, setOvPriceBand] = useState("");
   const [ovPriceMin, setOvPriceMin] = useState("");
@@ -218,9 +279,83 @@ export default function RunDashboard({
       setOvPriceMax(exportProfileDefaults?.priceMax?.toString() ?? "");
       setOvMargin(exportProfileDefaults?.targetMarginPct?.toString() ?? "");
       setOvContext("");
+      setExportMarketScope("market");
+      setExportLocality(null);
+      setExportMarketQuery("");
+      setExportMarketResults([]);
+      setExportMarketSearchError(null);
       setExportMarket(market);
     },
     [exportProfileDefaults]
+  );
+  const selectExportMarket = useCallback((market: string) => {
+    setExportMarket(market);
+    setExportMarketScope("market");
+    setExportLocality(null);
+    setExportMarketQuery("");
+    setExportMarketResults([]);
+    setExportMarketSearchError(null);
+  }, []);
+  const selectExportLocality = useCallback((result: ExportSearchResult) => {
+    const label = compactDestinationLabel(result);
+    setExportMarket(label);
+    setExportMarketScope("locality");
+    setExportLocality({
+      label,
+      country: result.country,
+      lat: result.lat,
+      lng: result.lng,
+    });
+    setExportMarketQuery(label);
+    setExportMarketResults([]);
+    setExportMarketSearchError(null);
+  }, []);
+  const onExportMarketSearch = useCallback(
+    async (e: FormEvent) => {
+      e.preventDefault();
+      const q = exportMarketQuery.trim();
+      if (q.length < 2 || exportMarketSearching) return;
+      setExportMarketSearching(true);
+      setExportMarketSearchError(null);
+      try {
+        const known: ExportSearchResult[] = searchKnownLocalities(q, 8).map(
+          (r) => ({
+            label: r.label,
+            country: r.country,
+            lat: r.lat,
+            lng: r.lng,
+            source: "known" as const,
+          })
+        );
+        let remote: ExportSearchResult[] = [];
+        try {
+          const res = await fetch(`/api/geocode?q=${encodeURIComponent(q)}`);
+          if (res.ok) {
+            const data = (await res.json()) as {
+              results?: ExportLocality[];
+            };
+            remote = (data.results ?? []).map((r) => ({
+              ...r,
+              source: "geocoder" as const,
+            }));
+          }
+        } catch {
+          // Known locality hits are still useful when geocoding is unavailable.
+        }
+        const seen = new Set<string>();
+        const merged = [...known, ...remote].filter((result) => {
+          const key = `${result.label}:${result.lat?.toFixed(3)}:${result.lng?.toFixed(3)}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        setExportMarketResults(merged.slice(0, 8));
+        if (merged.length === 0) setExportMarketSearchError("No city found");
+      } finally {
+        setExportMarketSearching(false);
+      }
+    },
+    [exportMarketQuery, exportMarketSearching]
   );
   const [audienceBranchOpen, setAudienceBranchOpen] = useState(false);
   const [audienceBranchInfo, setAudienceBranchInfo] = useState("");
@@ -454,6 +589,10 @@ export default function RunDashboard({
           mode: "export",
           parentRunId: runId,
           targetMarket: exportMarket,
+          targetMarketScope: exportMarketScope,
+          ...(exportMarketScope === "locality" && exportLocality
+            ? { targetMarketLocality: exportLocality }
+            : {}),
           projectId,
           ...(Object.keys(profileOverrides).length ? { profileOverrides } : {}),
           ...(ovContext.trim() ? { additionalContext: ovContext.trim() } : {}),
@@ -473,6 +612,8 @@ export default function RunDashboard({
   }, [
     exportBusy,
     exportMarket,
+    exportMarketScope,
+    exportLocality,
     ovAudience,
     ovPriceBand,
     ovPriceMin,
@@ -1056,9 +1197,9 @@ export default function RunDashboard({
                 {EXPORT_MARKETS.map((m) => (
                   <button
                     key={m}
-                    onClick={() => setExportMarket(m)}
+                    onClick={() => selectExportMarket(m)}
                     className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium ${
-                      exportMarket === m
+                      exportMarket === m && exportMarketScope === "market"
                         ? "border-indigo-600 bg-indigo-600 text-white"
                         : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400"
                     }`}
@@ -1067,6 +1208,63 @@ export default function RunDashboard({
                   </button>
                 ))}
               </div>
+              <form
+                onSubmit={onExportMarketSearch}
+                className="mt-2 flex items-center gap-2 rounded-md border border-neutral-300 px-2 py-1"
+              >
+                <Search className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                <input
+                  value={exportMarketQuery}
+                  onChange={(e) => setExportMarketQuery(e.target.value)}
+                  className="min-w-0 flex-1 text-xs text-neutral-900 outline-none placeholder:text-neutral-400"
+                  placeholder="Search city"
+                />
+                <button
+                  type="submit"
+                  disabled={exportMarketQuery.trim().length < 2 || exportMarketSearching}
+                  className="grid h-7 w-7 place-items-center rounded-md text-neutral-500 hover:bg-neutral-100 disabled:opacity-40"
+                  title="Search city"
+                >
+                  {exportMarketSearching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Search className="h-3.5 w-3.5" />
+                  )}
+                </button>
+              </form>
+              {exportMarketResults.length > 0 && (
+                <div className="mt-1 max-h-36 overflow-y-auto rounded-md border border-neutral-200 bg-white py-1">
+                  {exportMarketResults.map((result) => (
+                    <button
+                      key={`${result.source}:${result.label}:${result.lat}:${result.lng}`}
+                      type="button"
+                      onClick={() => selectExportLocality(result)}
+                      className="flex w-full items-start gap-2 px-2 py-1.5 text-left text-xs hover:bg-neutral-50"
+                    >
+                      <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0 text-indigo-500" />
+                      <span className="min-w-0">
+                        <span className="block truncate font-medium text-neutral-800">
+                          {compactDestinationLabel(result)}
+                        </span>
+                        <span className="block truncate text-[10px] text-neutral-400">
+                          {result.source === "known" ? "Known locality" : result.label}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+              {exportMarketSearchError && (
+                <p className="mt-1 text-[10px] text-rose-600">
+                  {exportMarketSearchError}
+                </p>
+              )}
+              {exportMarketScope === "locality" && exportLocality && (
+                <p className="mt-1 flex items-center gap-1 text-[10px] font-medium text-indigo-700">
+                  <MapPin className="h-3 w-3" />
+                  {exportLocality.label}
+                </p>
+              )}
             </div>
             <div className="mt-3 space-y-2.5">
               <label className="block text-[11px] font-medium text-neutral-600">

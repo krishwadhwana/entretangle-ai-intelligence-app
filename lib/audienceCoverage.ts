@@ -993,26 +993,56 @@ function profileGeographyText(profile: ClientProfile): string {
   ].join(" ");
 }
 
+function isIndiaCountryOnly(n: string): boolean {
+  return n === "india" || n === "bharat";
+}
+
+function isExplicitPanIndiaText(text: string): boolean {
+  return /\b(pan[\s-]?india|pan india|all india|all of india|entire india|india wide|indiawide|across india|whole india)\b/.test(
+    text
+  );
+}
+
 export function isPanIndiaProfile(profile: ClientProfile): boolean {
-  if (
-    (profile.geography ?? []).some((g) => {
-      const n = norm(g);
-      return (
-        n === "india" ||
-        n === "bharat" ||
-        n === "all india" ||
-        n === "all of india" ||
-        n === "entire india" ||
-        n === "whole india"
-      );
-    })
-  ) {
+  const geography = (profile.geography ?? []).map(norm).filter(Boolean);
+  const hasSpecificGeography = geography.some(
+    (n) => !isIndiaCountryOnly(n) && !isExplicitPanIndiaText(n)
+  );
+  if (hasSpecificGeography && !geography.some(isExplicitPanIndiaText)) {
+    return false;
+  }
+  if (geography.some((n) => isIndiaCountryOnly(n) || isExplicitPanIndiaText(n))) {
     return true;
   }
   const text = profileGeographyText(profile).toLowerCase();
-  return /\b(pan[\s-]?india|pan india|all india|all of india|entire india|india wide|indiawide|nationwide|national|across india|whole india)\b/.test(
-    text
+  return (
+    isExplicitPanIndiaText(text) ||
+    /\b(nationwide|national)\b/.test(text)
   );
+}
+
+export function singleIndiaMarketFromProfile(
+  profile: ClientProfile
+): Locality | null {
+  const geography = (profile.geography ?? []).map(norm).filter(Boolean);
+  if (geography.some(isExplicitPanIndiaText)) return null;
+
+  const selected = new Map<string, IndiaMarket>();
+  for (const geo of profile.geography ?? []) {
+    const n = norm(geo);
+    if (!n || isIndiaCountryOnly(n)) continue;
+    const market = marketForName(geo);
+    if (market) selected.set(norm(market.name), market);
+  }
+
+  if (selected.size !== 1) return null;
+  const market = [...selected.values()][0];
+  return {
+    name: market.name,
+    country: market.country,
+    lat: market.lat,
+    lng: market.lng,
+  };
 }
 
 function marketForName(name: string): IndiaMarket | undefined {
