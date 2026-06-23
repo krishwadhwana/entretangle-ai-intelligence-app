@@ -194,7 +194,6 @@ export default function RunDashboard({
     "conclusion" | Domain | null
   >(null);
   const [reportBusy, setReportBusy] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [dossierBusy, setDossierBusy] = useState(false);
@@ -211,7 +210,6 @@ export default function RunDashboard({
   // Open the modal for a market, pre-filling the inherited profile fields.
   const openExportModal = useCallback(
     (market: string) => {
-      setExportOpen(false);
       setExportError(null);
       setOvAudience(exportProfileDefaults?.targetAudience ?? "");
       setOvPriceBand(exportProfileDefaults?.priceBand ?? "");
@@ -722,43 +720,19 @@ export default function RunDashboard({
           Dossier
         </button>
         {!isExportRun && canLaunch ? (
-          <div className="relative">
-            <button
-              onClick={() => setExportOpen((o) => !o)}
-              disabled={exportBusy}
-              className="flex items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:border-indigo-500 disabled:opacity-60"
-              title="Carry this run forward into another market (landed cost, pricing & viability)"
-            >
-              {exportBusy ? (
-                <Loader2 className="h-3 w-3 animate-spin" />
-              ) : (
-                <Ship className="h-3 w-3" />
-              )}
-              Test in another market
-              <ChevronDown className="h-3 w-3" />
-            </button>
-            {exportOpen ? (
-              <div className="absolute left-0 z-[1100] mt-1 w-52 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
-                <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                  Destination market
-                </div>
-                {EXPORT_MARKETS.map((m) => (
-                  <button
-                    key={m}
-                    onClick={() => openExportModal(m)}
-                    className="block w-full px-3 py-1.5 text-left text-[11px] text-neutral-700 hover:bg-indigo-50"
-                  >
-                    {m}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-            {exportError ? (
-              <div className="absolute left-0 top-full mt-1 w-52 text-[10px] text-rose-600">
-                {exportError}
-              </div>
-            ) : null}
-          </div>
+          <button
+            onClick={() => openExportModal("United States")}
+            disabled={exportBusy}
+            className="flex items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:border-indigo-500 disabled:opacity-60"
+            title="Carry this run forward into another market (landed cost, pricing & viability)"
+          >
+            {exportBusy ? (
+              <Loader2 className="h-3 w-3 animate-spin" />
+            ) : (
+              <Ship className="h-3 w-3" />
+            )}
+            Test in another market
+          </button>
         ) : null}
         {isExportRun ? (
           <button
@@ -1055,13 +1029,33 @@ export default function RunDashboard({
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="flex items-center gap-2 text-sm font-bold text-neutral-900">
-              <Ship className="h-4 w-4 text-indigo-600" /> Test in {exportMarket}
+              <Ship className="h-4 w-4 text-indigo-600" /> Test in another market
             </h3>
             <p className="mt-1 text-[11px] text-neutral-500">
-              Tweak the profile for {exportMarket}, or leave it to carry your home
-              settings forward. The product stays the same; this only re-aims the
-              audience &amp; pricing for the destination.
+              Pick a destination, then tweak the profile for it (or leave it to
+              carry your home settings forward). The product stays the same; this
+              only re-aims the audience &amp; pricing for the destination.
             </p>
+            <div className="mt-3">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                Destination market
+              </span>
+              <div className="mt-1 flex flex-wrap gap-1.5">
+                {EXPORT_MARKETS.map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setExportMarket(m)}
+                    className={`rounded-lg border px-2.5 py-1 text-[11px] font-medium ${
+                      exportMarket === m
+                        ? "border-indigo-600 bg-indigo-600 text-white"
+                        : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400"
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="mt-3 space-y-2.5">
               <label className="block text-[11px] font-medium text-neutral-600">
                 Target audience
