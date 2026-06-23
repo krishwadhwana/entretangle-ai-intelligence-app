@@ -64,7 +64,7 @@ export async function POST(
     const playbook = {
       ...generated,
       generatedAt: new Date().toISOString(),
-      model: config.model,
+      model: generated.model || config.model,
     };
     if (run.projectId)
       await savePlaybook(run.projectId, run.id, playbook).catch((e) =>

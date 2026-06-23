@@ -123,6 +123,7 @@ import {
   type DemographicsOutput,
 } from "./datasources/demographics";
 import { benchmarksForProfile } from "./datasources/benchmarks";
+import { isProviderQuotaError, isProviderTimeoutError } from "./providerErrors";
 
 const globalForLlm = globalThis as unknown as { openai?: OpenAI };
 
@@ -144,8 +145,8 @@ const COMPLETION_BUDGET = 8000;
 const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per batch
 // Owner-dashboard add-ons run inside HTTP requests, so keep every model leg
 // bounded and disable SDK retries that can silently multiply latency.
-const OWNER_WEB_TIMEOUT_MS = 45_000;
-const OWNER_FALLBACK_TIMEOUT_MS = 45_000;
+const OWNER_WEB_TIMEOUT_MS = 22_000;
+const OWNER_FALLBACK_TIMEOUT_MS = 25_000;
 const OWNER_QA_TIMEOUT_MS = 45_000;
 const MARKET_DATA_TIMEOUT_MS = 90_000;
 const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
@@ -1112,6 +1113,167 @@ export async function callPersonaConclusion(
  * handles (the ~60/40 mix); on any web/parse failure it falls back to a plain
  * JSON call (ungrounded accounts) — like the desks, it never hard-fails.
  */
+function ownerProviderFallbackReason(e: unknown): string {
+  if (isProviderQuotaError(e)) return "provider quota was unavailable";
+  if (isProviderTimeoutError(e)) return "provider request timed out";
+  return "provider request failed";
+}
+
+function shouldUseOwnerLocalFallback(e: unknown): boolean {
+  return isProviderQuotaError(e) || isProviderTimeoutError(e);
+}
+
+function profileProduct(profile: ClientProfile): string {
+  return profile.product || profile.category || "the product";
+}
+
+function profileAudience(profile: ClientProfile): string {
+  return (
+    profile.targetAudience ||
+    profile.geography?.join(", ") ||
+    profile.scale ||
+    "the target customer"
+  );
+}
+
+function fallbackBrandKit(
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  aggregate: AudienceAggregate | null,
+  reason: string
+): BrandKit {
+  const product = profileProduct(profile);
+  const audience = profileAudience(profile);
+  const category = profile.category || "category";
+  const topFindings = conclusions
+    .map((c) => `${c.claim}: ${c.value}`)
+    .filter(Boolean)
+    .slice(0, 4);
+  const segmentCount =
+    aggregate?.bySegment && typeof aggregate.bySegment === "object"
+      ? Object.keys(aggregate.bySegment).length
+      : 0;
+  return BrandKitSchema.parse({
+    comparableAccounts: [
+      {
+        id: "category-leaders",
+        name: `${category} category leaders`,
+        platform: "Instagram / TikTok",
+        handle: "@category-benchmark",
+        url: null,
+        followers: null,
+        grounded: false,
+        whyRelevant: `Fast fallback generated because ${reason}; use this as a search target for ${product} brands serving ${audience}.`,
+        whatToEmulate:
+          "Collect 5-8 recent posts from brands with clear product demos, founder proof, and repeated customer objections.",
+        source: null,
+      },
+      {
+        id: "creator-led-proofs",
+        name: "Creator-led proof accounts",
+        platform: "YouTube / Instagram",
+        handle: "@creator-benchmark",
+        url: null,
+        followers: null,
+        grounded: false,
+        whyRelevant:
+          "The simulated audience needs concrete usage proof before purchase; creator-style explainers can compress trust-building.",
+        whatToEmulate:
+          "Use one product problem, one demo, one before/after, and one objection reply per short-form post.",
+        source: null,
+      },
+    ],
+    brandIdentity: {
+      voice: `Clear, confident, and specific to ${audience}; avoid vague premium language unless it proves a product benefit.`,
+      positioning: `${product} should be positioned around the strongest simulated buying trigger, then backed with visible proof, price clarity, and risk reversal.`,
+      visualCodes: [
+        "Close product detail shots",
+        "In-use customer context",
+        "Simple comparison frames",
+        "Proof-led captions",
+      ],
+      namingCues: [
+        product,
+        category,
+        ...(profile.productDetails?.styleKeywords ?? []).slice(0, 3),
+      ].filter(Boolean),
+      doList: [
+        "Lead with the product outcome in the first line.",
+        "Turn the top audience objection into a recurring content series.",
+        "Show price, quality cues, and fulfillment trust signals together.",
+        ...topFindings.slice(0, 2),
+      ],
+      dontList: [
+        "Do not bury the product behind lifestyle-only imagery.",
+        "Do not copy competitor tone without matching the proof standard.",
+        "Do not launch paid creative before testing three organic hooks.",
+      ],
+    },
+    socialGuidelines: {
+      contentPillars: [
+        "Product proof",
+        "Objection handling",
+        "Founder/process trust",
+        "Customer use cases",
+      ],
+      platformPlan: [
+        {
+          platform: "Instagram",
+          segment: segmentCount > 1 ? "highest-intent segments" : null,
+          cadence: "4-5 posts/reels per week",
+          formats: ["Reels", "carousels", "stories"],
+          notes: "Prioritize demos, customer objections, and visual proof.",
+        },
+        {
+          platform: "YouTube Shorts",
+          segment: null,
+          cadence: "2-3 shorts per week",
+          formats: ["short demos", "comparison clips"],
+          notes: "Use search-friendly titles around the product problem.",
+        },
+      ],
+    },
+    checklist: [
+      {
+        id: "setup-proof-library",
+        category: "Setup",
+        title: "Build a proof library",
+        detail:
+          "Save 20 product shots, demos, testimonials, process clips, and objection replies before running ads.",
+        priority: "now",
+      },
+      {
+        id: "brand-positioning-line",
+        category: "Brand",
+        title: "Lock one positioning line",
+        detail: `Write a one-line promise for ${product} aimed at ${audience}.`,
+        priority: "now",
+      },
+      {
+        id: "content-objection-series",
+        category: "Content",
+        title: "Create an objection series",
+        detail: "Publish one short post for price, quality, trust, delivery, and fit/use-case objections.",
+        priority: "soon",
+      },
+      {
+        id: "growth-small-budget-test",
+        category: "Growth",
+        title: "Run a small creative test",
+        detail: "Test 3 hooks x 2 formats before scaling spend.",
+        priority: "soon",
+      },
+      {
+        id: "outreach-creator-shortlist",
+        category: "Outreach",
+        title: "Shortlist creators",
+        detail: "Find 10 niche creators whose audience matches the simulated buyer profile.",
+        priority: "later",
+      },
+    ],
+  });
+}
+
 export async function callBrandKit(
   runId: string,
   profile: ClientProfile,
@@ -1140,7 +1302,7 @@ export async function callBrandKit(
               "Search the web to verify comparable accounts, then output JSON only.",
           },
         ],
-        max_output_tokens: 16000,
+        max_output_tokens: 8000,
         reasoning: { effort: "low" },
       },
       { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
@@ -1168,16 +1330,34 @@ export async function callBrandKit(
     );
   } catch (e) {
     console.error(`[brandkit] web-grounded path failed, falling back:`, e);
+    if (shouldUseOwnerLocalFallback(e)) {
+      return fallbackBrandKit(
+        profile,
+        conclusions,
+        aggregate,
+        ownerProviderFallbackReason(e)
+      );
+    }
     // Ungrounded fallback — accounts come from model knowledge (grounded:false).
-    return callJson({
-      runId,
-      system: BRAND_KIT_SYSTEM,
-      user: brandKitUser(profile, conclusions, aggregate),
-      schema: BrandKitSchema,
-      maxCompletionTokens: 16000,
-      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
-      requestMaxRetries: 0,
-    });
+    try {
+      return await callJson({
+        runId,
+        system: BRAND_KIT_SYSTEM,
+        user: brandKitUser(profile, conclusions, aggregate),
+        schema: BrandKitSchema,
+        maxCompletionTokens: 8000,
+        requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+        requestMaxRetries: 0,
+      });
+    } catch (fallbackError) {
+      console.error(`[brandkit] JSON fallback failed:`, fallbackError);
+      return fallbackBrandKit(
+        profile,
+        conclusions,
+        aggregate,
+        ownerProviderFallbackReason(fallbackError)
+      );
+    }
   }
 }
 
@@ -1279,9 +1459,60 @@ export async function callMarketData(
 /**
  * Deepen a run's world model into a founder-ready playbook — web-grounded so it
  * can add current, cited tax rates and named competitors the simulation was thin
- * on. Independent of the run engine, so it can be regenerated on demand. Throws
- * on web/parse failure (the route surfaces it); metered to the run.
+ * on. Independent of the run engine, so it can be regenerated on demand. If the
+ * web-grounded path is slow or invalid, it returns a source-light fallback built
+ * from the run's completed findings instead of timing out the HTTP request.
  */
+function fallbackPlaybook(
+  profile: ClientProfile,
+  conclusionsByDomain: Record<string, { claim: string; value: string }[]>,
+  reason: string
+): GeneratedPlaybook {
+  const product = profileProduct(profile);
+  const domains = Object.entries(conclusionsByDomain)
+    .filter(([, items]) => items.length > 0)
+    .slice(0, 8);
+  const modules =
+    domains.length > 0
+      ? domains.map(([domain, items]) => ({
+          module: domain.replace(/[-_]/g, " ").replace(/\b\w/g, (m) => m.toUpperCase()),
+          domain,
+          summary: `Fast fallback from completed simulation findings because ${reason}. Use this module as a decision checklist for ${product}.`,
+          entries: items.slice(0, 4).map((item) => ({
+            point: item.claim,
+            detail: item.value,
+            source: "",
+          })),
+        }))
+      : [
+          {
+            module: "Launch Priorities",
+            domain: "synthesis",
+            summary: `Fast fallback generated because ${reason}.`,
+            entries: [
+              {
+                point: `Validate demand for ${product}`,
+                detail:
+                  "Use the strongest audience segment, top objection, and price sensitivity from the run before scaling spend.",
+                source: "",
+              },
+              {
+                point: "Check duties, taxes, and compliance manually",
+                detail:
+                  "The web-grounded pass did not complete, so confirm current rates with an official source before execution.",
+                source: "",
+              },
+            ],
+          },
+        ];
+  return GeneratedPlaybookSchema.parse({
+    modules,
+    sources: [],
+    generatedAt: "",
+    model: "local-fallback",
+  });
+}
+
 export async function callGeneratePlaybook(
   runId: string,
   profile: ClientProfile,
@@ -1302,47 +1533,55 @@ export async function callGeneratePlaybook(
       model: "mock",
     });
   }
-  const response = await client().responses.create(
-    {
-      model: config.model,
-      tools: [{ type: "web_search" } as never],
-      input: [
-        { role: "system", content: PLAYBOOK_SYSTEM },
-        {
-          role: "user",
-          content:
-            playbookUser(profile, conclusionsByDomain) +
-            "\n\nSearch the web for current tax/duty rates and named competitors for this exact product & market, then output JSON only.",
-        },
-      ],
-      max_output_tokens: 9000,
-      reasoning: { effort: "low" },
-    },
-    { timeout: MARKET_DATA_TIMEOUT_MS, maxRetries: 0 }
-  );
-  const searchCalls = Array.isArray(response.output)
-    ? response.output.filter((o: { type?: string }) =>
-        String(o.type ?? "").startsWith("web_search")
-      ).length
-    : 0;
-  if (response.usage) {
-    await recordUsage(
-      runId,
-      response.usage.input_tokens ?? 0,
-      response.usage.output_tokens ?? 0,
-      "frontier",
-      searchCalls
+  try {
+    const response = await client().responses.create(
+      {
+        model: config.model,
+        tools: [{ type: "web_search" } as never],
+        input: [
+          { role: "system", content: PLAYBOOK_SYSTEM },
+          {
+            role: "user",
+            content:
+              playbookUser(profile, conclusionsByDomain) +
+              "\n\nSearch only for the highest-impact current tax/duty rates and named competitors for this product and market. Keep the playbook concise and output JSON only.",
+          },
+        ],
+        max_output_tokens: 6000,
+        reasoning: { effort: "low" },
+      },
+      { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
+    );
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (response.usage) {
+      await recordUsage(
+        runId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls
+      );
+    }
+    const parsed = GeneratedPlaybookSchema.safeParse(
+      JSON.parse(stripFences(response.output_text ?? ""))
+    );
+    if (parsed.success) return parsed.data;
+    console.error(
+      `[playbook] validation failed: ${JSON.stringify(parsed.error.issues).slice(0, 200)}`
+    );
+    return fallbackPlaybook(profile, conclusionsByDomain, "web output failed validation");
+  } catch (e) {
+    console.error(`[playbook] web-grounded path failed:`, e);
+    return fallbackPlaybook(
+      profile,
+      conclusionsByDomain,
+      ownerProviderFallbackReason(e)
     );
   }
-  const parsed = GeneratedPlaybookSchema.safeParse(
-    JSON.parse(stripFences(response.output_text ?? ""))
-  );
-  if (!parsed.success) {
-    throw new Error(
-      `playbook failed validation: ${JSON.stringify(parsed.error.issues).slice(0, 200)}`
-    );
-  }
-  return parsed.data;
 }
 
 /**
@@ -1416,6 +1655,84 @@ export async function callWebsiteAnalysis(
  * founder — generation and verification are deliberately separate so the route
  * can drop dead links without re-prompting.
  */
+function fallbackInspiration(
+  profile: ClientProfile,
+  conclusions: Conclusion[],
+  reason: string
+): InspirationKit {
+  const product = profileProduct(profile);
+  const audience = profileAudience(profile);
+  const category = profile.category || product;
+  const search = (q: string) =>
+    `https://www.youtube.com/results?search_query=${encodeURIComponent(q)}`;
+  const topObjection =
+    conclusions.find((c) => /objection|risk|barrier|concern/i.test(c.claim))
+      ?.value ?? "price, trust, quality, and delivery objections";
+  return InspirationKitSchema.parse({
+    videoExamples: [
+      {
+        id: "product-demo-search",
+        title: `${product} product demo examples`,
+        channel: "YouTube search",
+        youtubeId: "",
+        searchQuery: `${product} product demo ${category}`,
+        url: search(`${product} product demo ${category}`),
+        verified: false,
+        whyRelevant: `Fast fallback generated because ${reason}; use the search results to pick real demos in this category.`,
+        takeaway:
+          "Copy the structure: problem hook, close-up proof, use context, and a clear purchase reason.",
+      },
+      {
+        id: "objection-content-search",
+        title: `${category} objection-handling examples`,
+        channel: "YouTube search",
+        youtubeId: "",
+        searchQuery: `${category} customer objections product review`,
+        url: search(`${category} customer objections product review`),
+        verified: false,
+        whyRelevant: `Your simulated audience needs reassurance around ${topObjection}.`,
+        takeaway:
+          "Turn each objection into one short video with the answer shown visually, not just stated.",
+      },
+    ],
+    placementExamples: [
+      {
+        id: "in-context-lifestyle-shot",
+        pattern: "In-context lifestyle shot",
+        account: "Category benchmark search",
+        accountUrl: null,
+        platform: "Instagram / TikTok",
+        recipe: `Show ${product} being used by ${audience}, with the product visible in the first second.`,
+        whyItWorks:
+          "It lets the buyer imagine ownership while still preserving product clarity.",
+      },
+      {
+        id: "detail-proof-carousel",
+        pattern: "Detail proof carousel",
+        account: "Product proof benchmark",
+        accountUrl: null,
+        platform: "Instagram",
+        recipe:
+          "Frame material, fit/finish, packaging, and outcome as four swipeable proof points.",
+        whyItWorks:
+          "It answers quality concerns without forcing the audience to read a long caption.",
+      },
+      {
+        id: "founder-process-clip",
+        pattern: "Founder/process clip",
+        account: "Founder-led benchmark",
+        accountUrl: null,
+        platform: "Reels / Shorts",
+        recipe:
+          "Film a 15-30 second process moment with one line explaining why it matters for the customer.",
+        whyItWorks:
+          "Founder/process proof builds trust when the brand is still early.",
+      },
+    ],
+    successStories: [],
+  });
+}
+
 export async function callInspiration(
   runId: string,
   profile: ClientProfile,
@@ -1441,7 +1758,7 @@ export async function callInspiration(
               "Search the web to find real, current examples, then output JSON only.",
           },
         ],
-        max_output_tokens: 16000,
+        max_output_tokens: 8000,
         reasoning: { effort: "low" },
       },
       { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
@@ -1469,15 +1786,31 @@ export async function callInspiration(
     );
   } catch (e) {
     console.error(`[inspiration] web-grounded path failed, falling back:`, e);
-    return callJson({
-      runId,
-      system: INSPIRATION_SYSTEM,
-      user: inspirationUser(profile, conclusions),
-      schema: InspirationKitSchema,
-      maxCompletionTokens: 16000,
-      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
-      requestMaxRetries: 0,
-    });
+    if (shouldUseOwnerLocalFallback(e)) {
+      return fallbackInspiration(
+        profile,
+        conclusions,
+        ownerProviderFallbackReason(e)
+      );
+    }
+    try {
+      return await callJson({
+        runId,
+        system: INSPIRATION_SYSTEM,
+        user: inspirationUser(profile, conclusions),
+        schema: InspirationKitSchema,
+        maxCompletionTokens: 8000,
+        requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
+        requestMaxRetries: 0,
+      });
+    } catch (fallbackError) {
+      console.error(`[inspiration] JSON fallback failed:`, fallbackError);
+      return fallbackInspiration(
+        profile,
+        conclusions,
+        ownerProviderFallbackReason(fallbackError)
+      );
+    }
   }
 }
 

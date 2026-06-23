@@ -58,6 +58,17 @@ export function isProviderQuotaError(e: unknown): boolean {
   );
 }
 
+export function isProviderTimeoutError(e: unknown): boolean {
+  const f = errorFields(e);
+  const haystack = `${f.message} ${f.code} ${f.type}`.toLowerCase();
+  return (
+    haystack.includes("timeout") ||
+    haystack.includes("timed out") ||
+    haystack.includes("aborterror") ||
+    haystack.includes("aborted")
+  );
+}
+
 export function toProviderErrorPayload(
   e: unknown,
   fallback = "AI request failed"
@@ -105,12 +116,7 @@ export function toProviderErrorPayload(
     };
   }
 
-  if (
-    haystack.includes("timeout") ||
-    haystack.includes("timed out") ||
-    haystack.includes("aborterror") ||
-    haystack.includes("aborted")
-  ) {
+  if (isProviderTimeoutError(e)) {
     return {
       status: 504,
       payload: {
