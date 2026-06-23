@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { callGeneratePlaybook } from "@/lib/llm";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { savePlaybook, getPlaybook } from "@/lib/store";
 import { config } from "@/lib/config";
 import { ClientProfileSchema } from "@/lib/schema";
@@ -68,12 +69,13 @@ export async function POST(
     if (run.projectId)
       await savePlaybook(run.projectId, run.id, playbook).catch((e) =>
         console.error(`[playbook] persist failed:`, e)
-      );
+    );
     return NextResponse.json({ playbook });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "playbook generation failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "playbook generation failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }

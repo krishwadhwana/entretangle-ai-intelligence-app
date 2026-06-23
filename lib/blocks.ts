@@ -3,6 +3,7 @@ import { config } from "./config";
 import { callExecutor } from "./llm";
 import { getCostUsd, getTokensUsed } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
+import { providerErrorMessage } from "./providerErrors";
 import type { RunEmitter } from "./events";
 import type { ClientProfile, Conclusion, ExecutorOutput } from "./schema";
 
@@ -120,7 +121,7 @@ export async function executeBlock(
     return true;
   } catch (e) {
     if (isRunCancelledError(e)) throw e;
-    const error = e instanceof Error ? e.message : String(e);
+    const error = providerErrorMessage(e, "block failed");
     await prisma.block.update({
       where: { id: blockId },
       data: { state: "failed" },

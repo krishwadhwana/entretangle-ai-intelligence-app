@@ -1,5 +1,6 @@
 import { prisma } from "./db";
 import { RunEmitter } from "./events";
+import { providerErrorMessage } from "./providerErrors";
 
 // A worker renews its lock every LEASE_RENEW_MS while a job runs. If a job sits
 // in "running" with a lock older than LEASE_MS, the worker that held it is
@@ -245,7 +246,7 @@ export async function markJobFailed(
   job: ClaimedRunJob,
   error: unknown
 ): Promise<void> {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = providerErrorMessage(error, "job failed");
   await prisma.runJob.update({
     where: { id: job.id },
     data: {

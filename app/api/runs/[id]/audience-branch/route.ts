@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { enqueueRunJob } from "@/lib/jobs";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 
 export const dynamic = "force-dynamic";
 
@@ -91,12 +92,10 @@ export async function POST(
       { status: 201 }
     );
   } catch (e) {
-    return NextResponse.json(
-      {
-        error:
-          e instanceof Error ? e.message : "audience branch creation failed",
-      },
-      { status: 400 }
+    const { payload } = toProviderErrorPayload(
+      e,
+      "audience branch creation failed"
     );
+    return NextResponse.json(payload, { status: 400 });
   }
 }

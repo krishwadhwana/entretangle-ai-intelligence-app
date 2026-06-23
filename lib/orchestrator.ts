@@ -2,6 +2,7 @@ import { prisma } from "./db";
 import { config } from "./config";
 import { RunEmitter, startHeartbeat } from "./events";
 import { executeBlock } from "./blocks";
+import { providerErrorMessage } from "./providerErrors";
 import {
   callPlannerV2,
   callEntangler,
@@ -721,7 +722,7 @@ export async function executeRun(runId: string): Promise<void> {
       await markRunCancelled(runId);
       throw e;
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = providerErrorMessage(e, "run failed");
     console.error(`[orchestrator] run ${runId} failed:`, e);
     try {
       await prisma.run.update({
@@ -857,7 +858,7 @@ export async function resumeRun(runId: string): Promise<void> {
       await markRunCancelled(runId);
       throw e;
     }
-    const message = e instanceof Error ? e.message : String(e);
+    const message = providerErrorMessage(e, "resume failed");
     console.error(`[orchestrator] resume ${runId} failed:`, e);
     try {
       await prisma.run.update({

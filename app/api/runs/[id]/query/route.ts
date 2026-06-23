@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db";
 import { callQuery } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/orchestrator";
 import { RunEmitter } from "@/lib/events";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { ClientProfileSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -95,9 +96,7 @@ export async function POST(
       citedConclusionIds,
     });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "query failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "query failed");
+    return NextResponse.json(payload, { status });
   }
 }

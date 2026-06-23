@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { enqueueRunJob } from "@/lib/jobs";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { getCostUsd, getTokensUsed } from "@/lib/usage";
 import { RoleSchema, SegmentSchema, type AudienceAggregate } from "@/lib/schema";
 import { cohortToWire, personaToWire } from "@/lib/wire";
@@ -97,10 +98,11 @@ export async function POST(
       { status: 202 }
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "audience batch failed" },
-      { status: 500 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "audience batch failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }
 

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callPersonaReply, callPersonaConclusion } from "@/lib/llm";
 import { RunEmitter } from "@/lib/events";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { ClientProfileSchema } from "@/lib/schema";
 import type { PersonaConversationMessage } from "@/lib/schema";
 import { cohortToWire, personaToWire } from "@/lib/wire";
@@ -169,10 +170,11 @@ export async function POST(
       );
       conclusion = out.conclusion;
     } catch (e) {
-      return NextResponse.json(
-        { error: e instanceof Error ? e.message : "conclusion failed" },
-        { status: 502 }
+      const { payload, status } = toProviderErrorPayload(
+        e,
+        "conclusion failed"
       );
+      return NextResponse.json(payload, { status });
     }
     const updated = await prisma.personaConversation.update({
       where: { id: convo.id },
@@ -208,10 +210,8 @@ export async function POST(
       messages
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "reply failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "reply failed");
+    return NextResponse.json(payload, { status });
   }
 
   messages.push({

@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import "leaflet/dist/leaflet.css";
+import { providerErrorMessage } from "@/lib/providerErrors";
 import type {
   AudienceAggregate,
   Cohort,
@@ -306,7 +307,11 @@ export default function MapView({
         }),
       });
       const data = await readBody(res);
-      if (!res.ok) throw new Error(data?.error ?? `batch failed (${res.status})`);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `batch failed (${res.status})`)
+        );
+      }
 
       // The cohort is simulated on the worker (no serverless timeout); poll the
       // cohort until it lands, then fold it into the canvas.
@@ -335,7 +340,7 @@ export default function MapView({
       setPinMode(false);
       setResults([]);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Audience batch failed");
+      setError(providerErrorMessage(e, "Audience batch failed"));
     } finally {
       setAdding(false);
     }

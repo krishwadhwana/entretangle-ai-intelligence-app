@@ -21,6 +21,7 @@ import { DOMAIN_META, PLAYBOOK_ORDER } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
 import GlossaryText from "./GlossaryText";
 import { ValueTooltip } from "./ValueTooltip";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 // What each business module answers — shown as the section subtitle so a
 // founder can "walk through each module of the business".
@@ -273,7 +274,7 @@ export default function PlaybookView({
         .catch(
           (e) =>
             alive &&
-            setGenError(e instanceof Error ? e.message : "playbook generation failed")
+            setGenError(providerErrorMessage(e, "playbook generation failed"))
         )
         .finally(() => alive && setGenBusy(false));
     } else if (!cached) {
@@ -303,7 +304,7 @@ export default function PlaybookView({
       const data = await res.json().catch(() => ({}));
       if (!res.ok)
         throw new Error(
-          typeof data?.error === "string" ? data.error : `failed (${res.status})`
+          providerErrorMessage(data?.error ?? data, `failed (${res.status})`)
         );
       return data.playbook as GeneratedPlaybook;
     })();
@@ -313,7 +314,7 @@ export default function PlaybookView({
       pbResult.set(runId, result);
       setGenerated(result);
     } catch (e) {
-      setGenError(e instanceof Error ? e.message : "playbook generation failed");
+      setGenError(providerErrorMessage(e, "playbook generation failed"));
     } finally {
       pbInFlight.delete(runId);
       setGenBusy(false);

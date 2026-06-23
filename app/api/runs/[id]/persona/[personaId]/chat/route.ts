@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callAudienceChat } from "@/lib/llm";
 import { RunEmitter } from "@/lib/events";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
   AudienceChatHistoryItemSchema,
   ClientProfileSchema,
@@ -56,10 +57,8 @@ export async function POST(
       body.data.history
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "persona chat failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "persona chat failed");
+    return NextResponse.json(payload, { status });
   }
 
   // Last reply that carries a fresh intent reading is the persona's new stance.

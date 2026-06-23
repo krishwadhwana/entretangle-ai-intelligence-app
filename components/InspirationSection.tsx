@@ -16,6 +16,7 @@ import type {
   InspirationSection as InspirationState,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 function EmptyState({ label }: { label: string }) {
   return (
@@ -183,7 +184,11 @@ export default function InspirationSection({
         method: "POST",
       });
       const body = await res.json();
-      if (!res.ok) throw new Error(body.error ?? "inspiration failed");
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(body.error ?? body, "inspiration failed")
+        );
+      }
       const next: InspirationState = {
         kit: body.kit,
         generatedAt: body.generatedAt,
@@ -192,7 +197,7 @@ export default function InspirationSection({
       setSection(next);
       onSaved(next);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "inspiration failed");
+      setError(providerErrorMessage(e, "inspiration failed"));
     } finally {
       setLoading(false);
     }

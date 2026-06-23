@@ -17,6 +17,7 @@ import { SEGMENT_COLORS } from "./segments";
 import { ValueTooltip } from "./ValueTooltip";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 type Props = {
   runId: string;
@@ -524,8 +525,12 @@ export default function CohortDrawer({
           ),
         }
       );
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `chat failed (${res.status})`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data.error ?? data, `chat failed (${res.status})`)
+        );
+      }
       const result = data as AudienceChatResponse;
       const received = result.messages.map((message, index) => ({
         id: `audience-${Date.now()}-${index}`,
@@ -545,7 +550,7 @@ export default function CohortDrawer({
         nextMove: result.nextMove ?? "",
       });
     } catch (e) {
-      setChatError(e instanceof Error ? e.message : "chat failed");
+      setChatError(providerErrorMessage(e, "chat failed"));
     } finally {
       setChatLoading(false);
     }

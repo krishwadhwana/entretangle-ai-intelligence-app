@@ -11,6 +11,7 @@ import type {
   RunEvent,
   RunStatus,
 } from "@/lib/schema";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 export type CohortWithPersonas = Cohort & { personas: Persona[] };
 
@@ -130,11 +131,12 @@ export function canvasReducer(
       const b = next.blocks[event.blockId];
       if (!b) return next;
       const t = next.blockTimings[b.id];
+      const error = providerErrorMessage(event.error, event.error);
       return {
         ...next,
         blocks: {
           ...next.blocks,
-          [b.id]: { ...b, state: "failed", logs: [...b.logs, event.error] },
+          [b.id]: { ...b, state: "failed", logs: [...b.logs, error] },
         },
         blockTimings: t
           ? { ...next.blockTimings, [b.id]: { ...t, end: event.ts } }
@@ -246,7 +248,10 @@ export function canvasReducer(
         ],
       };
     case "run_error":
-      return { ...next, error: event.message };
+      return {
+        ...next,
+        error: providerErrorMessage(event.message, event.message),
+      };
     default:
       return next;
   }

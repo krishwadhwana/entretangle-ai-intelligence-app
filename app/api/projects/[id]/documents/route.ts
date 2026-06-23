@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { getProject, listDocuments } from "@/lib/store";
 import { ingestDocument } from "@/lib/rag";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 
 export const dynamic = "force-dynamic";
 
@@ -38,9 +39,9 @@ export async function POST(
     );
     return NextResponse.json({ document: result }, { status: 201 });
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "ingest failed" },
-      { status: 422 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "ingest failed");
+    return NextResponse.json(payload, {
+      status: status === 502 ? 422 : status,
+    });
   }
 }

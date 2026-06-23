@@ -6,6 +6,7 @@ import { ClientProfileSchema } from "@/lib/schema";
 import { getFinancialModel } from "@/lib/store";
 import { getCostUsd, getTokensUsed } from "@/lib/usage";
 import { blockToWire } from "@/lib/wire";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 
 export const dynamic = "force-dynamic";
 
@@ -58,22 +59,30 @@ export async function POST(
   const financials = run.projectId
     ? await getFinancialModel(run.projectId, run.id)
     : null;
-  const report = await callFinalReport(
-    run.id,
-    profile,
-    run.blocks.map((b) => blockToWire(b, b.conclusions)),
-    aggregate,
-    financials
-  );
+  try {
+    const report = await callFinalReport(
+      run.id,
+      profile,
+      run.blocks.map((b) => blockToWire(b, b.conclusions)),
+      aggregate,
+      financials
+    );
 
-  const emitter = await RunEmitter.create(run.id);
-  await emitter.emit({ type: "final_report", report });
-  const [tokensUsed, costUsd] = await Promise.all([
-    getTokensUsed(run.id),
-    getCostUsd(run.id),
-  ]);
-  await emitter.emit({ type: "tokens_used", tokensUsed });
-  await emitter.emit({ type: "cost_used", costUsd });
+    const emitter = await RunEmitter.create(run.id);
+    await emitter.emit({ type: "final_report", report });
+    const [tokensUsed, costUsd] = await Promise.all([
+      getTokensUsed(run.id),
+      getCostUsd(run.id),
+    ]);
+    await emitter.emit({ type: "tokens_used", tokensUsed });
+    await emitter.emit({ type: "cost_used", costUsd });
 
-  return NextResponse.json({ report, tokensUsed, costUsd });
+    return NextResponse.json({ report, tokensUsed, costUsd });
+  } catch (e) {
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "report generation failed"
+    );
+    return NextResponse.json(payload, { status });
+  }
 }

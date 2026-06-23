@@ -23,6 +23,7 @@ import {
 import { getAttentionMomentumPct } from "@/lib/datasources/structured";
 import { regionForLocality } from "@/lib/datasources/politicalGeography";
 import { DEFAULT_FX, fetchFxRate } from "@/lib/datasources/exportCosts";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -438,10 +439,11 @@ export async function POST(
     };
     return NextResponse.json(record);
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "launch simulation failed" },
-      { status: 502 }
+    const { payload, status } = toProviderErrorPayload(
+      e,
+      "launch simulation failed"
     );
+    return NextResponse.json(payload, { status });
   }
 }
 

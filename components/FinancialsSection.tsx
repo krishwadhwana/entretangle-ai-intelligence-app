@@ -34,6 +34,7 @@ import type {
 import type { CanvasState } from "./useRunEvents";
 import { ValueTooltip } from "./ValueTooltip";
 import { downloadDossier, type DossierSection } from "./pdf";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 // Provenance dot — the visible signal of "hybrid by stage": ai estimates firm
 // up to founder/data numbers over the journey.
@@ -281,11 +282,15 @@ export default function FinancialsSection({
         body: JSON.stringify({ question }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? `ask failed (${res.status})`);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `ask failed (${res.status})`)
+        );
+      }
       setFollowUp(data.followUp ?? []);
       setQ("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "ask failed");
+      setError(providerErrorMessage(e, "ask failed"));
     } finally {
       setAsking(false);
     }
@@ -605,7 +610,9 @@ export default function FinancialsSection({
       });
       if (!res.ok) {
         const b = await res.json().catch(() => ({}));
-        throw new Error(b.error || `failed (${res.status})`);
+        throw new Error(
+          providerErrorMessage(b.error ?? b, `failed (${res.status})`)
+        );
       }
       const data = (await res.json()) as FinancialsState;
       setModel(data.model);
@@ -614,7 +621,7 @@ export default function FinancialsSection({
       setGeneratedAt(data.generatedAt ?? null);
       onSaved?.(data);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Generation failed.");
+      setError(providerErrorMessage(e, "Generation failed."));
     } finally {
       setBusy(false);
     }

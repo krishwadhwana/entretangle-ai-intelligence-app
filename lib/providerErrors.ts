@@ -29,7 +29,9 @@ function errorFields(e: unknown): {
       ? e.message
       : typeof e === "string"
         ? e
-        : String(obj.message ?? errorObj.message ?? "");
+        : typeof obj.error === "string"
+          ? obj.error
+          : String(obj.message ?? errorObj.message ?? "");
   const statusRaw = obj.status ?? obj.statusCode ?? errorObj.status;
   const status =
     typeof statusRaw === "number"
@@ -69,9 +71,9 @@ export function toProviderErrorPayload(
       payload: {
         code: "openai_quota_exceeded",
         error:
-          "OpenAI quota is exhausted for the configured API key. Add billing/credits or swap OPENAI_API_KEY, then retry.",
+          "OpenAI rejected the configured API key/project for insufficient quota. Use a key from the funded OpenAI project, then retry.",
         detail:
-          "The app reached OpenAI, but OpenAI rejected the request before generation because the key has no available quota.",
+          "The app reached OpenAI, but OpenAI rejected the request before generation because this key's project has no available API quota.",
         providerStatus: f.status ?? 429,
         retryable: false,
       },
@@ -129,4 +131,11 @@ export function toProviderErrorPayload(
       retryable: true,
     },
   };
+}
+
+export function providerErrorMessage(
+  e: unknown,
+  fallback = "AI request failed"
+): string {
+  return toProviderErrorPayload(e, fallback).payload.error;
 }

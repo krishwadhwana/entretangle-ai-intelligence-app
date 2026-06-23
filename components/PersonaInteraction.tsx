@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { Loader2, Send, Sparkles, Flag, Plus, Search, X, MapPin } from "lucide-react";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 // A persona the picker can choose — carries its cohort context (label, region,
 // segment) so you can pull someone in from another ring of the country.
@@ -115,12 +116,16 @@ export default function PersonaInteraction({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? `failed (${res.status})`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data.error ?? data, `failed (${res.status})`)
+        );
+      }
       setConvo(data as PersonaConversation);
       return true;
     } catch (e) {
-      setError(e instanceof Error ? e.message : "request failed");
+      setError(providerErrorMessage(e, "request failed"));
       return false;
     } finally {
       setLoading(null);

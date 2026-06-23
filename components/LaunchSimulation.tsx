@@ -51,6 +51,7 @@ import type {
   LaunchSimInputs,
   LaunchSimRecord,
 } from "@/lib/schema";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 // ---------------------------------------------------------------------------
 // Launch Simulation view. Feed cost / sale price / ad spend, fast-forward the
@@ -87,6 +88,8 @@ type Defaults = {
 // Turn an API error payload into a readable string. A 400 returns Zod issues as
 // an ARRAY of objects; `new Error(array)` would stringify to "[object Object]".
 function apiErrorMessage(err: unknown, fallback: string): string {
+  const providerMessage = providerErrorMessage(err, "");
+  if (providerMessage) return providerMessage;
   if (typeof err === "string") return err;
   if (Array.isArray(err)) {
     const msgs = err
@@ -203,7 +206,7 @@ export default function LaunchSimulation({
           : "No new figures found; keeping curated priors."
       );
     } catch (e) {
-      setError(e instanceof Error ? e.message : "market data sourcing failed");
+      setError(providerErrorMessage(e, "market data sourcing failed"));
     } finally {
       setSourcing(false);
     }
@@ -221,11 +224,16 @@ export default function LaunchSimulation({
       setError(null);
       try {
         const res = await fetch(`/api/runs/${runId}/launch-sim`);
-        if (!res.ok) throw new Error(`failed to load (${res.status})`);
-        const data = (await res.json()) as {
+        const data = (await res.json().catch(() => ({}))) as {
           scenarios: LaunchSimRecord[];
           defaults: Defaults;
+          error?: unknown;
         };
+        if (!res.ok) {
+          throw new Error(
+            providerErrorMessage(data?.error ?? data, `failed to load (${res.status})`)
+          );
+        }
         if (!alive) return;
         setScenarios(data.scenarios);
         setDefaults(data.defaults);
@@ -269,7 +277,7 @@ export default function LaunchSimulation({
         }
       } catch (e) {
         if (alive)
-          setError(e instanceof Error ? e.message : "Failed to load defaults");
+          setError(providerErrorMessage(e, "Failed to load defaults"));
       } finally {
         if (alive) setLoading(false);
       }
@@ -293,7 +301,7 @@ export default function LaunchSimulation({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ inputs, name, projectId }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok)
         throw new Error(apiErrorMessage(data?.error, `failed (${res.status})`));
       const record = data as LaunchSimRecord;
@@ -301,7 +309,7 @@ export default function LaunchSimulation({
       setActive(record);
       setName(nextName([record, ...scenarios]));
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Simulation failed");
+      setError(providerErrorMessage(e, "Simulation failed"));
     } finally {
       setBusy(false);
     }
@@ -372,7 +380,7 @@ export default function LaunchSimulation({
         throw new Error(apiErrorMessage(data?.error, `rename failed (${res.status})`));
     } catch (e) {
       renameScenarioLocal(target.id, target.name);
-      setError(e instanceof Error ? e.message : "Rename failed");
+      setError(providerErrorMessage(e, "Rename failed"));
     }
   }, [editingScenarioId, renameScenarioLocal, runId, scenarioDraft, scenarios]);
 
@@ -1165,12 +1173,19 @@ function Results({
         body: JSON.stringify({ scenarioId: record.id, knowledge: k }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? `propose failed (${res.status})`);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(
+            data?.error ?? data,
+            `propose failed (${res.status})`
+          )
+        );
+      }
       const update = data.update as AssumptionUpdate;
       setProposal(update);
       setAccepted(new Set(update.changes.map((_, i) => i))); // default: accept all
     } catch (e) {
-      setKError(e instanceof Error ? e.message : "propose failed");
+      setKError(providerErrorMessage(e, "propose failed"));
     } finally {
       setProposing(false);
     }
@@ -1196,12 +1211,16 @@ function Results({
         }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? `re-run failed (${res.status})`);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `re-run failed (${res.status})`)
+        );
+      }
       onRerun(data as LaunchSimRecord);
       setProposal(null);
       setKnowledge("");
     } catch (e) {
-      setKError(e instanceof Error ? e.message : "re-run failed");
+      setKError(providerErrorMessage(e, "re-run failed"));
     } finally {
       setRerunning(false);
     }
@@ -1219,11 +1238,15 @@ function Results({
         body: JSON.stringify({ scenarioId: record.id, question }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? `ask failed (${res.status})`);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `ask failed (${res.status})`)
+        );
+      }
       setFollowUp(data.followUp ?? []);
       setQ("");
     } catch (e) {
-      setQaError(e instanceof Error ? e.message : "ask failed");
+      setQaError(providerErrorMessage(e, "ask failed"));
     } finally {
       setAsking(false);
     }

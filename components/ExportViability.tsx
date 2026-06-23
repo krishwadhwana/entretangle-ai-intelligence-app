@@ -19,6 +19,7 @@ import {
   deriveExportDecision,
   type ExportDecision,
 } from "@/lib/exportDecision";
+import { providerErrorMessage } from "@/lib/providerErrors";
 import type { Dossier, KPI } from "./pdf";
 
 // ---------------------------------------------------------------------------
@@ -116,11 +117,15 @@ export default function ExportViability({ runId, targetMarket }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error?.toString() ?? "export simulation failed");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, "export simulation failed")
+        );
+      }
       setReport(data.report as ExportViabilityReport);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "export simulation failed");
+      setError(providerErrorMessage(e, "export simulation failed"));
     } finally {
       setLoading(false);
     }

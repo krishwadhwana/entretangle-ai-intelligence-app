@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { callIntake } from "@/lib/llm";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { ChatMessageSchema, IntakePrefillSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
@@ -23,9 +24,7 @@ export async function POST(req: NextRequest) {
       await callIntake(body.data.messages, body.data.prefill ?? null)
     );
   } catch (e) {
-    return NextResponse.json(
-      { error: e instanceof Error ? e.message : "intake failed" },
-      { status: 502 }
-    );
+    const { payload, status } = toProviderErrorPayload(e, "intake failed");
+    return NextResponse.json(payload, { status });
   }
 }

@@ -30,6 +30,7 @@ import type {
   SimulationRunRecord,
   WebsiteAnalysis,
 } from "@/lib/schema";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
 // durable project: every message, the pending question, the finished profile
@@ -693,7 +694,12 @@ function IntakePageInner() {
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok)
-        throw new Error(data?.error ?? `Analysis failed (${res.status})`);
+        throw new Error(
+          providerErrorMessage(
+            data?.error ?? data,
+            `Analysis failed (${res.status})`
+          )
+        );
       const analysis = data.analysis as WebsiteAnalysis;
       setWebsiteAnalysis(analysis);
 
@@ -719,7 +725,7 @@ function IntakePageInner() {
         done: false,
       });
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Website analysis failed");
+      setError(providerErrorMessage(err, "Website analysis failed"));
     } finally {
       setAnalyzing(false);
     }
@@ -769,8 +775,12 @@ function IntakePageInner() {
             : undefined,
         }),
       });
-      if (!res.ok) throw new Error(`Intake failed (${res.status})`);
-      const result = await res.json();
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(result?.error ?? result, `Intake failed (${res.status})`)
+        );
+      }
 
       if (!result.done) {
         const nextPending: PendingQuestion = {
@@ -841,7 +851,7 @@ function IntakePageInner() {
         }),
       ]);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(providerErrorMessage(err, "Something went wrong"));
       setLaunching(false);
     } finally {
       submittingRef.current = false;

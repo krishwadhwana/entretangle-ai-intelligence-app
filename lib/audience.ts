@@ -16,6 +16,7 @@ import {
 import { regionForLocality } from "./datasources/politicalGeography";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
+import { providerErrorMessage } from "./providerErrors";
 import type { RunEmitter } from "./events";
 import type {
   AudienceAggregate,
@@ -444,7 +445,7 @@ export async function simulateCohort(
     return true;
   } catch (e) {
     if (isRunCancelledError(e)) throw e;
-    const error = e instanceof Error ? e.message : String(e);
+    const error = providerErrorMessage(e, "cohort simulation failed");
     await prisma.cohort.update({
       where: { id: cohortId },
       data: { state: "failed" },

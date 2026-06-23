@@ -26,6 +26,7 @@ import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
 import LaunchSimulation from "./LaunchSimulation";
+import { providerErrorMessage } from "@/lib/providerErrors";
 import ExportViability from "./ExportViability";
 import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
@@ -380,8 +381,12 @@ export default function RunDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ force }),
       });
-      if (!res.ok) throw new Error(`report failed (${res.status})`);
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `report failed (${res.status})`)
+        );
+      }
       patchState({
         finalReport: data.report,
         phaseLabel: "World model ready",
@@ -389,6 +394,10 @@ export default function RunDashboard({
           ? { tokensUsed: data.tokensUsed }
           : {}),
         ...(typeof data.costUsd === "number" ? { costUsd: data.costUsd } : {}),
+      });
+    } catch (e) {
+      patchState({
+        error: providerErrorMessage(e, "report generation failed"),
       });
     } finally {
       patchState({ phaseLabel: "World model ready" });
@@ -407,13 +416,15 @@ export default function RunDashboard({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ information }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        throw new Error(data?.error ?? `branch failed (${res.status})`);
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `branch failed (${res.status})`)
+        );
       }
       router.push(`/runs/${data.runId}`);
     } catch (e) {
-      setAudienceBranchError(e instanceof Error ? e.message : "Branch failed");
+      setAudienceBranchError(providerErrorMessage(e, "Branch failed"));
       setAudienceBranchBusy(false);
     }
   }, [audienceBranchBusy, audienceBranchInfo, router, runId]);
@@ -448,15 +459,15 @@ export default function RunDashboard({
           ...(ovContext.trim() ? { additionalContext: ovContext.trim() } : {}),
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
-        const msg =
-          typeof data?.error === "string" ? data.error : `export failed (${res.status})`;
-        throw new Error(msg);
+        throw new Error(
+          providerErrorMessage(data?.error ?? data, `export failed (${res.status})`)
+        );
       }
       router.push(`/runs/${data.runId}`);
     } catch (e) {
-      setExportError(e instanceof Error ? e.message : "Export run failed");
+      setExportError(providerErrorMessage(e, "Export run failed"));
       setExportBusy(false);
     }
   }, [

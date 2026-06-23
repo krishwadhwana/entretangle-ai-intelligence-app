@@ -20,6 +20,7 @@ import type {
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { ValueTooltip } from "./ValueTooltip";
+import { providerErrorMessage } from "@/lib/providerErrors";
 
 const CHECK_ORDER = ["Setup", "Brand", "Content", "Growth", "Outreach"];
 const PRIORITY_STYLE: Record<string, string> = {
@@ -134,7 +135,9 @@ export default function BrandSocialSection({
       const res = await fetch(`/api/runs/${runId}/brandkit`, { method: "POST" });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || `failed (${res.status})`);
+        throw new Error(
+          providerErrorMessage(body.error ?? body, `failed (${res.status})`)
+        );
       }
       const data = await res.json();
       setKit(data.kit);
@@ -147,7 +150,7 @@ export default function BrandSocialSection({
         sourceRunId: runId,
       });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Generation failed.");
+      setError(providerErrorMessage(e, "Generation failed."));
     } finally {
       setBusy(false);
     }
