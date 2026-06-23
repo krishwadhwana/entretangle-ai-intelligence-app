@@ -293,6 +293,16 @@ export function resolveLaunchInputs(
   const returnShippingPerOrder =
     i.returnShippingPerOrder ?? i.shippingPerOrder;
   const channels = normalizeChannels(i, preset);
+  const resolvedRepeatRateMult = i.repeatRateMult * preset.repeatMult;
+  const monthlyGrowthPct =
+    i.monthlyGrowthPct ??
+    deriveAudienceMonthlyGrowthPct(i, personas, {
+      reachablePool,
+      decisionSpeed,
+      channels,
+      stepsPerMonth,
+      repeatRateMult: resolvedRepeatRateMult,
+    });
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
   // founder didn't pin a MOQ. Size it from first-month checkout-level demand,
@@ -352,8 +362,9 @@ export function resolveLaunchInputs(
     returnShippingPerOrder,
     initialInventoryUnits,
     minOrderQtyUnits,
+    monthlyGrowthPct,
     refundRateMult: i.refundRateMult * preset.refundMult,
-    repeatRateMult: i.repeatRateMult * preset.repeatMult,
+    repeatRateMult: resolvedRepeatRateMult,
     abandonRate: clamp(i.abandonRate * preset.abandonMult, 0, 1),
   };
 }
@@ -498,6 +509,93 @@ function weightedMeanChannelMetric(
   return channels.reduce((s, ch) => s + select(ch), 0) / channels.length;
 }
 
+const GROWTH_RISK_OBJECTION_RE =
+  /too expensive|expensive|unknown|trust|quality|fake|return|refund|risky|risk|not sure|not need|don't need|delivery|size|fit|fragile|warranty|habit|switch/i;
+
+function deriveAudienceMonthlyGrowthPct(
+  inputs: LaunchSimInputs,
+  personas: LaunchPersona[],
+  resolved: {
+    reachablePool: number;
+    decisionSpeed: number;
+    channels: LaunchChannelInput[];
+    stepsPerMonth: number;
+    repeatRateMult: number;
+  }
+): number {
+  if (personas.length === 0) return 0;
+
+  let buySum = 0;
+  let viable = 0;
+  let strong = 0;
+  let affordable = 0;
+  let channelFitSum = 0;
+  let repeatSum = 0;
+  let objectionRisk = 0;
+
+  for (const p of personas) {
+    const buy = buyProbability(p, inputs.salePrice);
+    buySum += buy;
+    if (buy >= 0.12) viable++;
+    if (buy >= 0.35) strong++;
+    if (p.wtp >= inputs.salePrice) affordable++;
+    if (GROWTH_RISK_OBJECTION_RE.test(p.objection ?? "")) objectionRisk++;
+    repeatSum +=
+      (ANNUAL_REPEAT_BY_SEGMENT[String(p.segment ?? "").toLowerCase()] ?? 0.4) *
+      resolved.repeatRateMult;
+
+    let bestFit = 0.55;
+    for (const ch of resolved.channels) {
+      bestFit = Math.max(bestFit, channelPlatformAffinity(p, ch));
+    }
+    channelFitSum += clamp(bestFit / 1.2, 0, 1);
+  }
+
+  const n = personas.length;
+  const meanBuy = buySum / n;
+  const viableShare = viable / n;
+  const strongShare = strong / n;
+  const affordableShare = affordable / n;
+  const channelFit = channelFitSum / n;
+  const annualRepeat = repeatSum / n;
+  const objectionShare = objectionRisk / n;
+
+  const paidReach =
+    inputs.cpm > 0 && inputs.adSpendPerMonth > 0
+      ? ((inputs.adSpendPerMonth / inputs.cpm) * 1000) /
+        Math.max(inputs.frequencyCap, 1)
+      : 0;
+  const organicReachMonth =
+    inputs.granularity === "day"
+      ? inputs.organicReachPerStep * 30
+      : inputs.organicReachPerStep;
+  const firstMonthReach = paidReach + organicReachMonth;
+  const runwayMonths =
+    firstMonthReach > 0 ? resolved.reachablePool / Math.max(firstMonthReach, 1) : 0;
+  const runwayScore =
+    firstMonthReach > 0 ? clamp((runwayMonths - 6) / 18, -1, 1) : -0.5;
+  const organicShare =
+    firstMonthReach > 0 ? clamp(organicReachMonth / firstMonthReach, 0, 1) : 0;
+  const decisionCoverage =
+    1 - Math.pow(1 - resolved.decisionSpeed, resolved.stepsPerMonth);
+
+  const score =
+    (meanBuy - 0.08) * 45 +
+    (viableShare - 0.3) * 8 +
+    (strongShare - 0.08) * 14 +
+    (affordableShare - 0.45) * 4 +
+    (channelFit - 0.55) * 6 +
+    (annualRepeat - 0.4) * 5 +
+    (clamp(inputs.viralityK, 0, 1) - 0.12) * 6 +
+    (organicShare - 0.1) * 2 +
+    runwayScore * 2 -
+    objectionShare * 5 -
+    Math.max(0, 0.5 - decisionCoverage) * 3 -
+    (firstMonthReach > 0 ? 0 : 4);
+
+  return round(clamp(score, -12, 12), 1);
+}
+
 function averageFunnelStages(channels: LaunchChannelInput[]) {
   return {
     engagementRate: clamp(
@@ -516,24 +614,6 @@ function averageFunnelStages(channels: LaunchChannelInput[]) {
       1
     ),
   };
-}
-
-function paidLaunchEfficiency(
-  step: number,
-  stepsPerMonth: number,
-  reachedShare: number
-): number {
-  const month = step / Math.max(1, stepsPerMonth);
-  // The launch window has novelty; the same paid budget should not keep buying
-  // the same number of first-time customers forever. Hold the opening quarter,
-  // then let creative fatigue / audience familiarity raise effective CAC. The
-  // small floor reflects ongoing evergreen acquisition, not launch heat.
-  const novelty =
-    month <= 3 ? 1 : 0.12 + 0.88 * Math.exp(-(month - 3) / 3.5);
-  // Reaching more of the finite pool leaves a colder, harder-to-convert residue.
-  const saturation =
-    month <= 3 ? 1 : Math.pow(clamp(1 - reachedShare, 0, 1), 0.55);
-  return clamp(novelty * saturation, 0.05, 1);
 }
 
 // --- a NameCount accumulator -----------------------------------------------
@@ -644,7 +724,9 @@ export function simulateLaunch(
   rawInputs: LaunchSimInputs,
   ctx: LaunchContext = {}
 ): LaunchSimResult {
-  const inputs = resolveLaunchInputs(rawInputs, personas, ctx);
+  const parsedRawInputs = LaunchSimInputsSchema.parse(rawInputs);
+  const growthWasFounderEntered = parsedRawInputs.monthlyGrowthPct != null;
+  const inputs = resolveLaunchInputs(parsedRawInputs, personas, ctx);
   const N = personas.length;
   // Proportional regional slice: scale ad spend + fixed costs (the pool is scaled
   // in resolveLaunchInputs) so per-region runs reconcile with the whole-audience
@@ -678,6 +760,7 @@ export function simulateLaunch(
     ? seasonality.reduce((s, x) => s + x, 0) / 12 || 1
     : 1;
   const momentumMult = 1 + clamp(inputs.demandMomentumPct ?? 0, -25, 25) / 100;
+  const monthlyGrowthRate = clamp(inputs.monthlyGrowthPct ?? 0, -80, 300) / 100;
 
   const funded = new Set(inputs.adPlatforms.map((p) => p.toLowerCase()));
   const homeCountry = modal(personas.map((p) => p.country));
@@ -845,7 +928,9 @@ export function simulateLaunch(
             (inputs.launchStartMonth - 1 + monthIndex) % 12
           ] / seasonMean
         : 1;
-    const demandMult = seasonFactor * momentumMult;
+    const monthElapsed = t / stepsPerMonth;
+    const growthMult = Math.pow(Math.max(0.01, 1 + monthlyGrowthRate), monthElapsed);
+    const demandMult = seasonFactor * momentumMult * growthMult;
 
     const adSpend = (inputs.adSpendPerMonth / stepsPerMonth) * audienceShare;
     const channelMedia = channels.map((ch) => {
@@ -1088,22 +1173,13 @@ export function simulateLaunch(
     }
 
     // If the financial model has a CAC, paid first-time acquisition cannot
-    // exceed the number of new customers this step's ad budget can buy. The
-    // demand tilt (seasonality × momentum) scales the cap, while launch fatigue
-    // and audience saturation push effective CAC upward over long horizons. This
-    // keeps CAC as an upper bound instead of a guaranteed "same orders forever"
-    // quota.
+    // exceed the number of new customers this step's ad budget can buy. The net
+    // demand trajectory (seasonality, momentum, and explicit/audience-derived
+    // monthly growth) scales that cap; finite reach still limits demand through
+    // the funnel itself.
     if (blendedCac && adSpend > 0 && paidNewDemand > 0) {
-      const reachedShare = reachablePool > 0
-        ? (cumulativeReachedRaw + stepNewlyReached) / reachablePool
-        : 1;
-      const paidEfficiency = paidLaunchEfficiency(
-        t,
-        stepsPerMonth,
-        reachedShare
-      );
       const paidNewCustomerCap =
-        (adSpend / blendedCac) * demandMult * paidEfficiency;
+        (adSpend / blendedCac) * demandMult;
       const paidScale = Math.min(1, paidNewCustomerCap / paidNewDemand);
       if (paidScale < 1) {
         let scaledStepNewOrders = 0;
@@ -1376,7 +1452,7 @@ export function simulateLaunch(
     diagnostics: buildDiagnostics(inputs, summary, breakdowns),
     summary,
     breakdowns,
-    assumptions: buildAssumptions(inputs, ctx),
+    assumptions: buildAssumptions(inputs, ctx, growthWasFounderEntered),
   };
 }
 
@@ -1471,7 +1547,8 @@ function buildDiagnostics(
 
 function buildAssumptions(
   inputs: LaunchSimInputs,
-  ctx: LaunchContext
+  ctx: LaunchContext,
+  growthWasFounderEntered: boolean
 ): LaunchAssumption[] {
   const preset = BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic;
   const channelLabels = inputs.channels.map((c) => c.label).join(", ");
@@ -1517,8 +1594,20 @@ function buildAssumptions(
       source: ctx.blendedCac ? "financial_model" : "computed",
       confidence: ctx.blendedCac ? 0.55 : 0.25,
       basis: ctx.blendedCac
-        ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then tapered by launch fatigue and reachable-audience saturation."
+        ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then scaled by the net monthly demand trajectory."
         : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
+    },
+    {
+      key: "monthlyGrowthPct",
+      label: "MoM growth",
+      value: inputs.monthlyGrowthPct ?? 0,
+      unit: "%/month",
+      source: growthWasFounderEntered ? "founder_entered" : "computed",
+      confidence: growthWasFounderEntered ? 0.75 : 0.55,
+      basis:
+        growthWasFounderEntered
+          ? "Founder-entered monthly growth compounds demand and the paid-acquisition cap over the scenario."
+          : "Derived from the simulated audience's WTP fit, intent depth, objections, channel fit, repeat potential, word of mouth, and reach runway.",
     },
     {
       key: "repeatRateMult",

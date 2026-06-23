@@ -116,6 +116,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   abandonRate: 0.05,
   launchStartMonth: null, // null → server pins to current month on run
   demandMomentumPct: 0, // null/0 → server fills from attention/hype momentum
+  monthlyGrowthPct: null,
   shippingPerOrder: 120,
   paymentFeePct: 0.02,
   fixedCostsPerMonth: 0,
@@ -673,6 +674,26 @@ export default function LaunchSimulation({
                   step={1}
                   small
                 />
+                <NumField
+                  label="Growth / month"
+                  unit="%"
+                  help="Net month-over-month growth in demand/acquisition. Leave on auto to derive from the simulated audience; negative values model cooling demand."
+                  value={inputs.monthlyGrowthPct ?? 0}
+                  onChange={(v) => set("monthlyGrowthPct", v)}
+                  step={1}
+                  small
+                />
+                <button
+                  type="button"
+                  onClick={() => set("monthlyGrowthPct", null)}
+                  className={`self-end rounded-lg border px-3 py-2 text-xs font-medium ${
+                    inputs.monthlyGrowthPct == null
+                      ? "border-neutral-900 bg-neutral-900 text-white"
+                      : "border-neutral-300 bg-white text-neutral-600 hover:bg-neutral-50"
+                  }`}
+                >
+                  Auto
+                </button>
               </AdvancedGroup>
 
               <AdvancedGroup

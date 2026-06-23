@@ -137,7 +137,8 @@ function conversionAtPrice(p: number, demand: DemandSource): number {
 // Keys a founder can override in the UI (each maps to one input FinNum). When
 // passed in meta.editedKeys, the matching figure is re-tagged founder_entered.
 //   "capital" | "fixedCostsPerMonth" | "moqCashRequired"
-//   | "reachableProspectsPerMonth" | `tier:<label>:price`
+//   | "reachableProspectsPerMonth" | `cost:<index>:amount`
+//   | `tier:<label>:price`
 export function computeFinancials(
   inputs: FinancialInputs,
   demand: DemandSource,
@@ -348,6 +349,10 @@ function applyOverrides(model: FinancialModel, edited: Set<string>) {
   if (edited.has("moqCashRequired")) flip(model.runwayFit.moqCashRequired);
   if (edited.has("reachableProspectsPerMonth"))
     flip(model.marketSizing.reachableProspectsPerMonth);
+  model.costStructure.forEach((c, i) => {
+    if (edited.has(`cost:${i}:amount`) || edited.has(`cost:${c.label}:amount`))
+      flip(c.amount);
+  });
   for (const t of model.priceTiers) {
     if (edited.has(`tier:${t.label}:price`)) flip(t.price);
   }
@@ -404,10 +409,15 @@ function inputMaturity(
 ): number {
   let total = 0;
   let real = 0;
-  for (const c of inputs.costStructure) {
+  inputs.costStructure.forEach((c, i) => {
     total += 1;
-    if (c.sourceConclusionIds.length > 0) real += 1;
-  }
+    if (
+      c.sourceConclusionIds.length > 0 ||
+      edited.has(`cost:${i}:amount`) ||
+      edited.has(`cost:${c.label}:amount`)
+    )
+      real += 1;
+  });
   const knobs = [
     "capital",
     "fixedCostsPerMonth",

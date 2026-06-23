@@ -218,15 +218,52 @@ const yearLongPaidLaunch = simulateLaunch(
   { blendedCac: 5000 }
 );
 const avg = (xs: number[]) => xs.reduce((sum, x) => sum + x, 0) / xs.length;
-const firstMonthNewOrders = avg(
-  yearLongPaidLaunch.timeline.slice(0, 30).map((step) => step.newOrders)
+assert(
+  Number.isFinite(yearLongPaidLaunch.resolvedInputs.monthlyGrowthPct ?? NaN),
+  "missing monthly growth is derived from the simulated audience"
 );
-const lastMonthNewOrders = avg(
-  yearLongPaidLaunch.timeline.slice(-30).map((step) => step.newOrders)
+
+const explicitGrowthLaunch = simulateLaunch(
+  personas,
+  {
+    ...baseInputs,
+    adSpendPerMonth: 1500000,
+    horizon: 365,
+    reachablePool: 10000000,
+    monthlyGrowthPct: 2,
+  },
+  { blendedCac: 5000 }
+);
+const explicitFirstMonthNewOrders = avg(
+  explicitGrowthLaunch.timeline.slice(0, 30).map((step) => step.newOrders)
+);
+const explicitLastMonthNewOrders = avg(
+  explicitGrowthLaunch.timeline.slice(-30).map((step) => step.newOrders)
 );
 assert(
-  lastMonthNewOrders < firstMonthNewOrders * 0.35,
-  "year-long paid launches taper instead of repeating a flat CAC quota"
+  explicitLastMonthNewOrders > explicitFirstMonthNewOrders * 1.15,
+  "explicit +2% MoM growth compounds paid acquisition over a year"
+);
+
+const weakAudience = personas.map((p) => ({
+  ...p,
+  intent: 0.08,
+  wtp: baseInputs.salePrice * 0.75,
+  objection: "too expensive for an unknown brand and not sure I need it",
+}));
+const weakLaunch = simulateLaunch(
+  weakAudience,
+  {
+    ...baseInputs,
+    adSpendPerMonth: 1500000,
+    horizon: 365,
+    reachablePool: 10000000,
+  },
+  { blendedCac: 5000 }
+);
+assert(
+  (weakLaunch.resolvedInputs.monthlyGrowthPct ?? 0) < 0,
+  "weak audience fit can derive negative monthly growth"
 );
 
 const delayedInventory = simulateLaunch(

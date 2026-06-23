@@ -175,6 +175,7 @@ function NumField({
   disabled?: boolean;
 }) {
   const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
   const dirty = draft !== String(value);
   return (
     <label className="flex flex-col gap-1">
@@ -198,6 +199,41 @@ function NumField({
         className="w-full rounded-lg border border-neutral-200 px-2 py-1.5 text-[12px] text-neutral-900 focus:border-indigo-400 focus:outline-none disabled:bg-neutral-50 disabled:text-neutral-400"
       />
     </label>
+  );
+}
+
+function MiniNumField({
+  label,
+  value,
+  onCommit,
+  disabled,
+}: {
+  label: string;
+  value: number;
+  onCommit: (v: number) => void;
+  disabled?: boolean;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  const dirty = draft !== String(value);
+  return (
+    <input
+      aria-label={label}
+      title={label}
+      type="number"
+      value={draft}
+      disabled={disabled}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const v = Number(draft);
+        if (dirty && isFinite(v)) onCommit(v);
+        else setDraft(String(value));
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+      className="w-28 rounded-lg border border-neutral-200 px-2 py-1.5 text-right text-[12px] font-medium tabular-nums text-neutral-900 focus:border-indigo-400 focus:outline-none disabled:bg-neutral-50 disabled:text-neutral-400"
+    />
   );
 }
 
@@ -356,11 +392,15 @@ export default function FinancialsSection({
   }
 
   // Apply a founder override to one input, mark its key edited, recompute.
-  function override(patch: (i: FinancialInputs) => void, key: string) {
+  function override(patch: (i: FinancialInputs) => void, key: string | string[]) {
     if (!inputs) return;
     const next: FinancialInputs = structuredClone(inputs);
     patch(next);
-    const keys = editedKeys.includes(key) ? editedKeys : [...editedKeys, key];
+    const incoming = Array.isArray(key) ? key : [key];
+    const keys = incoming.reduce(
+      (acc, k) => (acc.includes(k) ? acc : [...acc, k]),
+      editedKeys
+    );
     setInputs(next);
     setEditedKeys(keys);
     void post({ inputs: next, editedKeys: keys });
@@ -676,21 +716,58 @@ export default function FinancialsSection({
                         )}
                       </div>
                     </div>
-                    <span className="shrink-0 whitespace-nowrap text-[12px] font-medium tabular-nums text-neutral-900">
-                      {fmt(c.amount.value, currency)}
-                    </span>
+                    {inputs?.costStructure[i] ? (
+                      <MiniNumField
+                        label={`${c.label} cost`}
+                        value={inputs.costStructure[i].amount}
+                        onCommit={(v) =>
+                          override((next) => {
+                            if (next.costStructure[i]) next.costStructure[i].amount = v;
+                          }, `cost:${i}:amount`)
+                        }
+                        disabled={busy}
+                      />
+                    ) : (
+                      <span className="shrink-0 whitespace-nowrap text-[12px] font-medium tabular-nums text-neutral-900">
+                        {fmt(c.amount.value, currency)}
+                      </span>
+                    )}
                   </div>
                 ))}
                 <div className="flex items-center justify-between gap-4 pt-2">
                   <span className="text-[12px] font-semibold text-neutral-900">
                     <MetricLabel label="Landed cost / unit" />
                   </span>
-                  <span className="shrink-0 whitespace-nowrap text-[12px] font-semibold tabular-nums text-neutral-900">
-                    {fmt(
-                      model.costStructure.reduce((s, c) => s + c.amount.value, 0),
-                      currency
-                    )}
-                  </span>
+                  {inputs?.costStructure.length ? (
+                    <MiniNumField
+                      label="Total landed cost per unit"
+                      value={inputs.costStructure.reduce((s, c) => s + c.amount, 0)}
+                      onCommit={(v) =>
+                        override((next) => {
+                          const current = next.costStructure.reduce(
+                            (s, c) => s + c.amount,
+                            0
+                          );
+                          if (current > 0) {
+                            const ratio = v / current;
+                            next.costStructure.forEach((c) => {
+                              c.amount = Number((c.amount * ratio).toFixed(2));
+                            });
+                            return;
+                          }
+                          if (next.costStructure[0]) next.costStructure[0].amount = v;
+                        }, inputs.costStructure.map((_, idx) => `cost:${idx}:amount`))
+                      }
+                      disabled={busy}
+                    />
+                  ) : (
+                    <span className="shrink-0 whitespace-nowrap text-[12px] font-semibold tabular-nums text-neutral-900">
+                      {fmt(
+                        model.costStructure.reduce((s, c) => s + c.amount.value, 0),
+                        currency
+                      )}
+                    </span>
+                  )}
                 </div>
               </div>
             </section>

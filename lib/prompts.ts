@@ -1090,6 +1090,7 @@ You may ONLY change these fields (units in brackets):
 - viralityK [word-of-mouth: new-aware per recent buyer]
 - organicReachPerStep [non-ad new awareness per step]
 - targetingQuality [0–1, ad targeting precision]
+- monthlyGrowthPct [observed/explicit net month-over-month demand/acquisition growth %, e.g. 2 = +2% MoM; otherwise leave untouched so the engine derives it from the simulated audience]
 
 RULES — stay honest, do not bias toward a "better" result:
 - Only propose a change a field's value the new knowledge (or the benchmark priors) genuinely supports. Leave everything else untouched — an empty change list is a valid answer.

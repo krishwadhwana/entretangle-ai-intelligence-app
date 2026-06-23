@@ -1409,6 +1409,9 @@ export const LaunchSimInputsSchema = z.object({
   // Category attention/hype momentum as a bounded demand tilt (%). Frozen at run
   // time from the Wikipedia-interest momentum signal; 0 → neutral.
   demandMomentumPct: z.number().min(-25).max(25).default(0),
+  // Explicit net month-over-month demand/acquisition growth. null means derive
+  // it from the simulated audience; 2 means demand compounds by +2% each month.
+  monthlyGrowthPct: z.number().min(-80).max(300).nullable().default(null),
 
   // --- costs ---
   shippingPerOrder: z.number().nonnegative().default(120),
@@ -1592,6 +1595,7 @@ export const AssumptionFieldSchema = z.enum([
   "viralityK",
   "organicReachPerStep",
   "targetingQuality",
+  "monthlyGrowthPct",
 ]);
 export type AssumptionField = z.infer<typeof AssumptionFieldSchema>;
 
