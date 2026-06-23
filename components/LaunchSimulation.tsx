@@ -72,6 +72,27 @@ type Defaults = {
   } | null;
 };
 
+// Turn an API error payload into a readable string. A 400 returns Zod issues as
+// an ARRAY of objects; `new Error(array)` would stringify to "[object Object]".
+function apiErrorMessage(err: unknown, fallback: string): string {
+  if (typeof err === "string") return err;
+  if (Array.isArray(err)) {
+    const msgs = err
+      .map((i) => {
+        const issue = i as { path?: (string | number)[]; message?: string };
+        const path = issue?.path?.length ? `${issue.path.join(".")}: ` : "";
+        return issue?.message ? `${path}${issue.message}` : null;
+      })
+      .filter(Boolean) as string[];
+    return msgs.length ? msgs.join("; ") : fallback;
+  }
+  if (err && typeof err === "object") {
+    const m = (err as { message?: unknown }).message;
+    return typeof m === "string" ? m : JSON.stringify(err).slice(0, 240);
+  }
+  return fallback;
+}
+
 const DEFAULT_INPUTS: LaunchSimInputs = {
   currency: "INR",
   businessModel: "generic",
@@ -156,7 +177,8 @@ export default function LaunchSimulation({
         body: "{}",
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data?.error ?? `sourcing failed (${res.status})`);
+      if (!res.ok)
+        throw new Error(apiErrorMessage(data?.error, `sourcing failed (${res.status})`));
       const n = data?.datum?.sources?.length ?? 0;
       setSourced(
         n > 0
@@ -252,7 +274,8 @@ export default function LaunchSimulation({
         body: JSON.stringify({ inputs, name, projectId }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error ?? `failed (${res.status})`);
+      if (!res.ok)
+        throw new Error(apiErrorMessage(data?.error, `failed (${res.status})`));
       const record = data as LaunchSimRecord;
       setScenarios((s) => [record, ...s]);
       setActive(record);
@@ -627,7 +650,10 @@ export default function LaunchSimulation({
                     10
                   }
                   onChange={(v) =>
-                    set("targetRefundRatePct", Math.max(0, Math.min(100, v)))
+                    set(
+                      "targetRefundRatePct",
+                      Number.isFinite(v) ? Math.max(0, Math.min(100, v)) : null
+                    )
                   }
                   step={1}
                   small

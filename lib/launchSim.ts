@@ -525,13 +525,14 @@ function paidLaunchEfficiency(
 ): number {
   const month = step / Math.max(1, stepsPerMonth);
   // The launch window has novelty; the same paid budget should not keep buying
-  // the same number of first-time customers forever. Hold the opening push for
-  // ~2 months, then let creative fatigue / audience familiarity raise effective
-  // CAC. The small floor reflects ongoing evergreen acquisition, not launch heat.
+  // the same number of first-time customers forever. Hold the opening quarter,
+  // then let creative fatigue / audience familiarity raise effective CAC. The
+  // small floor reflects ongoing evergreen acquisition, not launch heat.
   const novelty =
-    month <= 2 ? 1 : 0.12 + 0.88 * Math.exp(-(month - 2) / 3.5);
+    month <= 3 ? 1 : 0.12 + 0.88 * Math.exp(-(month - 3) / 3.5);
   // Reaching more of the finite pool leaves a colder, harder-to-convert residue.
-  const saturation = Math.pow(clamp(1 - reachedShare, 0, 1), 0.55);
+  const saturation =
+    month <= 3 ? 1 : Math.pow(clamp(1 - reachedShare, 0, 1), 0.55);
   return clamp(novelty * saturation, 0.05, 1);
 }
 
