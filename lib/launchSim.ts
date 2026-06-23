@@ -1556,8 +1556,31 @@ function buildAssumptions(
   const resolvedChannelIds = inputs.channels.map((c) => c.id).join("|");
   const channelsFromPreset = resolvedChannelIds === presetChannelIds;
   const fromFinancials = ctx.reachableProspectsPerMonth != null && ctx.reachableProspectsPerMonth > 0;
-  return [
-    {
+  const assumptions: LaunchAssumption[] = [];
+  const add = (assumption: LaunchAssumption) => assumptions.push(assumption);
+  const pct = (value: number) => round(value * 100, 2);
+
+  add({
+    key: "currency",
+    label: "Currency",
+    value: inputs.currency,
+    unit: "",
+    source: "founder_entered",
+    confidence: 0.9,
+    basis: "All prices, costs, ad spend, CAC, revenue, and profit are reported in this currency.",
+  });
+  add({
+    key: "region",
+    label: "Audience scope",
+    value: inputs.region ?? "Whole audience",
+    unit: "",
+    source: inputs.region ? "founder_entered" : "computed",
+    confidence: 0.9,
+    basis: inputs.region
+      ? "Scenario is scoped to the selected audience region."
+      : "Scenario uses the full simulated audience.",
+  });
+  add({
       key: "businessModel",
       label: "Business model preset",
       value: inputs.businessModel,
@@ -1565,17 +1588,44 @@ function buildAssumptions(
       source: "founder_entered",
       confidence: 0.7,
       basis: "Controls default channel mix, repeat behavior, refund pressure, decision speed, and inventory buffer.",
-    },
-    {
-      key: "channels",
-      label: "Acquisition channels",
-      value: channelLabels || preset.defaultChannels.map((c) => c.label).join(", "),
-      unit: "",
-      source: channelsFromPreset ? "preset" : "founder_entered",
-      confidence: channelsFromPreset ? 0.45 : 0.65,
-      basis: "Each channel has its own spend share, CPM, frequency, engagement, visit, checkout, trust, refund, and repeat assumptions.",
-    },
-    {
+  });
+  add({
+    key: "salePrice",
+    label: "Sale price",
+    value: inputs.salePrice,
+    unit: inputs.currency,
+    source: "founder_entered",
+    confidence: 0.8,
+    basis: "Retail price used for willingness-to-pay fit, revenue, payment fees, and CAC pressure.",
+  });
+  add({
+    key: "costPrice",
+    label: "Unit cost",
+    value: inputs.costPrice,
+    unit: inputs.currency,
+    source: "founder_entered",
+    confidence: 0.8,
+    basis: "Landed cost per fulfilled unit used for COGS, inventory purchases, deadstock value, and refund write-offs.",
+  });
+  add({
+    key: "adSpendPerMonth",
+    label: "Ad spend",
+    value: inputs.adSpendPerMonth,
+    unit: `${inputs.currency}/month`,
+    source: "founder_entered",
+    confidence: 0.8,
+    basis: "Monthly paid-media budget that buys impressions and caps paid acquisition through CAC.",
+  });
+  add({
+    key: "timeAxis",
+    label: "Time axis",
+    value: `${inputs.horizon} ${inputs.granularity === "day" ? "days" : "months"}`,
+    unit: "",
+    source: "founder_entered",
+    confidence: 0.9,
+    basis: "Simulation horizon and step size for the trajectory.",
+  });
+  add({
       key: "reachablePool",
       label: "Reachable pool",
       value: inputs.reachablePool ?? 0,
@@ -1585,49 +1635,271 @@ function buildAssumptions(
       basis: fromFinancials
         ? "Derived from the project's reachable prospects per month."
         : "Fallback ceiling used because the financial model did not provide reachable prospects.",
-    },
-    {
-      key: "blendedCac",
-      label: "CAC bound",
-      value: ctx.blendedCac ?? 0,
-      unit: inputs.currency,
-      source: ctx.blendedCac ? "financial_model" : "computed",
-      confidence: ctx.blendedCac ? 0.55 : 0.25,
-      basis: ctx.blendedCac
-        ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then scaled by the net monthly demand trajectory."
-        : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
-    },
-    {
-      key: "monthlyGrowthPct",
-      label: "MoM growth",
-      value: inputs.monthlyGrowthPct ?? 0,
-      unit: "%/month",
-      source: growthWasFounderEntered ? "founder_entered" : "computed",
-      confidence: growthWasFounderEntered ? 0.75 : 0.55,
-      basis:
-        growthWasFounderEntered
-          ? "Founder-entered monthly growth compounds demand and the paid-acquisition cap over the scenario."
-          : "Derived from the simulated audience's WTP fit, intent depth, objections, channel fit, repeat potential, word of mouth, and reach runway.",
-    },
-    {
-      key: "repeatRateMult",
-      label: "Repeat behavior",
-      value: inputs.repeatRateMult,
-      unit: "multiplier",
-      source: "preset",
-      confidence: 0.4,
-      basis: "Segment repeat rates are adjusted by the selected business model and the repeat-rate multiplier.",
-    },
-    {
-      key: "refundRateMult",
-      label: "Refund pressure",
-      value: inputs.refundRateMult,
-      unit: "multiplier",
-      source: "preset",
-      confidence: 0.4,
-      basis: "Persona objections, country mismatch, channel risk, and business model preset determine refund propensity.",
-    },
-  ];
+  });
+  add({
+    key: "adPlatforms",
+    label: "Paid platforms",
+    value: inputs.adPlatforms.join(", ") || "None",
+    unit: "",
+    source: "founder_entered",
+    confidence: 0.65,
+    basis: "Persona platform affinity affects how paid delivery selects high-fit buyers.",
+  });
+  add({
+    key: "channels",
+    label: "Acquisition channels",
+    value: channelLabels || preset.defaultChannels.map((c) => c.label).join(", "),
+    unit: "",
+    source: channelsFromPreset ? "preset" : "founder_entered",
+    confidence: channelsFromPreset ? 0.45 : 0.65,
+    basis: "Each channel has its own spend share, CPM, frequency, engagement, visit, checkout, trust, refund, and repeat assumptions.",
+  });
+  for (const ch of inputs.channels) {
+    const paid = ch.kind === "paid" || ch.kind === "marketplace" || ch.kind === "retail";
+    add({
+      key: `channel:${ch.id}`,
+      label: `Channel: ${ch.label}`,
+      value: `${ch.kind}; ${paid ? `${pct(ch.spendPct)}% spend; ` : ""}${fmtMoney(ch.cpm)} CPM; ${ch.frequencyCap} freq; ${pct(ch.engagementRate)}% engage; ${pct(ch.visitRate)}% visit; ${pct(ch.checkoutRate)}% checkout`,
+      unit: "",
+      source: channelsFromPreset ? "preset" : "founder_entered",
+      confidence: channelsFromPreset ? 0.45 : 0.65,
+      basis: "Per-channel reach and funnel rates determine how many people move from awareness to checkout.",
+    });
+  }
+  add({
+    key: "cpm",
+    label: "Default CPM",
+    value: inputs.cpm,
+    unit: `${inputs.currency}/1k impressions`,
+    source: "founder_entered",
+    confidence: 0.65,
+    basis: "Fallback media cost when a channel does not specify its own CPM.",
+  });
+  add({
+    key: "frequencyCap",
+    label: "Frequency cap",
+    value: inputs.frequencyCap,
+    unit: "impressions/person",
+    source: "founder_entered",
+    confidence: 0.6,
+    basis: "Impressions needed before a prospect is counted as reached.",
+  });
+  add({
+    key: "targetingQuality",
+    label: "Targeting quality",
+    value: pct(inputs.targetingQuality),
+    unit: "%",
+    source: "founder_entered",
+    confidence: 0.55,
+    basis: "Higher targeting quality tilts delivery toward personas with stronger purchase probability.",
+  });
+  add({
+    key: "organicReachPerStep",
+    label: "Organic reach",
+    value: inputs.organicReachPerStep,
+    unit: `people/${inputs.granularity}`,
+    source: "founder_entered",
+    confidence: 0.6,
+    basis: "Non-paid new awareness added each simulation step.",
+  });
+  add({
+    key: "viralityK",
+    label: "Word of mouth",
+    value: inputs.viralityK,
+    unit: "people/buyer",
+    source: "founder_entered",
+    confidence: 0.45,
+    basis: "Recent buyers create additional awareness through word of mouth.",
+  });
+  add({
+    key: "decisionSpeed",
+    label: "Decision speed",
+    value: pct(inputs.decisionSpeed ?? 0),
+    unit: `%/${inputs.granularity}`,
+    source: "computed",
+    confidence: 0.5,
+    basis: "Fraction of active considerers who decide to buy or not buy each step.",
+  });
+  add({
+    key: "abandonRate",
+    label: "Abandon rate",
+    value: pct(inputs.abandonRate),
+    unit: `%/${inputs.granularity}`,
+    source: "founder_entered",
+    confidence: 0.5,
+    basis: "Fraction of considerers who lose interest each step before buying.",
+  });
+  add({
+    key: "launchStartMonth",
+    label: "Launch month",
+    value: inputs.launchStartMonth ? monthName(inputs.launchStartMonth) : "Seasonality off",
+    unit: "",
+    source: inputs.launchStartMonth ? "computed" : "founder_entered",
+    confidence: 0.55,
+    basis: "Benchmark seasonality is applied from this calendar month when available.",
+  });
+  add({
+    key: "demandMomentumPct",
+    label: "Attention momentum",
+    value: inputs.demandMomentumPct,
+    unit: "%",
+    source: "computed",
+    confidence: 0.4,
+    basis: "Category attention signal used as a one-time demand tilt, separate from monthly growth.",
+  });
+  add({
+    key: "monthlyGrowthPct",
+    label: "MoM growth",
+    value: inputs.monthlyGrowthPct ?? 0,
+    unit: "%/month",
+    source: growthWasFounderEntered ? "founder_entered" : "computed",
+    confidence: growthWasFounderEntered ? 0.75 : 0.55,
+    basis:
+      growthWasFounderEntered
+        ? "Founder-entered monthly growth compounds demand and the paid-acquisition cap over the scenario."
+        : "Derived from the simulated audience's WTP fit, intent depth, objections, channel fit, repeat potential, word of mouth, and reach runway.",
+  });
+  add({
+    key: "blendedCac",
+    label: "CAC bound",
+    value: ctx.blendedCac ?? 0,
+    unit: inputs.currency,
+    source: ctx.blendedCac ? "financial_model" : "computed",
+    confidence: ctx.blendedCac ? 0.55 : 0.25,
+    basis: ctx.blendedCac
+      ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then scaled by the net monthly demand trajectory."
+      : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
+  });
+  add({
+    key: "shippingPerOrder",
+    label: "Outbound shipping",
+    value: inputs.shippingPerOrder,
+    unit: `${inputs.currency}/order`,
+    source: "founder_entered",
+    confidence: 0.75,
+    basis: "Fulfillment cost charged on each shipped order.",
+  });
+  add({
+    key: "paymentFeePct",
+    label: "Payment fee",
+    value: pct(inputs.paymentFeePct),
+    unit: "%",
+    source: "founder_entered",
+    confidence: 0.75,
+    basis: "Payment gateway or marketplace fee applied to gross revenue.",
+  });
+  add({
+    key: "fixedCostsPerMonth",
+    label: "Fixed costs",
+    value: inputs.fixedCostsPerMonth,
+    unit: `${inputs.currency}/month`,
+    source: "founder_entered",
+    confidence: 0.7,
+    basis: "Monthly overhead allocated across simulation steps.",
+  });
+  add({
+    key: "returnWindowDays",
+    label: "Return window",
+    value: inputs.returnWindowDays,
+    unit: "days",
+    source: "founder_entered",
+    confidence: 0.75,
+    basis: "Refunds land after this delay and affect cash, inventory, and net revenue.",
+  });
+  add({
+    key: "targetRefundRatePct",
+    label: "Target refund rate",
+    value: inputs.targetRefundRatePct ?? "Persona baseline",
+    unit: inputs.targetRefundRatePct == null ? "" : "%",
+    source: inputs.targetRefundRatePct == null ? "computed" : "financial_model",
+    confidence: inputs.targetRefundRatePct == null ? 0.4 : 0.65,
+    basis: inputs.targetRefundRatePct == null
+      ? "Refunds use persona objections, geography, channel risk, and the refund multiplier."
+      : "Per-persona refund propensities are calibrated so realized refunds match this benchmark target.",
+  });
+  add({
+    key: "refundRateMult",
+    label: "Refund multiplier",
+    value: inputs.refundRateMult,
+    unit: "multiplier",
+    source: "preset",
+    confidence: 0.4,
+    basis: "Business model preset scales persona-level refund propensity before target refund calibration.",
+  });
+  add({
+    key: "resellablePct",
+    label: "Resellable returns",
+    value: pct(inputs.resellablePct),
+    unit: "%",
+    source: "founder_entered",
+    confidence: 0.65,
+    basis: "Share of returned units that re-enter sellable inventory.",
+  });
+  add({
+    key: "returnShippingPerOrder",
+    label: "Return shipping",
+    value: inputs.returnShippingPerOrder ?? inputs.shippingPerOrder,
+    unit: `${inputs.currency}/return`,
+    source: inputs.returnShippingPerOrder == null ? "computed" : "founder_entered",
+    confidence: 0.65,
+    basis: "Cost paid when refunds land; defaults to outbound shipping if not set separately.",
+  });
+  add({
+    key: "initialInventoryUnits",
+    label: "Opening inventory",
+    value: inputs.initialInventoryUnits ?? 0,
+    unit: "units",
+    source: "computed",
+    confidence: 0.55,
+    basis: "Starting sellable stock, auto-sized from first-month checkout/CAC-capped demand when not set explicitly.",
+  });
+  add({
+    key: "reorderEnabled",
+    label: "Reordering",
+    value: inputs.reorderEnabled ? "On" : "Off",
+    unit: "",
+    source: "founder_entered",
+    confidence: 0.8,
+    basis: "Controls whether the engine replenishes inventory during the scenario.",
+  });
+  add({
+    key: "reorderLeadTimeDays",
+    label: "Reorder lead time",
+    value: inputs.reorderLeadTimeDays,
+    unit: "days",
+    source: "founder_entered",
+    confidence: 0.75,
+    basis: "Delay between placing replenishment and receiving sellable inventory.",
+  });
+  add({
+    key: "minOrderQtyUnits",
+    label: "Minimum order quantity",
+    value: inputs.minOrderQtyUnits ?? 0,
+    unit: "units/batch",
+    source: "computed",
+    confidence: 0.55,
+    basis: "Reorders are rounded up to whole MOQ batches, which creates realistic inventory lumpiness.",
+  });
+  add({
+    key: "repeatRateMult",
+    label: "Repeat behavior",
+    value: inputs.repeatRateMult,
+    unit: "multiplier",
+    source: "preset",
+    confidence: 0.4,
+    basis: "Segment repeat rates are adjusted by the selected business model and the repeat-rate multiplier.",
+  });
+  add({
+    key: "jitterAmplitude",
+    label: "Trajectory jitter",
+    value: pct(inputs.jitterAmplitude),
+    unit: "%",
+    source: "computed",
+    confidence: 0.7,
+    basis: "Seeded deterministic variation applied per step so the trajectory is not perfectly smooth.",
+  });
+
+  return assumptions;
 }
 
 function fmtCount(n: number): string {
@@ -1640,6 +1912,25 @@ function fmtMoney(n: number): string {
 
 function stepLabel(g: "day" | "month", t: number): string {
   return g === "day" ? `Day ${t + 1}` : `Month ${t + 1}`;
+}
+
+function monthName(month: number): string {
+  return (
+    [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec",
+    ][month - 1] ?? `Month ${month}`
+  );
 }
 
 function modal(values: string[]): string {

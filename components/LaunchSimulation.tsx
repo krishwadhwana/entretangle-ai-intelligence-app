@@ -1104,6 +1104,14 @@ function Results({
 }) {
   const { result } = record;
   const { summary: s, timeline, breakdowns: b } = result;
+  const growthAssumption = result.assumptions.find(
+    (a) => a.key === "monthlyGrowthPct"
+  );
+  const growthPct = result.resolvedInputs.monthlyGrowthPct ?? 0;
+  const growthLabel = `${growthPct > 0 ? "+" : ""}${fmt.num(growthPct)}%`;
+  const growthSource = growthAssumption
+    ? sourceLabel(growthAssumption.source)
+    : "computed";
   const [visible, setVisible] = useState(timeline.length);
   const [playing, setPlaying] = useState(false);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -1260,11 +1268,23 @@ function Results({
         `Net profit: ${fmt.money(s.netProfit)} (${s.netMarginPct}% net margin)`,
         `Net revenue: ${fmt.money(s.netRevenue)} (gross ${fmt.money(s.grossRevenue)})`,
         `Orders: ${fmt.num(s.totalOrders)} · ${s.returningCustomerSharePct}% returning`,
+        `MoM growth assumed: ${growthLabel} (${growthSource})`,
         `Refund rate: ${s.refundRatePct}% (${fmt.num(s.refunds)} refunds)`,
         `Blended CAC: ${fmt.money(s.blendedCac)}`,
         `Break-even: ${s.breakEvenLabel ?? "Never"}`,
       ],
     });
+    if (result.assumptions.length) {
+      sections.push({
+        heading: "Assumptions",
+        bullets: result.assumptions.map(
+          (a) =>
+            `${a.label}: ${formatAssumptionValue(a.value, a.unit, fmt)} · ${sourceLabel(
+              a.source
+            )} · ${(a.confidence * 100).toFixed(0)}% confidence — ${a.basis}`
+        ),
+      });
+    }
     if (d.drivers.length) sections.push({ heading: "What's driving it", bullets: d.drivers });
     if (d.risks.length) sections.push({ heading: "Risks", bullets: d.risks });
     if (d.nextMoves.length) sections.push({ heading: "Next moves", bullets: d.nextMoves });
@@ -1471,6 +1491,12 @@ function Results({
         />
         <Stat label="Net revenue" value={fmt.money(s.netRevenue)} sub={`${fmt.money(s.grossRevenue)} gross`} />
         <Stat label="Orders" value={fmt.num(s.totalOrders)} sub={`${s.returningCustomerSharePct}% returning`} />
+        <Stat
+          label="MoM growth"
+          value={growthLabel}
+          tone={growthPct > 0 ? "good" : growthPct < 0 ? "bad" : "neutral"}
+          sub={`${growthSource} assumption`}
+        />
         <Stat
           label="Product visits"
           value={fmt.num(s.totalProductVisits)}
@@ -2015,7 +2041,7 @@ function Assumptions({
                   {formatAssumptionValue(a.value, a.unit, fmt)}
                 </p>
                 <p className="text-[10px] text-neutral-400">
-                  {a.source.replace("_", " ")} · {(a.confidence * 100).toFixed(0)}%
+                  {sourceLabel(a.source)} · {(a.confidence * 100).toFixed(0)}%
                 </p>
               </div>
             </div>
@@ -2024,6 +2050,10 @@ function Assumptions({
       </div>
     </section>
   );
+}
+
+function sourceLabel(source: string): string {
+  return source.replace(/_/g, " ");
 }
 
 function formatAssumptionValue(
