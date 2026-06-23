@@ -1373,11 +1373,6 @@ function Results({
         color: PDF_CHART_COLORS.red,
         points: sampledTimeline.map((t) => t.refunds),
       },
-      {
-        name: "Product visits",
-        color: PDF_CHART_COLORS.sky,
-        points: sampledTimeline.map((t) => t.productVisits),
-      },
     ];
     const cashTrajectory: PdfSeries[] = [
       {
@@ -1427,9 +1422,9 @@ function Results({
       sections.push(
         {
           heading: "Demand trajectory",
-          body: `Sampled from the full ${fmt.num(timeline.length)}-${usedInputs.granularity} timeline for PDF readability.`,
+          body: `Matches the website trajectory chart's demand series, sampled from the full ${fmt.num(timeline.length)}-${usedInputs.granularity} timeline for PDF readability.`,
           line: {
-            title: "Orders, refunds, and product visits over time",
+            title: "Orders and refunds over time",
             xLabels: timelineLabels,
             series: orderTrajectory,
           },
