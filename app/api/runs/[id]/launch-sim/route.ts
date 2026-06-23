@@ -215,8 +215,7 @@ export async function GET(
     launchOperatingCostFloorPerMonth(
       targetCurrency,
       suggestedBusinessModel,
-      null,
-      blendedCac ?? priors.cacInr.mid
+      null
     )
   );
   const defaults = {
@@ -282,8 +281,7 @@ export async function GET(
     const scenarioFixedCostFloor = launchOperatingCostFloorPerMonth(
       targetCurrency,
       inputs.businessModel,
-      inputs.adSpendPerMonth,
-      blendedCac ?? priors.cacInr.mid
+      inputs.adSpendPerMonth
     );
     const effectiveFixedCosts = Math.max(
       inputs.fixedCostsPerMonth,
@@ -398,8 +396,7 @@ export async function POST(
     const scenarioFixedCostFloor = launchOperatingCostFloorPerMonth(
       targetCurrency,
       inputs.businessModel,
-      inputs.adSpendPerMonth,
-      reachableBlendedCac ?? priors.cacInr.mid
+      inputs.adSpendPerMonth
     );
     const effectiveFixedCosts = Math.max(
       inputs.fixedCostsPerMonth,
@@ -734,8 +731,7 @@ function positiveOrFloor(value: number | null | undefined, floor: number): numbe
 function launchOperatingCostFloorPerMonth(
   currency: string,
   businessModel: LaunchBusinessModel,
-  adSpendPerMonth: number | null,
-  blendedCac: number | null
+  adSpendPerMonth: number | null
 ): number {
   const cur = normalizeCurrency(currency);
   const base = cur === "INR" ? 100_000 : 2_500;
@@ -744,11 +740,7 @@ function launchOperatingCostFloorPerMonth(
   const baseFloor = base * modelMultiplier;
   const campaignOps =
     adSpendPerMonth != null && adSpendPerMonth > 0 ? adSpendPerMonth * 2 : 0;
-  const acquisitionOps =
-    blendedCac != null && blendedCac > 0
-      ? Math.min(blendedCac * 500, base * 5)
-      : 0;
-  return Math.round(Math.max(baseFloor, campaignOps, acquisitionOps));
+  return Math.round(Math.max(baseFloor, campaignOps));
 }
 
 function launchInvestmentFloor(
