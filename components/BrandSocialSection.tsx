@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   Sparkles,
   Loader2,
@@ -11,6 +11,7 @@ import {
   CheckCircle2,
   Circle,
   ListChecks,
+  FileDown,
 } from "lucide-react";
 import type {
   BrandKit,
@@ -188,6 +189,20 @@ export default function BrandSocialSection({
     return m;
   }, [kit]);
 
+  const downloadBrandDossier = useCallback(async () => {
+    if (!kit) return;
+    const [{ buildBrandDossier }, { downloadDossier, slug }] = await Promise.all([
+      import("./runDossier"),
+      import("./pdf"),
+    ]);
+    const dossier = buildBrandDossier({
+      title: "Brand & Social Kit",
+      kit,
+      generatedOn: new Date().toLocaleDateString(),
+    });
+    downloadDossier(dossier, `${slug("brand-social")}-dossier`);
+  }, [kit]);
+
   const doneCount = (kit?.checklist ?? []).filter((i) => checks[i.id]).length;
   const totalCount = kit?.checklist.length ?? 0;
   const categories = [
@@ -217,21 +232,32 @@ export default function BrandSocialSection({
               )}
             </p>
           </div>
-          <button
-            onClick={generate}
-            disabled={busy || !ready}
-            title={ready ? undefined : "Available once the run converges"}
-            className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
-          >
-            {busy ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : kit ? (
-              <RefreshCw className="h-3.5 w-3.5" />
-            ) : (
-              <Sparkles className="h-3.5 w-3.5" />
+          <div className="flex shrink-0 items-center gap-2">
+            {kit && (
+              <button
+                onClick={() => void downloadBrandDossier()}
+                title="Download a PDF dossier of the brand & social kit"
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700"
+              >
+                <FileDown className="h-3.5 w-3.5" /> Dossier
+              </button>
             )}
-            {busy ? "Generating…" : kit ? "Regenerate" : "Generate action plan"}
-          </button>
+            <button
+              onClick={generate}
+              disabled={busy || !ready}
+              title={ready ? undefined : "Available once the run converges"}
+              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-40"
+            >
+              {busy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : kit ? (
+                <RefreshCw className="h-3.5 w-3.5" />
+              ) : (
+                <Sparkles className="h-3.5 w-3.5" />
+              )}
+              {busy ? "Generating…" : kit ? "Regenerate" : "Generate action plan"}
+            </button>
+          </div>
         </div>
 
         {error && (

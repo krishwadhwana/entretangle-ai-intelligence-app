@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import {
   ExternalLink,
   Image,
@@ -9,6 +9,7 @@ import {
   Search,
   Trophy,
   Video,
+  FileDown,
 } from "lucide-react";
 import type {
   InspirationKit,
@@ -193,6 +194,18 @@ export default function InspirationSection({
     }
   }
 
+  const downloadInspirationDossier = useCallback(async () => {
+    if (!kit) return;
+    const [{ buildInspirationDossier }, { downloadDossier, slug }] =
+      await Promise.all([import("./runDossier"), import("./pdf")]);
+    const dossier = buildInspirationDossier({
+      title: "Inspiration Swipe-File",
+      kit,
+      generatedOn: new Date().toLocaleDateString(),
+    });
+    downloadDossier(dossier, `${slug("inspiration")}-dossier`);
+  }, [kit]);
+
   return (
     <div className="mx-auto max-w-6xl p-6">
       <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
@@ -203,18 +216,29 @@ export default function InspirationSection({
             {totals.stories} stories
           </p>
         </div>
-        <button
-          onClick={generate}
-          disabled={!canGenerate || loading}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {loading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
+        <div className="flex items-center gap-2">
+          {kit && (
+            <button
+              onClick={() => void downloadInspirationDossier()}
+              title="Download a hyperlinked PDF dossier of the inspiration swipe-file"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700"
+            >
+              <FileDown className="h-3.5 w-3.5" /> Dossier
+            </button>
           )}
-          Generate
-        </button>
+          <button
+            onClick={generate}
+            disabled={!canGenerate || loading}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {loading ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            Generate
+          </button>
+        </div>
       </div>
 
       {error && (

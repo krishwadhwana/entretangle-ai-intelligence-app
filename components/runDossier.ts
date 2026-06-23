@@ -7,6 +7,8 @@ import type {
   LaunchSimRecord,
   ExportViabilityReport,
   GeneratedPlaybook,
+  BrandKit,
+  InspirationKit,
 } from "@/lib/schema";
 import type { Dossier, DossierSection, KPI } from "./pdf";
 
@@ -41,6 +43,37 @@ function money(n: number, currency: string): string {
   return `${s}${v}`;
 }
 
+// Dossiers are generated synchronously on the client, so use the same INR/USD
+// fallback encoded in the export engine plus common corridor priors.
+const TO_INR: Record<string, number> = {
+  INR: 1,
+  USD: 85,
+  AED: 23.15,
+  GBP: 108,
+  EUR: 92,
+  CAD: 62,
+  AUD: 56,
+  SGD: 63,
+};
+
+function normalizeCurrency(currency: string | null | undefined): string {
+  return (currency || "INR").trim().toUpperCase();
+}
+
+function convertMoney(n: number, from: string, to: string): number {
+  const src = normalizeCurrency(from);
+  const dst = normalizeCurrency(to);
+  if (src === dst) return n;
+  const srcToInr = TO_INR[src];
+  const dstToInr = TO_INR[dst];
+  if (!srcToInr || !dstToInr) return n;
+  return (n * srcToInr) / dstToInr;
+}
+
+function moneyAs(n: number, from: string, to: string): string {
+  return money(convertMoney(n, from, to), normalizeCurrency(to));
+}
+
 /** A standalone, hyperlinked dossier for the generated business playbook. */
 export function buildPlaybookDossier(opts: {
   title: string;
@@ -67,11 +100,138 @@ export function buildPlaybookDossier(opts: {
   };
 }
 
+/** A Brand & Social kit as a clean, shareable dossier. */
+export function buildBrandDossier(opts: {
+  title: string;
+  kit: BrandKit;
+  generatedOn: string;
+}): Dossier {
+  const { kit } = opts;
+  const id = kit.brandIdentity;
+  const sg = kit.socialGuidelines;
+  const sections: DossierSection[] = [];
+
+  sections.push({
+    heading: "Brand identity",
+    body: `Voice — ${id.voice}\n\nPositioning — ${id.positioning}`,
+  });
+  if (id.visualCodes.length)
+    sections.push({ heading: "Visual codes", bullets: id.visualCodes });
+  if (id.namingCues.length)
+    sections.push({ heading: "Naming cues", bullets: id.namingCues });
+  if (id.doList.length) sections.push({ heading: "Do", bullets: id.doList });
+  if (id.dontList.length) sections.push({ heading: "Don't", bullets: id.dontList });
+
+  if (kit.comparableAccounts.length)
+    sections.push({
+      heading: "Comparable accounts to study",
+      pageBreak: true,
+      linkList: {
+        items: kit.comparableAccounts.map((a) => ({
+          text: `${a.name} (${a.handle}) · ${a.platform}${a.followers ? ` · ${a.followers}` : ""}`,
+          sub: `${a.whyRelevant} Emulate: ${a.whatToEmulate}`,
+          url: a.url ?? a.source ?? undefined,
+        })),
+      },
+    });
+
+  if (sg.contentPillars.length)
+    sections.push({ heading: "Content pillars", bullets: sg.contentPillars });
+
+  if (sg.platformPlan.length)
+    sections.push({
+      heading: "Platform plan",
+      table: {
+        columns: ["Platform", "Cadence", "Formats"],
+        rows: sg.platformPlan.map((p) => [
+          p.segment ? `${p.platform} (${p.segment})` : p.platform,
+          p.cadence,
+          p.formats.join(", "),
+        ]),
+      },
+    });
+
+  if (kit.checklist.length)
+    sections.push({
+      heading: "Launch checklist",
+      pageBreak: true,
+      bullets: kit.checklist.map(
+        (c) => `[${c.priority}] ${c.category} — ${c.title}${c.detail ? `: ${c.detail}` : ""}`
+      ),
+    });
+
+  return {
+    title: opts.title,
+    subtitle: "Brand & social action plan",
+    meta: [`${kit.checklist.length} checklist items`, opts.generatedOn],
+    sections,
+  };
+}
+
+/** An Inspiration swipe-file as a hyperlinked dossier. */
+export function buildInspirationDossier(opts: {
+  title: string;
+  kit: InspirationKit;
+  generatedOn: string;
+}): Dossier {
+  const { kit } = opts;
+  const sections: DossierSection[] = [];
+
+  if (kit.videoExamples.length)
+    sections.push({
+      heading: "Reference videos",
+      linkList: {
+        items: kit.videoExamples.map((v) => ({
+          text: `${v.title}${v.channel ? ` · ${v.channel}` : ""}`,
+          sub: `${v.whyRelevant} Takeaway: ${v.takeaway}`,
+          url: v.url || undefined,
+        })),
+      },
+    });
+
+  if (kit.placementExamples.length)
+    sections.push({
+      heading: "Content placement patterns",
+      pageBreak: kit.videoExamples.length > 0,
+      linkList: {
+        items: kit.placementExamples.map((p) => ({
+          text: `${p.pattern} — ${p.account}${p.platform ? ` (${p.platform})` : ""}`,
+          sub: `Recipe: ${p.recipe} Why it works: ${p.whyItWorks}`,
+          url: p.accountUrl ?? undefined,
+        })),
+      },
+    });
+
+  if (kit.successStories.length)
+    sections.push({
+      heading: "Success stories to copy",
+      pageBreak: true,
+      linkList: {
+        items: kit.successStories.map((s) => ({
+          text: `${s.brand}${s.platform ? ` · ${s.platform}` : ""}`,
+          sub: `${s.summary} The move: ${s.theMove} Result: ${s.result}`,
+          url: s.sourceUrl || undefined,
+        })),
+      },
+    });
+
+  return {
+    title: opts.title,
+    subtitle: "Inspiration swipe-file",
+    meta: [
+      `${kit.videoExamples.length} videos · ${kit.placementExamples.length} placements · ${kit.successStories.length} stories`,
+      opts.generatedOn,
+    ],
+    sections,
+  };
+}
+
 export type RunDossierInput = {
   brief: string;
   mode?: string;
   targetMarket?: string | null;
   currency: string;
+  audienceCurrency?: string | null;
   report: FinalReport | null;
   aggregate: AudienceAggregate | null;
   worldModel: { conclusionCount: number; blockCount: number } | null;
