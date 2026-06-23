@@ -56,7 +56,7 @@ export async function POST(
   const aggregate = aggEvent ? JSON.parse(aggEvent.payload).aggregate : null;
   const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
   const financials = run.projectId
-    ? await getFinancialModel(run.projectId)
+    ? await getFinancialModel(run.projectId, run.id)
     : null;
   const report = await callFinalReport(
     run.id,

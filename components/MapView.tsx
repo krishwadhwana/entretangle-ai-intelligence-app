@@ -12,6 +12,7 @@ import {
 } from "react-leaflet";
 import {
   Crosshair,
+  FileDown,
   Loader2,
   MapPin,
   Plus,
@@ -34,6 +35,8 @@ import {
   searchKnownLocalities,
 } from "@/lib/localityAnchors";
 import { ValueTooltip } from "./ValueTooltip";
+import { downloadDossier, type DossierSection } from "./pdf";
+import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
 
 type AudienceBatchResult = {
   cohort: Cohort;
@@ -89,6 +92,22 @@ type Pin = {
 type ColorMode = "segment" | "zone";
 
 const SEGMENTS: Segment[] = ["budget", "middle", "affluent", "luxury"];
+const SEGMENT_ORDER: Record<string, number> = {
+  budget: 0,
+  middle: 1,
+  affluent: 2,
+  luxury: 3,
+};
+const REGION_ORDER = [
+  "North",
+  "West",
+  "South",
+  "East",
+  "Central",
+  "Northeast",
+  "Midwest",
+  "Other",
+];
 const ROLES: Role[] = [
   "consumer",
   "retail_exec",
@@ -183,6 +202,17 @@ export default function MapView({
   const [sizeText, setSizeText] = useState("30");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const exportablePersonaCount = useMemo(
+    () => cohorts.reduce((sum, c) => sum + c.personas.length, 0),
+    [cohorts]
+  );
+
+  function exportPersonaDossier() {
+    downloadDossier(
+      buildPersonaDossier(cohorts),
+      "persona-dossier"
+    );
+  }
 
   function setPinFromLatLng(lat: number, lng: number) {
     setError(null);
@@ -400,25 +430,37 @@ export default function MapView({
 
       {/* Colour-mode toggle + legend: by income segment or by GoI region (zone). */}
       <div className="absolute right-3 top-3 z-[1000] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
-        <div className="flex items-center gap-1 text-[11px]">
-          <span className="text-neutral-400">Colour:</span>
-          {(["segment", "zone"] as const).map((m) => (
-            <button
-              key={m}
-              type="button"
-              onClick={() => {
-                setColorMode(m);
-                setHoveredLegendKey(null);
-              }}
-              className={`rounded px-1.5 py-0.5 capitalize ${
-                colorMode === m
-                  ? "bg-neutral-900 text-white"
-                  : "text-neutral-600 hover:bg-neutral-100"
-              }`}
-            >
-              {m === "zone" ? "region" : m}
-            </button>
-          ))}
+        <div className="flex items-center gap-1.5 text-[11px]">
+          <div className="flex items-center gap-1">
+            <span className="text-neutral-400">Colour:</span>
+            {(["segment", "zone"] as const).map((m) => (
+              <button
+                key={m}
+                type="button"
+                onClick={() => {
+                  setColorMode(m);
+                  setHoveredLegendKey(null);
+                }}
+                className={`rounded px-1.5 py-0.5 capitalize ${
+                  colorMode === m
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100"
+                }`}
+              >
+                {m === "zone" ? "region" : m}
+              </button>
+            ))}
+          </div>
+          <button
+            type="button"
+            onClick={exportPersonaDossier}
+            disabled={exportablePersonaCount === 0}
+            className="ml-1 flex items-center gap-1 rounded border border-neutral-200 px-1.5 py-0.5 font-medium text-neutral-600 hover:border-indigo-300 hover:text-indigo-600 disabled:opacity-40"
+            title="Download the Persona Dossier PDF"
+          >
+            <FileDown className="h-3 w-3" />
+            Persona Dossier
+          </button>
         </div>
         <div className="mt-1.5 flex max-w-[200px] flex-wrap gap-x-2 gap-y-1">
           {Object.entries(
@@ -622,4 +664,284 @@ export default function MapView({
       </div>
     </div>
   );
+}
+
+type RegionBundle = {
+  name: string;
+  cohorts: CohortWithPersonas[];
+  personas: Array<{ cohort: CohortWithPersonas; persona: Persona }>;
+};
+
+function buildPersonaDossier(cohorts: CohortWithPersonas[]) {
+  const regions = groupCohortsByRegion(cohorts);
+  const allPersonas = regions.flatMap((r) => r.personas);
+  const verdicts = verdictCounts(allPersonas.map((p) => p.persona));
+  const dominantRegion = [...regions].sort(
+    (a, b) => b.personas.length - a.personas.length
+  )[0];
+  const sections: DossierSection[] = [];
+
+  sections.push({
+    heading: "Region index",
+    body: "Start here. This front index intentionally lists regions only; every persona is linked in the back index.",
+    linkList: {
+      items: regions.map((region) => ({
+        text: `${region.name} region`,
+        sub: `${region.personas.length.toLocaleString()} personas across ${region.cohorts.length.toLocaleString()} placed group${region.cohorts.length === 1 ? "" : "s"} in ${localityCount(region).toLocaleString()} location${localityCount(region) === 1 ? "" : "s"}.`,
+        targetId: regionAnchor(region.name),
+      })),
+    },
+  });
+
+  for (const region of regions) {
+    sections.push(regionSection(region));
+    for (const cohort of region.cohorts) {
+      sections.push(cohortSection(cohort));
+      for (const persona of cohort.personas) {
+        sections.push(personaSection(persona));
+      }
+    }
+  }
+
+  sections.push({
+    heading: "Back index - Personas",
+    pageBreak: true,
+    body: "Every persona is listed in the same headline format used on the Geography drawer. Each linked name jumps back to that persona's detailed card inside its region.",
+  });
+  for (const region of regions) {
+    sections.push({
+      heading: `${region.name} region`,
+      linkList: {
+        items: region.personas.map(({ cohort, persona }) => ({
+          text: personaDisplayLabel(persona),
+          sub: `${cohort.label} - Verdict: ${personaVerdict(persona)} (${pct(persona.intent)} intent); WTP ${persona.wtpCurrency} ${persona.wtp.toLocaleString()}; Objection: ${persona.objection}`,
+          targetId: personaAnchor(persona.id),
+        })),
+      },
+    });
+  }
+
+  return {
+    title: "Persona Dossier",
+    subtitle: "Geography page - regions, placed groups, and persona index",
+    meta: [
+      `${allPersonas.length.toLocaleString()} personas`,
+      `${cohorts.length.toLocaleString()} placed groups`,
+      `${regions.length.toLocaleString()} regions`,
+      new Date().toLocaleDateString(),
+    ],
+    cover: {
+      verdict: allPersonas.length
+        ? `${verdicts.approve} approve, ${verdicts.mixed} mixed, ${verdicts.reject} reject. ${
+            dominantRegion
+              ? `${dominantRegion.name} is the largest region by persona count.`
+              : ""
+          }`
+        : "No completed personas are available yet.",
+      kpis: [
+        { label: "Personas", value: allPersonas.length.toLocaleString() },
+        { label: "Groups", value: cohorts.length.toLocaleString(), sub: "placed cohorts" },
+        { label: "Regions", value: regions.length.toLocaleString() },
+        {
+          label: "Mean intent",
+          value: allPersonas.length
+            ? pct(mean(allPersonas.map(({ persona }) => persona.intent)))
+            : "0%",
+        },
+      ],
+    },
+    sections,
+  };
+}
+
+function regionSection(region: RegionBundle): DossierSection {
+  const personas = region.personas.map((p) => p.persona);
+  const verdicts = verdictCounts(personas);
+  const objections = topObjections(personas);
+  return {
+    heading: `${region.name} region`,
+    anchorId: regionAnchor(region.name),
+    pageBreak: true,
+    body: `${region.personas.length.toLocaleString()} personas across ${region.cohorts.length.toLocaleString()} placed group${region.cohorts.length === 1 ? "" : "s"} and ${localityCount(region).toLocaleString()} location${localityCount(region) === 1 ? "" : "s"}. Verdict mix: ${verdicts.approve} approve, ${verdicts.mixed} mixed, ${verdicts.reject} reject.`,
+    kpis: [
+      { label: "Personas", value: region.personas.length.toLocaleString() },
+      { label: "Groups", value: region.cohorts.length.toLocaleString() },
+      { label: "Mean intent", value: personas.length ? pct(mean(personas.map((p) => p.intent))) : "0%" },
+      { label: "Locations", value: localityCount(region).toLocaleString() },
+    ],
+    table: {
+      columns: ["Placed group", "Personas", "Intent", "WTP P50", "Key objections"],
+      rows: region.cohorts.map((cohort) => [
+        `${cohort.locality} - ${cohort.segment} ${roleLabel(cohort.role)}`,
+        cohort.personas.length,
+        cohort.stats ? pct(cohort.stats.meanIntent) : cohort.state,
+        cohort.stats
+          ? `${cohort.stats.wtpCurrency} ${cohort.stats.wtpP50.toLocaleString()}`
+          : "-",
+        cohort.stats?.topObjections.slice(0, 2).join("; ") ||
+          topObjections(cohort.personas).slice(0, 2).join("; ") ||
+          "-",
+      ]),
+    },
+    bullets: objections.length
+      ? [`Key objections: ${objections.join("; ")}`]
+      : undefined,
+  };
+}
+
+function cohortSection(cohort: CohortWithPersonas): DossierSection {
+  const s = cohort.stats;
+  return {
+    heading: cohort.label,
+    anchorId: cohortAnchor(cohort.id),
+    body: cohort.summary ?? undefined,
+    kpis: [
+      { label: "Personas", value: cohort.personas.length.toLocaleString() },
+      {
+        label: "Mean intent",
+        value: s ? pct(s.meanIntent) : cohort.state,
+      },
+      {
+        label: "WTP P50",
+        value: s ? `${s.wtpCurrency} ${s.wtpP50.toLocaleString()}` : "-",
+      },
+      { label: "Audience weight", value: `${cohort.weightPct}%` },
+    ],
+    bullets: [
+      `${cohort.locality}, ${cohort.country} - ${cohort.segment} segment, ${roleLabel(cohort.role)} role.`,
+      s?.topChannels.length
+        ? `Channels: ${s.topChannels.map((c) => `${c.name} ${c.share}%`).join(" - ")}`
+        : "Channels: no completed channel mix yet.",
+      s?.topPlatforms.length
+        ? `Platforms: ${s.topPlatforms.map((p) => `${p.name} ${p.share}%`).join(" - ")}`
+        : "Platforms: mostly offline or unavailable.",
+      `Key objections: ${
+        s?.topObjections.length
+          ? s.topObjections.join("; ")
+          : topObjections(cohort.personas).join("; ") || "No objections captured yet."
+      }`,
+    ],
+  };
+}
+
+function personaSection(persona: Persona): DossierSection {
+  const verdict = personaVerdict(persona);
+  const prior =
+    typeof persona.intentOriginal === "number" && persona.intentOriginal !== persona.intent
+      ? `; was ${pct(persona.intentOriginal)}`
+      : "";
+  return {
+    heading: personaDisplayLabel(persona),
+    anchorId: personaAnchor(persona.id),
+    body: persona.quote ? `"${persona.quote}"` : undefined,
+    bullets: [
+      `Verdict: ${verdict} (${pct(persona.intent)} intent${prior}).`,
+      persona.personality ? `Personality: ${persona.personality}` : "",
+      persona.personalityTraits.length
+        ? `Traits: ${persona.personalityTraits.join(", ")}`
+        : "",
+      persona.lifestyle ? `Lifestyle: ${persona.lifestyle}` : "",
+      persona.reasoning ? `Why: ${persona.reasoning}` : "",
+      persona.values.length ? `Values: ${persona.values.join(", ")}` : "",
+      `WTP ${persona.wtpCurrency} ${persona.wtp.toLocaleString()} - ${pct(persona.priceSensitivity)} price-sensitive - buys via ${persona.channelPref} - ${persona.platforms.length ? persona.platforms.join(", ") : "offline"}.`,
+      persona.shoppingHabits ? `Shopping habits: ${persona.shoppingHabits}` : "",
+      `Objection: ${persona.objection}`,
+    ].filter(Boolean),
+  };
+}
+
+function groupCohortsByRegion(cohorts: CohortWithPersonas[]): RegionBundle[] {
+  const byRegion = new Map<string, CohortWithPersonas[]>();
+  for (const cohort of cohorts) {
+    const region = regionForLocality(cohort.locality, cohort.country)?.zone ?? "Other";
+    byRegion.set(region, [...(byRegion.get(region) ?? []), cohort]);
+  }
+  return [...byRegion.entries()]
+    .map(([name, regionCohorts]) => {
+      const sorted = [...regionCohorts].sort(compareCohorts);
+      return {
+        name,
+        cohorts: sorted,
+        personas: sorted.flatMap((cohort) =>
+          cohort.personas.map((persona) => ({ cohort, persona }))
+        ),
+      };
+    })
+    .sort((a, b) => {
+      const ai = REGION_ORDER.indexOf(a.name);
+      const bi = REGION_ORDER.indexOf(b.name);
+      const ao = ai === -1 ? REGION_ORDER.length : ai;
+      const bo = bi === -1 ? REGION_ORDER.length : bi;
+      return ao - bo || a.name.localeCompare(b.name);
+    });
+}
+
+function compareCohorts(a: CohortWithPersonas, b: CohortWithPersonas): number {
+  return (
+    a.locality.localeCompare(b.locality) ||
+    (SEGMENT_ORDER[a.segment] ?? 99) - (SEGMENT_ORDER[b.segment] ?? 99) ||
+    a.role.localeCompare(b.role) ||
+    a.label.localeCompare(b.label)
+  );
+}
+
+function personaDisplayLabel(persona: Persona): string {
+  return `${persona.name} ${persona.age} · ${persona.occupation}${
+    persona.lifeStage ? ` · ${persona.lifeStage}` : ""
+  }`;
+}
+
+function personaVerdict(persona: Persona): string {
+  return SENTIMENT_META[classifySentiment(persona.intent)].label;
+}
+
+function verdictCounts(personas: Persona[]) {
+  return personas.reduce(
+    (acc, persona) => {
+      acc[classifySentiment(persona.intent)] += 1;
+      return acc;
+    },
+    { approve: 0, mixed: 0, reject: 0 }
+  );
+}
+
+function topObjections(personas: Persona[], limit = 5): string[] {
+  const counts = new Map<string, number>();
+  for (const persona of personas) {
+    const objection = persona.objection.trim();
+    if (!objection) continue;
+    counts.set(objection, (counts.get(objection) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([text, count]) => `${text} (${count})`);
+}
+
+function localityCount(region: RegionBundle): number {
+  return new Set(region.cohorts.map((c) => `${c.locality}|${c.country}`)).size;
+}
+
+function mean(values: number[]): number {
+  return values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+}
+
+function pct(value: number): string {
+  return `${Math.round(value * 100)}%`;
+}
+
+function anchorSafe(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/(^-|-$)/g, "");
+}
+
+function regionAnchor(region: string): string {
+  return `region-${anchorSafe(region)}`;
+}
+
+function cohortAnchor(id: string): string {
+  return `cohort-${anchorSafe(id)}`;
+}
+
+function personaAnchor(id: string): string {
+  return `persona-${anchorSafe(id)}`;
 }

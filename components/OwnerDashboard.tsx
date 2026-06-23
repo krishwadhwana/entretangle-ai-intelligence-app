@@ -15,6 +15,11 @@ import InspirationSection from "./InspirationSection";
 // The Owner Dashboard is an extensible home for owner-facing tools. The left
 // rail is data-driven so new sections (suppliers, launch checklist) slot in.
 type SectionId = "brandSocial" | "financials" | "inspiration";
+type OwnerDashboardRunSlice = {
+  brandSocial: BrandSocialState | null;
+  financials: FinancialsState | null;
+  inspiration: InspirationState | null;
+};
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
   { id: "financials", label: "Financials", icon: TrendingUp },
@@ -41,17 +46,25 @@ export default function OwnerDashboard({
   // from the project. Kept here so all sections share one fetch.
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
     if (!projectId) {
+      setBrandSocial(null);
+      setFinancials(null);
+      setInspiration(null);
       setLoading(false);
       return;
     }
     (async () => {
       try {
-        // Lean endpoint: just the owner_dashboard blob, not the whole project
-        // (whose embedded run snapshots were timing this fetch out).
-        const res = await fetch(`/api/projects/${projectId}/owner-dashboard`);
+        // Run-scoped endpoint: just this run's owner sections, not every saved
+        // owner artifact from sibling runs.
+        const res = await fetch(
+          `/api/projects/${projectId}/owner-dashboard?runId=${encodeURIComponent(runId)}`
+        );
         if (res.ok) {
-          const { ownerDashboard } = await res.json();
+          const { ownerDashboard } = (await res.json()) as {
+            ownerDashboard: OwnerDashboardRunSlice | null;
+          };
           if (!cancelled) {
             setBrandSocial(ownerDashboard?.brandSocial ?? null);
             setFinancials(ownerDashboard?.financials ?? null);
@@ -67,7 +80,7 @@ export default function OwnerDashboard({
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, runId]);
 
   return (
     <div className="absolute inset-0 flex bg-white pt-12">

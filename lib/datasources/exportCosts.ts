@@ -50,10 +50,11 @@ export const DE_MINIMIS_USD = 800; // Section 321 informal-entry threshold
 export const DE_MINIMIS_NOTE =
   "US de-minimis (Section 321, <$800 duty-free for DTC parcels) has been in flux through 2025 — verify the current rule for this corridor before relying on it.";
 
-// FX fallback if the live fetch fails. INR→USD ≈ 0.0117 (≈ ₹85/USD).
+// FX fallback if the live fetch fails. Live fetch remains authoritative; this
+// prior was refreshed against open.er-api.com on 2026-06-23.
 export const DEFAULT_FX: Record<string, number> = {
-  "INR:USD": 0.0117,
-  "USD:INR": 85.0,
+  "INR:USD": 0.01056,
+  "USD:INR": 94.7,
 };
 
 /**

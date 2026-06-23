@@ -118,7 +118,7 @@ async function converge(
         select: { projectId: true },
       });
       const financials = run?.projectId
-        ? await getFinancialModel(run.projectId)
+        ? await getFinancialModel(run.projectId, runId)
         : null;
       const report = await callFinalReport(
         runId,

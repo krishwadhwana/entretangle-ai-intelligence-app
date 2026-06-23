@@ -1139,8 +1139,15 @@ export const OwnerDashboardSchema = z.object({
     generatedAt: null,
     sourceRunId: null,
   }),
+  // Owner Dashboard sections are run-specific because sibling runs can model
+  // different regional markets inside the same project.
+  brandSocialByRun: z.record(BrandSocialSectionSchema).default({}),
   financials: FinancialsSectionSchema.default(EMPTY_FINANCIALS),
+  // Financial models are run-specific: a home-market run and a destination
+  // export run can share a project but must not share TAM/SAM/SOM.
+  financialsByRun: z.record(FinancialsSectionSchema).default({}),
   inspiration: InspirationSectionSchema.default(EMPTY_INSPIRATION),
+  inspirationByRun: z.record(InspirationSectionSchema).default({}),
   // LLM-generated playbooks, keyed by runId (regenerable per run).
   playbooks: z.record(GeneratedPlaybookSchema).default({}),
 });

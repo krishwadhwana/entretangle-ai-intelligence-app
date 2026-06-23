@@ -58,9 +58,16 @@ export type ProjectFull = ProjectSummary & {
   websiteAnalysis: WebsiteAnalysis | null;
 };
 
+export type OwnerDashboardRunSlice = {
+  brandSocial: OwnerDashboard["brandSocial"] | null;
+  financials: OwnerDashboard["financials"] | null;
+  inspiration: OwnerDashboard["inspiration"] | null;
+};
+
 // Default state for a freshly-initialised owner dashboard.
 const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
   brandSocial: { kit: null, checks: {}, generatedAt: null, sourceRunId: null },
+  brandSocialByRun: {},
   financials: {
     model: null,
     inputs: null,
@@ -69,7 +76,9 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     sourceRunId: null,
     followUp: [],
   },
+  financialsByRun: {},
   inspiration: { kit: null, generatedAt: null, sourceRunId: null },
+  inspirationByRun: {},
   playbooks: {},
 };
 
@@ -84,21 +93,87 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     unknown
   >;
   const brand = BrandSocialSectionSchema.safeParse(obj.brandSocial);
+  const brandByRun = z.record(BrandSocialSectionSchema).safeParse(
+    obj.brandSocialByRun
+  );
   const fin = FinancialsSectionSchema.safeParse(obj.financials);
+  const finByRun = z.record(FinancialsSectionSchema).safeParse(obj.financialsByRun);
   const insp = InspirationSectionSchema.safeParse(obj.inspiration);
+  const inspByRun = z.record(InspirationSectionSchema).safeParse(
+    obj.inspirationByRun
+  );
   const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
+  const brandSocialByRun = brandByRun.success ? { ...brandByRun.data } : {};
+  if (
+    brand.success &&
+    brand.data.sourceRunId &&
+    !brandSocialByRun[brand.data.sourceRunId]
+  ) {
+    brandSocialByRun[brand.data.sourceRunId] = brand.data;
+  }
+  const financialsByRun = finByRun.success ? { ...finByRun.data } : {};
+  if (
+    fin.success &&
+    fin.data.sourceRunId &&
+    !financialsByRun[fin.data.sourceRunId]
+  ) {
+    financialsByRun[fin.data.sourceRunId] = fin.data;
+  }
+  const inspirationByRun = inspByRun.success ? { ...inspByRun.data } : {};
+  if (
+    insp.success &&
+    insp.data.sourceRunId &&
+    !inspirationByRun[insp.data.sourceRunId]
+  ) {
+    inspirationByRun[insp.data.sourceRunId] = insp.data;
+  }
   return {
     brandSocial: brand.success
       ? brand.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.brandSocial),
+    brandSocialByRun,
     financials: fin.success
       ? fin.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.financials),
+    financialsByRun,
     inspiration: insp.success
       ? insp.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.inspiration),
+    inspirationByRun,
     playbooks: pb.success ? pb.data : {},
   };
+}
+
+function rawObject(
+  raw: Prisma.JsonValue | null | undefined
+): Record<string, unknown> {
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as Record<string, unknown>)
+    : {};
+}
+
+type RunSectionSchema<T extends { sourceRunId: string | null }> = {
+  safeParse(input: unknown): z.SafeParseReturnType<unknown, T>;
+};
+
+function parseRunSection<T extends { sourceRunId: string | null }>(
+  raw: Prisma.JsonValue | null,
+  runId: string,
+  byRunKey: string,
+  legacyKey: string,
+  schema: RunSectionSchema<T>,
+  hasContent: (section: T) => boolean
+): T | null {
+  const obj = rawObject(raw);
+  const byRun = rawObject(obj[byRunKey] as Prisma.JsonValue | null);
+  const exact = schema.safeParse(byRun[runId]);
+  if (exact.success) return exact.data;
+
+  const legacy = schema.safeParse(obj[legacyKey]);
+  if (!legacy.success) return null;
+  if (legacy.data.sourceRunId === runId) return legacy.data;
+  if (!legacy.data.sourceRunId && hasContent(legacy.data)) return legacy.data;
+  return null;
 }
 
 function toSummary(row: {
@@ -466,47 +541,95 @@ export async function saveBrandKit(
 ): Promise<OwnerDashboard["brandSocial"]> {
   const owner = await readOwnerDashboard(id);
   const validIds = new Set(kit.checklist.map((c) => c.id));
+  const prior =
+    owner.brandSocialByRun[sourceRunId] ??
+    (owner.brandSocial.sourceRunId === sourceRunId
+      ? owner.brandSocial
+      : structuredClone(EMPTY_OWNER_DASHBOARD.brandSocial));
   const checks: Record<string, boolean> = {};
-  for (const [itemId, done] of Object.entries(owner.brandSocial.checks)) {
+  for (const [itemId, done] of Object.entries(prior.checks)) {
     if (validIds.has(itemId)) checks[itemId] = done; // keep, drop stale ids
   }
-  owner.brandSocial = { kit, checks, generatedAt, sourceRunId };
+  const section = { kit, checks, generatedAt, sourceRunId };
+  owner.brandSocialByRun = {
+    ...owner.brandSocialByRun,
+    [sourceRunId]: section,
+  };
+  owner.brandSocial = section;
   await writeOwnerDashboard(id, owner);
-  return owner.brandSocial;
+  return section;
 }
 
 export async function saveOwnerChecks(
   id: string,
-  patch: Record<string, boolean>
+  patch: Record<string, boolean>,
+  runId?: string | null
 ): Promise<void> {
   const owner = await readOwnerDashboard(id);
-  owner.brandSocial.checks = { ...owner.brandSocial.checks, ...patch };
+  if (runId) {
+    const section =
+      owner.brandSocialByRun[runId] ??
+      (owner.brandSocial.sourceRunId === runId
+        ? owner.brandSocial
+        : structuredClone(EMPTY_OWNER_DASHBOARD.brandSocial));
+    const next = {
+      ...section,
+      sourceRunId: runId,
+      checks: { ...section.checks, ...patch },
+    };
+    owner.brandSocialByRun = { ...owner.brandSocialByRun, [runId]: next };
+    owner.brandSocial = next;
+  } else {
+    owner.brandSocial.checks = { ...owner.brandSocial.checks, ...patch };
+  }
   await writeOwnerDashboard(id, owner);
 }
 
 /**
  * Persist the Financials section (computed model + the assumptions it was
- * computed from + which inputs the founder overrode). Update only the
- * owner_dashboard.financials key so sibling owner-dashboard sections stay
- * untouched without a slow read-modify-write round trip.
+ * computed from + which inputs the founder overrode). Stored per run so a
+ * destination-market model never overwrites the home-market model.
  */
 export async function saveFinancials(
   id: string,
-  section: FinancialsSection
+  section: FinancialsSection,
+  runId?: string | null
 ): Promise<FinancialsSection> {
   const parsed = FinancialsSectionSchema.parse(section);
-  const updated = await prisma.$executeRaw`
-    UPDATE projects
-    SET owner_dashboard = jsonb_set(
-          COALESCE(owner_dashboard, '{}'::jsonb),
-          '{financials}',
-          ${JSON.stringify(parsed)}::jsonb,
-          true
-        ),
-        updated_at = now() AT TIME ZONE 'utc'
-    WHERE id = ${id}`;
-  if (updated === 0) throw new Error("project not found");
+  const owner = await readOwnerDashboard(id);
+  const key = runId ?? parsed.sourceRunId ?? parsed.model?.sourceRunId ?? null;
+  if (key) {
+    owner.financialsByRun = { ...owner.financialsByRun, [key]: parsed };
+  }
+  // Keep the legacy slot updated for older code and old project rows. New
+  // run-aware reads use financialsByRun first.
+  owner.financials = parsed;
+  await writeOwnerDashboard(id, owner);
   return parsed;
+}
+
+export async function getFinancialsSection(
+  projectId: string,
+  runId?: string | null
+): Promise<FinancialsSection | null> {
+  try {
+    const owner = await readOwnerDashboard(projectId);
+    if (runId) {
+      const exact = owner.financialsByRun[runId];
+      if (exact) return exact;
+      // Backward compatibility for projects saved before financialsByRun.
+      if (
+        owner.financials.sourceRunId === runId ||
+        (!owner.financials.sourceRunId && owner.financials.model)
+      ) {
+        return owner.financials;
+      }
+      return null;
+    }
+    return owner.financials.model ? owner.financials : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -521,9 +644,14 @@ export async function saveInspiration(
   generatedAt: string
 ): Promise<InspirationSection> {
   const owner = await readOwnerDashboard(id);
-  owner.inspiration = { kit, generatedAt, sourceRunId };
+  const section = { kit, generatedAt, sourceRunId };
+  owner.inspirationByRun = {
+    ...owner.inspirationByRun,
+    [sourceRunId]: section,
+  };
+  owner.inspiration = section;
   await writeOwnerDashboard(id, owner);
-  return owner.inspiration;
+  return section;
 }
 
 /**
@@ -532,14 +660,11 @@ export async function saveInspiration(
  * project / no model yet (report then stays qualitative).
  */
 export async function getFinancialModel(
-  projectId: string
+  projectId: string,
+  runId?: string | null
 ): Promise<FinancialModel | null> {
-  try {
-    const owner = await readOwnerDashboard(projectId);
-    return owner.financials.model;
-  } catch {
-    return null;
-  }
+  const section = await getFinancialsSection(projectId, runId);
+  return section?.model ?? null;
 }
 
 /**
@@ -742,12 +867,50 @@ export async function getProjectLean(id: string): Promise<ProjectFull | null> {
 // simulation_runs snapshot embedded on the project row. Select just that column
 // so Postgres never ships (and we never parse) megabytes of run/persona data;
 // loading the whole project here was timing the Owner tab out.
-export async function getOwnerDashboard(id: string): Promise<unknown | null> {
+export async function getOwnerDashboard(id: string): Promise<OwnerDashboard | null> {
   const row = await prisma.project.findUnique({
     where: { id },
     select: { ownerDashboard: true },
   });
-  return row ? (row.ownerDashboard ?? null) : null;
+  return row ? parseOwnerDashboard(row.ownerDashboard) : null;
+}
+
+export async function getOwnerDashboardRunSlice(
+  id: string,
+  runId: string
+): Promise<OwnerDashboardRunSlice | null> {
+  const row = await prisma.project.findUnique({
+    where: { id },
+    select: { ownerDashboard: true },
+  });
+  if (!row) return null;
+
+  return {
+    brandSocial: parseRunSection(
+      row.ownerDashboard,
+      runId,
+      "brandSocialByRun",
+      "brandSocial",
+      BrandSocialSectionSchema,
+      (s) => Boolean(s.kit)
+    ),
+    financials: parseRunSection(
+      row.ownerDashboard,
+      runId,
+      "financialsByRun",
+      "financials",
+      FinancialsSectionSchema,
+      (s) => Boolean(s.model)
+    ),
+    inspiration: parseRunSection(
+      row.ownerDashboard,
+      runId,
+      "inspirationByRun",
+      "inspiration",
+      InspirationSectionSchema,
+      (s) => Boolean(s.kit)
+    ),
+  };
 }
 
 export async function listProjectPreviews(): Promise<ProjectFull[]> {

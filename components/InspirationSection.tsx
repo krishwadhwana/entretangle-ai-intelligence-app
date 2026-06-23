@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ExternalLink,
   Image,
@@ -158,6 +158,10 @@ export default function InspirationSection({
   const [section, setSection] = useState<InspirationState | null>(initial);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setSection(initial);
+  }, [initial]);
 
   const kit = section?.kit ?? null;
   const canGenerate = state.status === "complete" || state.status === "capped";

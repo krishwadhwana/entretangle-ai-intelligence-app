@@ -294,44 +294,260 @@ export default function FinancialsSection({
   const exportPdf = () => {
     if (!model) return;
     const m = model;
-    const money = (n: FinNum | null | undefined) =>
-      n && Number.isFinite(n.value) ? fmt(n.value, currency) : "—";
-    const plain = (n: FinNum | null | undefined) =>
-      n && Number.isFinite(n.value) ? String(n.value) : "—";
+    const metric = (n: FinNum | null | undefined) =>
+      n && Number.isFinite(n.value) ? fmt(n.value, currency, n.unit) : "—";
+    const sourceLine = (n: FinNum | null | undefined) => {
+      if (!n) return "";
+      const label = SOURCE_META[n.source]?.label ?? n.source;
+      return [label, n.basis].filter(Boolean).join(" - ");
+    };
+    const inputMoney = (v: number, unit?: string) =>
+      Number.isFinite(v) ? fmt(v, currency, unit) : "—";
+    const landedCost = m.costStructure.reduce((s, c) => s + c.amount.value, 0);
+    const generatedLabel =
+      m.generatedAt ?? generatedAt
+        ? new Date(m.generatedAt ?? generatedAt ?? "").toLocaleDateString()
+        : new Date().toLocaleDateString();
     const sections: DossierSection[] = [];
-    if (m.runwayFit.verdict)
-      sections.push({ heading: "Verdict", body: m.runwayFit.verdict });
+    sections.push({
+      heading: "Model snapshot",
+      kpis: [
+        { label: "Currency", value: currency },
+        { label: "Data maturity", value: `${m.dataMaturityPct}% real` },
+        { label: "Generated", value: generatedLabel },
+      ],
+      body: m.runwayFit.verdict || undefined,
+    });
+    sections.push({
+      heading: "Market size: top-down vs your buyers",
+      body: m.marketSizing.reconciliationNote,
+      kpis: [
+        {
+          label: "TAM / yr",
+          value: metric(m.marketSizing.tam),
+          sub: sourceLine(m.marketSizing.tam),
+        },
+        {
+          label: "SAM / yr",
+          value: metric(m.marketSizing.sam),
+          sub: sourceLine(m.marketSizing.sam),
+        },
+        {
+          label: "SOM / yr",
+          value: metric(m.marketSizing.som),
+          sub: sourceLine(m.marketSizing.som),
+        },
+        {
+          label: "Bottom-up / yr",
+          value: metric(m.marketSizing.bottomUpAnnualRevenue),
+          sub: sourceLine(m.marketSizing.bottomUpAnnualRevenue),
+        },
+        {
+          label: "Reachable prospects / mo",
+          value: metric(m.marketSizing.reachableProspectsPerMonth),
+          sub: sourceLine(m.marketSizing.reachableProspectsPerMonth),
+        },
+      ],
+      bars: {
+        title: "Annual market sizing",
+        money: true,
+        data: [
+          { label: "TAM", value: m.marketSizing.tam.value },
+          { label: "SAM", value: m.marketSizing.sam.value },
+          { label: "SOM", value: m.marketSizing.som.value },
+          {
+            label: "Bottom-up",
+            value: m.marketSizing.bottomUpAnnualRevenue.value,
+          },
+        ],
+      },
+    });
+    if (m.priceTiers.length) {
+      sections.push({
+        heading: "Price tiers & monthly economics",
+        body:
+          "Demand at each price is reachable prospects multiplied by the share of simulated buyers who can afford it and intend to buy.",
+        table: {
+          columns: [
+            "Tier",
+            "Segment",
+            "Price",
+            "COGS",
+            "Contribution",
+            "Margin",
+            "Units/mo",
+            "Revenue/mo",
+            "Gross profit/mo",
+            "Basis",
+          ],
+          rows: m.priceTiers.map((t) => [
+            `${t.label}${t.label === inputs?.baseTierLabel ? " (go-to-market)" : ""}`,
+            t.segment ?? "—",
+            metric(t.price),
+            metric(t.landedCogs),
+            metric(t.contributionPerUnit),
+            metric(t.grossMarginPct),
+            metric(t.estUnitsPerMonth),
+            metric(t.estRevenuePerMonth),
+            metric(t.estGrossProfitPerMonth),
+            sourceLine(t.estUnitsPerMonth),
+          ]),
+        },
+      });
+      sections.push({
+        heading: "Tier revenue and gross profit",
+        bars: {
+          title: "Revenue / month",
+          money: true,
+          data: m.priceTiers.map((t) => ({
+            label: t.label,
+            value: t.estRevenuePerMonth.value,
+          })),
+        },
+      });
+      sections.push({
+        bars: {
+          title: "Gross profit / month",
+          money: true,
+          data: m.priceTiers.map((t) => ({
+            label: t.label,
+            value: t.estGrossProfitPerMonth.value,
+          })),
+        },
+      });
+    }
+    if (m.costStructure.length) {
+      sections.push({
+        heading: "Per-unit landed cost",
+        kpis: [
+          {
+            label: "Landed cost / unit",
+            value: inputMoney(landedCost, `${currency}/unit`),
+          },
+        ],
+        table: {
+          columns: ["Line item", "Amount", "Source / basis", "Note"],
+          rows: m.costStructure.map((c) => [
+            c.label,
+            metric(c.amount),
+            sourceLine(c.amount),
+            c.note || "—",
+          ]),
+        },
+      });
+    }
     sections.push({
       heading: "Unit economics",
-      bullets: [
-        `Blended CAC: ${money(m.unitEconomics.blendedCac)}`,
-        `LTV: ${money(m.unitEconomics.ltv)}`,
-        `LTV : CAC: ${plain(m.unitEconomics.ltvCacRatio)}`,
+      kpis: [
+        {
+          label: "Blended CAC",
+          value: metric(m.unitEconomics.blendedCac),
+          sub: sourceLine(m.unitEconomics.blendedCac),
+        },
+        {
+          label: "LTV",
+          value: metric(m.unitEconomics.ltv),
+          sub: sourceLine(m.unitEconomics.ltv),
+        },
+        {
+          label: "LTV : CAC",
+          value: metric(m.unitEconomics.ltvCacRatio),
+          sub: sourceLine(m.unitEconomics.ltvCacRatio),
+        },
+        {
+          label: "Payback",
+          value: metric(m.unitEconomics.paybackMonths),
+          sub: sourceLine(m.unitEconomics.paybackMonths),
+        },
       ],
     });
-    sections.push({
-      heading: "Break-even",
-      bullets: [
-        `Units / month: ${plain(m.breakEven.breakEvenUnitsPerMonth)}`,
-        `Months to break-even: ${plain(m.breakEven.monthsToBreakEven)}`,
-        `Revenue / month at break-even: ${money(m.breakEven.breakEvenRevenuePerMonth)}`,
-      ],
-    });
-    sections.push({
-      heading: "Runway",
-      bullets: [`Runway: ${plain(m.runwayFit.runwayMonths)} months`],
-    });
-    if (m.priceTiers.length)
+    if (m.unitEconomics.cacByChannel.length) {
       sections.push({
-        heading: "Price tiers",
-        bullets: m.priceTiers.map(
-          (t) => `${t.label}: ${money(t.price)} · ${plain(t.grossMarginPct)}% margin`
-        ),
+        heading: "CAC by channel",
+        table: {
+          columns: ["Channel", "CAC", "Source / basis"],
+          rows: m.unitEconomics.cacByChannel.map((c) => [
+            c.channel,
+            metric(c.cac),
+            sourceLine(c.cac),
+          ]),
+        },
       });
-    if (m.costStructure.length)
+    }
+    sections.push({
+      heading: "Break-even & runway",
+      body: m.runwayFit.verdict,
+      kpis: [
+        {
+          label: "Fixed costs / mo",
+          value: metric(m.breakEven.fixedCostsPerMonth),
+          sub: sourceLine(m.breakEven.fixedCostsPerMonth),
+        },
+        {
+          label: "Contribution / unit",
+          value: metric(m.breakEven.contributionPerUnit),
+          sub: sourceLine(m.breakEven.contributionPerUnit),
+        },
+        {
+          label: "Break-even units/mo",
+          value: metric(m.breakEven.breakEvenUnitsPerMonth),
+          sub: sourceLine(m.breakEven.breakEvenUnitsPerMonth),
+        },
+        {
+          label: "Break-even revenue/mo",
+          value: metric(m.breakEven.breakEvenRevenuePerMonth),
+          sub: sourceLine(m.breakEven.breakEvenRevenuePerMonth),
+        },
+        {
+          label: "Months to break even",
+          value: metric(m.breakEven.monthsToBreakEven),
+          sub: sourceLine(m.breakEven.monthsToBreakEven),
+        },
+        {
+          label: "Capital available",
+          value: metric(m.runwayFit.capitalAvailable),
+          sub: sourceLine(m.runwayFit.capitalAvailable),
+        },
+        {
+          label: "Monthly burn",
+          value: metric(m.runwayFit.monthlyBurn),
+          sub: sourceLine(m.runwayFit.monthlyBurn),
+        },
+        {
+          label: "MOQ cash required",
+          value: metric(m.runwayFit.moqCashRequired),
+          sub: sourceLine(m.runwayFit.moqCashRequired),
+        },
+        {
+          label: "Runway",
+          value: metric(m.runwayFit.runwayMonths),
+          sub: sourceLine(m.runwayFit.runwayMonths),
+          tone: m.runwayFit.fundsMoq ? "good" : "bad",
+        },
+      ],
+    });
+    if (inputs) {
       sections.push({
-        heading: "Cost structure (per unit)",
-        bullets: m.costStructure.map((c) => `${c.label}: ${money(c.amount)}`),
+        heading: "Editable assumptions",
+        table: {
+          columns: ["Assumption", "Value"],
+          rows: [
+            ["Fixed costs / mo", inputMoney(inputs.fixedCostsPerMonth, `${currency}/mo`)],
+            [
+              "Reachable prospects / mo",
+              inputMoney(inputs.reachableProspectsPerMonth, "prospects/mo"),
+            ],
+            ["MOQ cash required", inputMoney(inputs.moqCashRequired, currency)],
+            ["Base price tier", inputs.baseTierLabel],
+            ["Founder edits", editedKeys.length ? editedKeys.join(", ") : "None"],
+          ],
+        },
+      });
+    }
+    if (m.assumptions.length)
+      sections.push({
+        heading: "Key assumptions",
+        bullets: m.assumptions,
       });
     // Follow-up: the "ask about these financials" Q&A, appended as a supplement.
     if (followUp.length)
@@ -345,7 +561,20 @@ export default function FinancialsSection({
     downloadDossier(
       {
         title: "Financial model",
-        meta: [currency, `${model.dataMaturityPct}% real data`, new Date().toLocaleDateString()],
+        subtitle: "Costs, margins, market size and runway",
+        meta: [currency, `${model.dataMaturityPct}% real data`, generatedLabel],
+        cover: {
+          verdict: m.runwayFit.verdict || m.marketSizing.reconciliationNote,
+          kpis: [
+            { label: "TAM / yr", value: metric(m.marketSizing.tam) },
+            { label: "SAM / yr", value: metric(m.marketSizing.sam) },
+            { label: "SOM / yr", value: metric(m.marketSizing.som) },
+            {
+              label: "Bottom-up / yr",
+              value: metric(m.marketSizing.bottomUpAnnualRevenue),
+            },
+          ],
+        },
         sections,
       },
       "financials-dossier"

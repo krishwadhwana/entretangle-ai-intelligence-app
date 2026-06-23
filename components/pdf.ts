@@ -22,6 +22,8 @@ export type Bar = { label: string; value: number; color?: RGB };
 export type Series = { name: string; color: RGB; points: number[] };
 
 export type DossierSection = {
+  /** Internal PDF jump target for tables of contents / indexes. */
+  anchorId?: string;
   heading?: string;
   body?: string;
   bullets?: string[];
@@ -35,7 +37,15 @@ export type DossierSection = {
   /** Simple table. */
   table?: { columns: string[]; rows: (string | number)[][] };
   /** Bulleted list where each item can carry a clickable source link. */
-  linkList?: { items: { text: string; sub?: string; url?: string }[] };
+  linkList?: {
+    items: {
+      text: string;
+      sub?: string;
+      url?: string;
+      /** Internal PDF jump target. Ignored when url is present. */
+      targetId?: string;
+    }[];
+  };
   /** Force a page break before this section. */
   pageBreak?: boolean;
 };
@@ -85,6 +95,15 @@ class Doc {
   maxW: number;
   y: number;
   accent: RGB;
+  anchors = new Map<string, { page: number; y: number }>();
+  pendingLinks: Array<{
+    page: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    targetId: string;
+  }> = [];
   constructor(accent: RGB) {
     this.d = new jsPDF({ unit: "pt", format: "a4" });
     this.pageW = this.d.internal.pageSize.getWidth();
@@ -103,6 +122,40 @@ class Doc {
   page() {
     this.d.addPage();
     this.y = MARGIN;
+  }
+  currentPage(): number {
+    return this.d.getCurrentPageInfo().pageNumber;
+  }
+  markAnchor(id?: string) {
+    if (!id || this.anchors.has(id)) return;
+    this.anchors.set(id, {
+      page: this.currentPage(),
+      y: Math.max(0, this.y - 16),
+    });
+  }
+  addInternalLink(targetId: string | undefined, x: number, y: number, w: number, h: number) {
+    if (!targetId) return;
+    this.pendingLinks.push({
+      page: this.currentPage(),
+      x,
+      y,
+      w,
+      h,
+      targetId,
+    });
+  }
+  resolveInternalLinks() {
+    const current = this.currentPage();
+    for (const link of this.pendingLinks) {
+      const target = this.anchors.get(link.targetId);
+      if (!target) continue;
+      this.d.setPage(link.page);
+      this.d.link(link.x, link.y, link.w, link.h, {
+        pageNumber: target.page,
+        top: target.y,
+      });
+    }
+    this.d.setPage(current);
   }
   ensure(h: number) {
     if (this.y + h > this.pageH - MARGIN - 18) this.page();
@@ -376,18 +429,27 @@ function linkList(D: Doc, c: NonNullable<DossierSection["linkList"]>) {
   for (const it of c.items) {
     // point (bold, bulleted)
     D.font(true, 10);
-    D.ink(INK);
+    D.ink(it.targetId && !it.url ? INDIGO : INK);
     const pLines = D.d.splitTextToSize(it.text, D.maxW - 16) as string[];
     const lh = 10 * LINE;
     pLines.forEach((ln, i) => {
       D.ensure(lh);
+      const textX = MARGIN + 14;
+      const textY = D.y + 9;
       if (i === 0) {
         D.fill(D.accent);
         D.d.circle(MARGIN + 3, D.y + 5.5, 1.7, "F");
       }
       D.font(true, 10);
-      D.ink(INK);
-      D.d.text(ln, MARGIN + 14, D.y + 9);
+      D.ink(it.targetId && !it.url ? INDIGO : INK);
+      D.d.text(ln, textX, textY);
+      if (it.targetId && !it.url) {
+        const w = Math.min(D.d.getTextWidth(ln), D.maxW - 16);
+        D.addInternalLink(it.targetId, textX, D.y, w, lh);
+        D.stroke(INDIGO);
+        D.d.setLineWidth(0.35);
+        D.d.line(textX, textY + 1.8, textX + w, textY + 1.8);
+      }
       D.y += lh;
     });
     // detail
@@ -513,6 +575,7 @@ function renderDossier(D: Doc, d: Dossier) {
       D.y = 52;
     }
     if (s.heading) sectionHeading(D, s.heading);
+    if (s.anchorId) D.markAnchor(s.anchorId);
     if (s.body) D.text(s.body, 10.5, { color: [50, 50, 50], gap: 6 });
     if (s.kpis?.length) kpiRow(D, s.kpis);
     if (s.bars) barChart(D, s.bars);
@@ -523,6 +586,7 @@ function renderDossier(D: Doc, d: Dossier) {
     if (s.bullets?.length) bullets(D, s.bullets);
     D.y += 8;
   }
+  D.resolveInternalLinks();
   chrome(D, d.title);
 }
 
@@ -563,6 +627,7 @@ function sanitize(d: Dossier): Dossier {
       : undefined,
     sections: d.sections.map((s) => ({
       ...s,
+      anchorId: s.anchorId,
       heading: s.heading ? clean(s.heading) : undefined,
       body: s.body ? clean(s.body) : undefined,
       bullets: s.bullets?.map((b) => clean(b)),
@@ -595,6 +660,7 @@ function sanitize(d: Dossier): Dossier {
               text: clean(it.text),
               sub: it.sub ? clean(it.sub) : undefined,
               url: it.url, // URLs are ASCII — keep verbatim for the link
+              targetId: it.targetId,
             })),
           }
         : undefined,

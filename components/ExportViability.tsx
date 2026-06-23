@@ -1,11 +1,25 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Ship, Loader2, RefreshCw, TrendingUp, AlertTriangle } from "lucide-react";
+import {
+  Ship,
+  Loader2,
+  RefreshCw,
+  TrendingUp,
+  AlertTriangle,
+  Ban,
+  CheckCircle2,
+  FileDown,
+} from "lucide-react";
 import type {
   ExportViabilityReport,
   ExportScenarioResult,
 } from "@/lib/schema";
+import {
+  deriveExportDecision,
+  type ExportDecision,
+} from "@/lib/exportDecision";
+import type { Dossier, KPI } from "./pdf";
 
 // ---------------------------------------------------------------------------
 // Export Viability view (Phase 5). Runs the cross-border landed-cost engine for
@@ -31,6 +45,32 @@ const VERDICT_STYLE: Record<ExportScenarioResult["verdict"], string> = {
   unknown: "bg-neutral-100 text-neutral-600 border-neutral-300",
 };
 
+const DECISION_STYLE: Record<
+  ExportDecision["stance"],
+  { card: string; badge: string; icon: typeof CheckCircle2 }
+> = {
+  export: {
+    card: "border-emerald-200 bg-emerald-50 text-emerald-950",
+    badge: "border-emerald-300 bg-emerald-100 text-emerald-800",
+    icon: CheckCircle2,
+  },
+  pilot: {
+    card: "border-amber-200 bg-amber-50 text-amber-950",
+    badge: "border-amber-300 bg-amber-100 text-amber-800",
+    icon: AlertTriangle,
+  },
+  hold: {
+    card: "border-rose-200 bg-rose-50 text-rose-950",
+    badge: "border-rose-300 bg-rose-100 text-rose-800",
+    icon: Ban,
+  },
+  unknown: {
+    card: "border-neutral-200 bg-white text-neutral-900",
+    badge: "border-neutral-300 bg-neutral-100 text-neutral-700",
+    icon: AlertTriangle,
+  },
+};
+
 function symbolFor(currency: string): string {
   return currency === "USD" ? "$" : currency === "INR" ? "₹" : "";
 }
@@ -43,9 +83,16 @@ function money(n: number, currency: string): string {
   return sym ? `${sign}${sym}${v}` : `${sign}${v} ${currency}`;
 }
 
+function decisionTone(stance: ExportDecision["stance"]): KPI["tone"] {
+  if (stance === "export") return "good";
+  if (stance === "hold") return "bad";
+  return "neutral";
+}
+
 export default function ExportViability({ runId, targetMarket }: Props) {
   const [report, setReport] = useState<ExportViabilityReport | null>(null);
   const [loading, setLoading] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Display currency: true = home (INR), false = destination (USD).
   const [showHome, setShowHome] = useState(true);
@@ -93,8 +140,158 @@ export default function ExportViability({ runId, targetMarket }: Props) {
   const fx = report?.resolvedInputs.fxRate ?? 1;
   const canConvert = homeCur !== destCur && fx > 0;
   const cur = showHome && canConvert ? homeCur : destCur;
-  const fmt = (n: number): string =>
-    money(showHome && canConvert ? n / fx : n, cur);
+  const toDisplay = useCallback(
+    (n: number): number => (showHome && canConvert ? n / fx : n),
+    [canConvert, fx, showHome]
+  );
+  const fmt = useCallback(
+    (n: number): string => money(toDisplay(n), cur),
+    [cur, toDisplay]
+  );
+  const decision = report ? deriveExportDecision(report) : null;
+  const decisionStyle = decision ? DECISION_STYLE[decision.stance] : null;
+  const DecisionIcon = decisionStyle?.icon ?? TrendingUp;
+
+  const downloadVerdictPdf = useCallback(async () => {
+    if (!report || !decision || pdfBusy) return;
+    setPdfBusy(true);
+    try {
+      const { downloadDossier, slug } = await import("./pdf");
+      const best = decision.scenario;
+      const decisionKpis: KPI[] = [
+        {
+          label: "Export decision",
+          value: decision.label,
+          tone: decisionTone(decision.stance),
+        },
+      ];
+      if (best) {
+        decisionKpis.push(
+          { label: "Best path", value: best.label },
+          {
+            label: "Required price",
+            value: fmt(best.requiredPrice),
+            sub: `${best.marginPct}% target margin`,
+          }
+        );
+        if (best.wtpCoveragePct != null)
+          decisionKpis.push({
+            label: "WTP coverage",
+            value: `${best.wtpCoveragePct}%`,
+            tone:
+              best.wtpCoveragePct >= 50
+                ? "good"
+                : best.wtpCoveragePct < 20
+                  ? "bad"
+                  : "neutral",
+          });
+        if (best.launch)
+          decisionKpis.push({
+            label: "90-day net",
+            value: fmt(best.launch.netProfit),
+            tone: best.launch.netProfit >= 0 ? "good" : "bad",
+            sub: best.launch.breakEvenLabel ?? "break-even not reached",
+          });
+      }
+
+      const sections: Dossier["sections"] = [
+        {
+          heading: `Export verdict -> ${targetMarket ?? report.resolvedInputs.destCountry}`,
+          body: best
+            ? `${decision.title}. ${decision.rationale} Best path: ${best.label} at ${fmt(best.requiredPrice)} with ${
+                best.wtpCoveragePct == null ? "unknown" : `${best.wtpCoveragePct}%`
+              } WTP coverage${
+                best.launch ? ` and ${fmt(best.launch.netProfit)} 90-day net.` : "."
+              }`
+            : `${decision.title}. ${decision.rationale}`,
+          kpis: decisionKpis,
+          table: {
+            columns: ["Fulfillment path", "Verdict", "Landed", "Price", "WTP cov.", "90-day net"],
+            rows: report.scenarios.map((s) => [
+              s.label,
+              s.verdict,
+              fmt(s.landedCostPerUnit),
+              fmt(s.requiredPrice),
+              s.wtpCoveragePct == null ? "-" : `${s.wtpCoveragePct}%`,
+              s.launch ? fmt(s.launch.netProfit) : "-",
+            ]),
+          },
+        },
+      ];
+
+      if (best?.waterfall?.length) {
+        sections.push({
+          heading: `Landed-cost build-up - ${best.label}`,
+          bars: {
+            title: `Per-unit cost waterfall (${cur})`,
+            money: true,
+            data: best.waterfall.map((w) => ({
+              label: w.label,
+              value: toDisplay(w.amount),
+            })),
+          },
+        });
+      }
+
+      if (report.sensitivity.basePath) {
+        sections.push({
+          heading: "Required-price sensitivity",
+          bars: {
+            title: `Recommended path (${cur})`,
+            money: true,
+            data: [
+              { label: "FX +10%", value: report.sensitivity.fxPlus10Pct },
+              { label: "FX -10%", value: report.sensitivity.fxMinus10Pct },
+              { label: "Duty-free", value: report.sensitivity.dutyZero },
+              { label: "Duty doubled", value: report.sensitivity.dutyDoubled },
+              { label: "DTC de-minimis ends", value: report.sensitivity.deMinimisOff },
+            ]
+              .filter((d): d is { label: string; value: number } => d.value != null)
+              .map((d) => ({ label: d.label, value: toDisplay(d.value) })),
+          },
+        });
+      }
+
+      if (report.sources.length || report.notes.length) {
+        sections.push({
+          heading: "Sources and notes",
+          bullets: [
+            ...report.sources.map((s) => `Source: ${s}`),
+            ...report.notes.map((n) => `Note: ${n}`),
+          ],
+        });
+      }
+
+      const dossier: Dossier = {
+        title: `Export verdict - ${targetMarket ?? report.resolvedInputs.destCountry}`,
+        subtitle: "Cross-border landed-cost and audience viability",
+        meta: [
+          `Display currency: ${cur}`,
+          `FX ${homeCur}->${destCur} ${fx}`,
+          new Date().toLocaleDateString(),
+        ],
+        cover: {
+          verdict: `${decision.title}. ${decision.rationale}`,
+          kpis: decisionKpis,
+        },
+        sections,
+      };
+      downloadDossier(dossier, `${slug(dossier.title)}-dossier`);
+    } finally {
+      setPdfBusy(false);
+    }
+  }, [
+    cur,
+    decision,
+    destCur,
+    fmt,
+    fx,
+    homeCur,
+    pdfBusy,
+    report,
+    targetMarket,
+    toDisplay,
+  ]);
 
   return (
     <div className="h-full overflow-auto bg-neutral-50 p-5">
@@ -169,6 +366,19 @@ export default function ExportViability({ runId, targetMarket }: Props) {
               )}
               Recompute
             </button>
+            <button
+              onClick={() => void downloadVerdictPdf()}
+              disabled={!report || pdfBusy}
+              className="flex items-center gap-1 rounded-lg border border-neutral-300 bg-white px-3 py-1.5 text-xs font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+              title="Download a focused PDF dossier for this export verdict"
+            >
+              {pdfBusy ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FileDown className="h-3.5 w-3.5" />
+              )}
+              Verdict PDF
+            </button>
           </div>
         </div>
 
@@ -194,17 +404,52 @@ export default function ExportViability({ runId, targetMarket }: Props) {
 
         {report ? (
           <>
-            {/* Recommended */}
-            {report.recommended ? (
-              <div className="rounded-xl border border-indigo-200 bg-indigo-50 p-4">
-                <div className="flex items-center gap-2 text-sm font-semibold text-indigo-900">
-                  <TrendingUp className="h-4 w-4" /> Recommended:{" "}
-                  {report.scenarios.find((s) => s.path === report.recommended!.path)?.label}
+            {/* Overall decision */}
+            {decision && decisionStyle ? (
+              <div className={`rounded-xl border p-4 ${decisionStyle.card}`}>
+                <div className="flex flex-wrap items-center gap-2">
+                  <DecisionIcon className="h-4 w-4" />
+                  <span
+                    className={`rounded-full border px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${decisionStyle.badge}`}
+                  >
+                    {decision.label}
+                  </span>
+                  <span className="text-sm font-semibold">{decision.title}</span>
                 </div>
-                <p className="mt-1 text-xs text-indigo-800">
-                  {report.scenarios.find((s) => s.path === report.recommended!.path)?.wtpCoveragePct == null
-                    ? `Lowest required price (${fmt(report.recommended.requiredPrice)}); no destination audience to score coverage.`
-                    : `${report.scenarios.find((s) => s.path === report.recommended!.path)?.wtpCoveragePct}% of the destination audience would pay the required ${fmt(report.recommended.requiredPrice)} — the best coverage of the modeled paths.`}
+                <p className="mt-1 text-xs opacity-90">{decision.rationale}</p>
+                <p className="mt-2 text-xs">
+                  {decision.scenario ? (
+                    <>
+                      Best path:{" "}
+                      <span className="font-semibold">{decision.scenario.label}</span> at{" "}
+                      <span className="font-semibold">
+                        {fmt(decision.scenario.requiredPrice)}
+                      </span>
+                      {decision.scenario.wtpCoveragePct == null ? null : (
+                        <>
+                          {" "}
+                          with{" "}
+                          <span className="font-semibold">
+                            {decision.scenario.wtpCoveragePct}% WTP coverage
+                          </span>
+                        </>
+                      )}
+                      {decision.scenario.launch ? (
+                        <>
+                          {" "}
+                          and{" "}
+                          <span className="font-semibold">
+                            {fmt(decision.scenario.launch.netProfit)}
+                          </span>{" "}
+                          90-day net.
+                        </>
+                      ) : (
+                        "."
+                      )}
+                    </>
+                  ) : (
+                    "No fulfillment path could be scored."
+                  )}
                 </p>
               </div>
             ) : null}

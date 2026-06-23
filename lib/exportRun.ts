@@ -128,7 +128,7 @@ export async function loadExportContext(
   }
 
   const financial = parent.projectId
-    ? await getFinancialModel(parent.projectId).catch(() => null)
+    ? await getFinancialModel(parent.projectId, parent.id).catch(() => null)
     : null;
 
   return {

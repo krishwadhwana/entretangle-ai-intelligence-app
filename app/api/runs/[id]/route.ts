@@ -75,7 +75,9 @@ export async function GET(
     phaseLabel: latestStatusEvent
       ? JSON.parse(latestStatusEvent.payload).phaseLabel ?? null
       : null,
-    latestEvent,
+    latestEvent: latestEvent
+      ? { seq: Number(latestEvent.seq), ts: Number(latestEvent.ts) }
+      : null,
   });
 }
 

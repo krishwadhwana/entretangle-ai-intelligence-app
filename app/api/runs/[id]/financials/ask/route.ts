@@ -2,10 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callDataQuestion } from "@/lib/llm";
-import { getOwnerDashboard, saveFinancials } from "@/lib/store";
+import { getFinancialsSection, saveFinancials } from "@/lib/store";
 import {
   ClientProfileSchema,
-  FinancialsSectionSchema,
   type FollowUpTurn,
 } from "@/lib/schema";
 
@@ -32,11 +31,8 @@ export async function POST(
     return NextResponse.json({ error: "run has no project" }, { status: 409 });
   }
 
-  const owner = (await getOwnerDashboard(run.projectId)) as
-    | { financials?: unknown }
-    | null;
-  const fin = FinancialsSectionSchema.safeParse(owner?.financials);
-  if (!fin.success || !fin.data.model) {
+  const fin = await getFinancialsSection(run.projectId, run.id);
+  if (!fin?.model) {
     return NextResponse.json(
       { error: "build the financial model first" },
       { status: 409 }
@@ -54,10 +50,10 @@ export async function POST(
           geography: profile.data.geography,
         }
       : null,
-    currency: fin.data.model.currency,
-    model: fin.data.model,
+    currency: fin.model.currency,
+    model: fin.model,
   });
-  const history = fin.data.followUp;
+  const history = fin.followUp;
 
   let answer: string;
   try {
@@ -81,7 +77,7 @@ export async function POST(
     ts: new Date().toISOString(),
   };
   const followUp = [...history, turn];
-  await saveFinancials(run.projectId, { ...fin.data, followUp });
+  await saveFinancials(run.projectId, { ...fin, followUp }, run.id);
 
   return NextResponse.json({ answer, followUp });
 }

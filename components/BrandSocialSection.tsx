@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Sparkles,
   Loader2,
@@ -120,6 +120,12 @@ export default function BrandSocialSection({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    setKit(initial?.kit ?? null);
+    setChecks(initial?.checks ?? {});
+    setGeneratedAt(initial?.generatedAt ?? null);
+  }, [initial]);
+
   async function generate() {
     if (busy || !ready) return;
     setBusy(true);
@@ -158,14 +164,17 @@ export default function BrandSocialSection({
       kit,
       checks: nextChecks,
       generatedAt,
-      sourceRunId: initial?.sourceRunId ?? null,
+      sourceRunId: runId,
     });
     if (!projectId) return;
     try {
       const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerDashboardChecks: { [id]: next } }),
+        body: JSON.stringify({
+          ownerDashboardChecks: { [id]: next },
+          ownerDashboardRunId: runId,
+        }),
       });
       if (!res.ok) throw new Error(`save failed (${res.status})`);
     } catch {
@@ -176,7 +185,7 @@ export default function BrandSocialSection({
         kit,
         checks: reverted,
         generatedAt,
-        sourceRunId: initial?.sourceRunId ?? null,
+        sourceRunId: runId,
       });
     }
   }

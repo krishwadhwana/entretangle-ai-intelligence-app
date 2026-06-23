@@ -520,7 +520,7 @@ export default function RunDashboard({
         brief,
         mode,
         targetMarket,
-        currency: "INR",
+        currency,
         audienceCurrency,
         report: state.finalReport,
         aggregate: state.aggregate,
@@ -738,7 +738,7 @@ export default function RunDashboard({
               <ChevronDown className="h-3 w-3" />
             </button>
             {exportOpen ? (
-              <div className="absolute left-0 z-20 mt-1 w-52 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
+              <div className="absolute left-0 z-[1100] mt-1 w-52 rounded-lg border border-neutral-200 bg-white py-1 shadow-lg">
                 <div className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                   Destination market
                 </div>
@@ -1047,7 +1047,7 @@ export default function RunDashboard({
           before spinning up the dependent export branch. */}
       {exportMarket && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4"
+          className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/30 p-4"
           onClick={() => !exportBusy && setExportMarket(null)}
         >
           <div

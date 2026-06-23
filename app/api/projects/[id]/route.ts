@@ -33,8 +33,9 @@ const PatchSchema = z.object({
   interviewTranscript: InterviewTranscriptSchema.optional(),
   ventureProfile: ClientProfileSchema.optional(),
   // Owner Dashboard › Brand & Social checklist: { itemId: done } toggles,
-  // merged into owner_dashboard.brandSocial.checks.
+  // merged into the active run's owner_dashboard.brandSocialByRun entry.
   ownerDashboardChecks: z.record(z.boolean()).optional(),
+  ownerDashboardRunId: z.string().optional(),
 });
 
 export async function PATCH(
@@ -56,7 +57,11 @@ export async function PATCH(
       await saveVentureProfile(params.id, body.data.ventureProfile);
     }
     if (body.data.ownerDashboardChecks !== undefined) {
-      await saveOwnerChecks(params.id, body.data.ownerDashboardChecks);
+      await saveOwnerChecks(
+        params.id,
+        body.data.ownerDashboardChecks,
+        body.data.ownerDashboardRunId
+      );
     }
   } catch {
     return NextResponse.json({ error: "not found" }, { status: 404 });

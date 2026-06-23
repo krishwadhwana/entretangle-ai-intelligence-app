@@ -168,7 +168,7 @@ export async function POST(
   }
   if (unitCogsHome == null && exportCtx?.financial) {
     const bom = exportCtx.financial.costStructure?.reduce(
-      (s, l) => s + (typeof l.amount === "number" ? l.amount : 0),
+      (s, l) => s + (Number.isFinite(l.amount?.value) ? l.amount.value : 0),
       0
     );
     if (bom && bom > 0) {

@@ -22,7 +22,7 @@ import {
 } from "@/lib/datasources/benchmarks";
 import { getAttentionMomentumPct } from "@/lib/datasources/structured";
 import { regionForLocality } from "@/lib/datasources/politicalGeography";
-import { DEFAULT_FX } from "@/lib/datasources/exportCosts";
+import { DEFAULT_FX, fetchFxRate } from "@/lib/datasources/exportCosts";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -47,6 +47,24 @@ const RenameScenarioSchema = z.object({
 // A persona plus the GoI region (zone) it belongs to, so a launch can be scoped
 // to one ring of the country.
 type ScopedPersona = LaunchPersona & { region: string };
+type FxTable = Record<string, number>;
+
+const BASE_ANNUAL_REPEAT_BY_SEGMENT: Record<string, number> = {
+  budget: 0.35,
+  middle: 0.45,
+  affluent: 0.6,
+  luxury: 0.75,
+};
+
+const BUSINESS_REPEAT_MULT: Record<LaunchBusinessModel, number> = {
+  generic: 1,
+  apparel: 1.2,
+  furniture: 0.45,
+  consumable: 2.2,
+  saas: 3,
+  services: 0.9,
+  marketplace: 1.1,
+};
 
 // Load the run's frozen personas in the shape the engine needs, each tagged with
 // its region. `regions` is the sorted set of regions present (for the picker).
@@ -131,7 +149,7 @@ export async function GET(
   const { personas, currency, regions } = personaData;
 
   // Prefill suggestions from the saved financial model, if the founder built one.
-  const model = run.projectId ? await getFinancialModel(run.projectId) : null;
+  const model = run.projectId ? await getFinancialModel(run.projectId, run.id) : null;
   const baseTier =
     model?.priceTiers.find((t) => t.label) ?? model?.priceTiers[0] ?? null;
   // Fallback sale price from the venture profile (founder targets + website-
@@ -163,18 +181,35 @@ export async function GET(
         0,
         Math.round(suggestedSalePrice * (1 - priors.grossMarginPct.mid / 100))
       );
+  const blendedCac = modelMatchesTarget
+    ? model?.unitEconomics.blendedCac.value ?? null
+    : priors.cacInr.mid;
+  const storedRows = rows.map((r) => ({
+    row: r,
+    storedInputs: LaunchSimInputsSchema.parse(r.inputs),
+  }));
+  const fx = await fetchLaunchFx([
+    ...(model && modelCurrency !== targetCurrency
+      ? ([[targetCurrency, modelCurrency], [modelCurrency, targetCurrency]] as [
+          string,
+          string,
+        ][])
+      : []),
+    ...storedRows.map(({ storedInputs }) => [
+      storedInputs.currency,
+      targetCurrency,
+    ] as [string, string]),
+  ]);
   const fixedCostsPerMonth = modelMatchesTarget
     ? model?.breakEven.fixedCostsPerMonth.value ?? null
     : model
       ? convertMoney(
           model.breakEven.fixedCostsPerMonth.value,
           modelCurrency,
-          targetCurrency
+          targetCurrency,
+          fx
         )
       : null;
-  const blendedCac = modelMatchesTarget
-    ? model?.unitEconomics.blendedCac.value ?? null
-    : priors.cacInr.mid;
   const defaults = {
     currency: targetCurrency,
     // UI display can convert destination-currency sim results back to the
@@ -184,7 +219,7 @@ export async function GET(
       model && modelCurrency !== targetCurrency ? modelCurrency : targetCurrency,
     displayFxRate:
       model && modelCurrency !== targetCurrency
-        ? fxRate(targetCurrency, modelCurrency)
+        ? fxRate(targetCurrency, modelCurrency, fx)
         : 1,
     suggestedBusinessModel,
     suggestedCostPrice,
@@ -215,13 +250,13 @@ export async function GET(
     },
   };
 
-  const scenarios: LaunchSimRecord[] = rows.map((r) => {
-    const storedInputs = LaunchSimInputsSchema.parse(r.inputs);
+  const scenarios: LaunchSimRecord[] = storedRows.map(({ row: r, storedInputs }) => {
     const currencySafeInputs = reconcileLaunchCurrency(
       storedInputs,
-      targetCurrency
+      targetCurrency,
+      fx
     );
-    const inputs = applyBenchmarkRefund(
+    const preScopeInputs = applyBenchmarkRefund(
       applyDefaultBusinessModel(
         applyLegacyAcquisitionDefault(
           currencySafeInputs,
@@ -233,7 +268,8 @@ export async function GET(
     );
     // Scope to the scenario's region (null → whole audience) and scale the
     // reachable market to that region's share, so a regional run is self-contained.
-    const scoped = scopeToRegion(personas, inputs.region);
+    const scoped = scopeToRegion(personas, preScopeInputs.region);
+    const inputs = applyBenchmarkRepeat(preScopeInputs, priors, scoped.personas);
     return {
       id: r.id,
       runId: r.runId,
@@ -300,7 +336,7 @@ export async function POST(
   }
 
   // Reach ceiling default comes from the founder's financial model when present.
-  const model = run.projectId ? await getFinancialModel(run.projectId) : null;
+  const model = run.projectId ? await getFinancialModel(run.projectId, run.id) : null;
   const reachableProspectsPerMonth =
     model?.marketSizing.reachableProspectsPerMonth.value ?? null;
   const suggestedBusinessModel = inferLaunchBusinessModel(run);
@@ -311,6 +347,7 @@ export async function POST(
   const reachableBlendedCac = modelMatchesTarget
     ? model?.unitEconomics.blendedCac.value ?? null
     : priors.cacInr.mid;
+  const fx = await fetchLaunchFx([[body.data.inputs.currency, targetCurrency]]);
 
   // Capture the attention/hype momentum once (frozen into the scenario), and
   // pin the launch month so seasonality applies deterministically on re-sim.
@@ -320,10 +357,10 @@ export async function POST(
   const nowMonth = new Date().getMonth() + 1;
 
   try {
-    const inputs = applyDemandDefaults(
+    const preScopeInputs = applyDemandDefaults(
       applyBenchmarkRefund(
         applyDefaultBusinessModel(
-          reconcileLaunchCurrency(body.data.inputs, targetCurrency),
+          reconcileLaunchCurrency(body.data.inputs, targetCurrency, fx),
           suggestedBusinessModel
         ),
         priors
@@ -331,6 +368,7 @@ export async function POST(
       momentumPct,
       nowMonth
     );
+    const inputs = applyBenchmarkRepeat(preScopeInputs, priors, scoped.personas);
     const result = simulateLaunch(scoped.personas, inputs, {
       reachableProspectsPerMonth,
       audienceShare: scoped.share,
@@ -421,24 +459,57 @@ function normalizeCurrency(currency?: string | null): string {
   return (currency || "INR").trim().toUpperCase();
 }
 
-function fxRate(from: string, to: string): number {
+async function fetchLaunchFx(pairs: [string, string][]): Promise<FxTable> {
+  const out: FxTable = {};
+  const unique = Array.from(
+    new Set(
+      pairs
+        .map(([from, to]) => [normalizeCurrency(from), normalizeCurrency(to)] as [
+          string,
+          string,
+        ])
+        .filter(([from, to]) => from && to && from !== to)
+        .map(([from, to]) => `${from}:${to}`)
+    )
+  );
+  await Promise.all(
+    unique.map(async (key) => {
+      const [from, to] = key.split(":");
+      const fx = await fetchFxRate(from, to);
+      out[key] = fx.rate;
+    })
+  );
+  return out;
+}
+
+function fxRate(from: string, to: string, fx: FxTable = {}): number {
   const src = normalizeCurrency(from);
   const dst = normalizeCurrency(to);
   if (src === dst) return 1;
-  const direct = DEFAULT_FX[`${src}:${dst}`];
+  const direct = fx[`${src}:${dst}`] ?? DEFAULT_FX[`${src}:${dst}`];
   if (direct && direct > 0) return direct;
-  const inverse = DEFAULT_FX[`${dst}:${src}`];
+  const inverse = fx[`${dst}:${src}`] ?? DEFAULT_FX[`${dst}:${src}`];
   if (inverse && inverse > 0) return 1 / inverse;
   return 1;
 }
 
-function convertMoney(n: number | null | undefined, from: string, to: string) {
+function convertMoney(
+  n: number | null | undefined,
+  from: string,
+  to: string,
+  fx: FxTable = {}
+) {
   if (n == null || !Number.isFinite(n)) return null;
-  return Math.round(n * fxRate(from, to) * 100) / 100;
+  return Math.round(n * fxRate(from, to, fx) * 100) / 100;
 }
 
-function convertMoneyRequired(n: number, from: string, to: string) {
-  return convertMoney(n, from, to) ?? n;
+function convertMoneyRequired(
+  n: number,
+  from: string,
+  to: string,
+  fx: FxTable = {}
+) {
+  return convertMoney(n, from, to, fx) ?? n;
 }
 
 // Saved scenarios from older builds can carry a home-market currency (INR) while
@@ -448,7 +519,8 @@ function convertMoneyRequired(n: number, from: string, to: string) {
 // target market for the broken rows we are repairing (e.g. US CPM 12, shipping 8).
 function reconcileLaunchCurrency(
   inputs: LaunchSimInputs,
-  targetCurrency: string
+  targetCurrency: string,
+  fx: FxTable = {}
 ): LaunchSimInputs {
   const from = normalizeCurrency(inputs.currency);
   const to = normalizeCurrency(targetCurrency);
@@ -457,35 +529,38 @@ function reconcileLaunchCurrency(
   const next: LaunchSimInputs = {
     ...inputs,
     currency: to,
-    costPrice: convertMoneyRequired(inputs.costPrice, from, to),
-    salePrice: convertMoneyRequired(inputs.salePrice, from, to),
-    adSpendPerMonth: convertMoneyRequired(inputs.adSpendPerMonth, from, to),
-    fixedCostsPerMonth: convertMoneyRequired(inputs.fixedCostsPerMonth, from, to),
+    costPrice: convertMoneyRequired(inputs.costPrice, from, to, fx),
+    salePrice: convertMoneyRequired(inputs.salePrice, from, to, fx),
+    adSpendPerMonth: convertMoneyRequired(inputs.adSpendPerMonth, from, to, fx),
+    fixedCostsPerMonth: convertMoneyRequired(inputs.fixedCostsPerMonth, from, to, fx),
   };
 
   if (from === "INR" && to === "USD") {
-    if (inputs.cpm > 50) next.cpm = convertMoneyRequired(inputs.cpm, from, to);
+    if (inputs.cpm > 50) next.cpm = convertMoneyRequired(inputs.cpm, from, to, fx);
     if (inputs.shippingPerOrder > 50)
       next.shippingPerOrder = convertMoneyRequired(
         inputs.shippingPerOrder,
         from,
-        to
+        to,
+        fx
       );
     if (inputs.returnShippingPerOrder != null && inputs.returnShippingPerOrder > 50) {
       next.returnShippingPerOrder = convertMoneyRequired(
         inputs.returnShippingPerOrder,
         from,
-        to
+        to,
+        fx
       );
     }
   } else {
-    next.cpm = convertMoneyRequired(inputs.cpm, from, to);
-    next.shippingPerOrder = convertMoneyRequired(inputs.shippingPerOrder, from, to);
+    next.cpm = convertMoneyRequired(inputs.cpm, from, to, fx);
+    next.shippingPerOrder = convertMoneyRequired(inputs.shippingPerOrder, from, to, fx);
     if (inputs.returnShippingPerOrder != null) {
       next.returnShippingPerOrder = convertMoneyRequired(
         inputs.returnShippingPerOrder,
         from,
-        to
+        to,
+        fx
       );
     }
   }
@@ -641,6 +716,32 @@ function applyBenchmarkRefund(
 ): LaunchSimInputs {
   if (inputs.targetRefundRatePct != null) return inputs;
   return { ...inputs, targetRefundRatePct: priors.returnRatePct.mid };
+}
+
+function applyBenchmarkRepeat(
+  inputs: LaunchSimInputs,
+  priors: BenchmarkPriors,
+  personas: { segment: string | null }[]
+): LaunchSimInputs {
+  // Respect an explicit advanced override. The default UI value is 1, which used
+  // to let business-model presets (especially consumables) compound repeats far
+  // beyond the benchmark annual repeat rate.
+  if (inputs.repeatRateMult !== 1 || personas.length === 0) return inputs;
+
+  const baseAnnual =
+    personas.reduce((s, p) => {
+      const seg = String(p.segment ?? "middle").toLowerCase();
+      return s + (BASE_ANNUAL_REPEAT_BY_SEGMENT[seg] ?? 0.45);
+    }, 0) / personas.length;
+  const preset = BUSINESS_REPEAT_MULT[inputs.businessModel] ?? 1;
+  const targetAnnual = Math.max(0, priors.repeatRatePct.mid / 100);
+  const denom = baseAnnual * preset;
+  if (denom <= 0 || targetAnnual <= 0) return inputs;
+
+  return {
+    ...inputs,
+    repeatRateMult: Math.round(Math.max(0.05, Math.min(3, targetAnnual / denom)) * 100) / 100,
+  };
 }
 
 // Freeze the demand tilts into a NEW scenario: launch start month (defaults to
