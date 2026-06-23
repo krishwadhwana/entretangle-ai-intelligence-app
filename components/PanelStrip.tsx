@@ -15,6 +15,11 @@ import {
   LayoutDashboard,
   ChevronDown,
   FileDown,
+  FileText,
+  MessageSquareText,
+  Printer,
+  RefreshCw,
+  Sparkles,
 } from "lucide-react";
 import type { Block, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
@@ -331,6 +336,39 @@ function FinalReportView({
   );
 }
 
+type ConclusionTab = "report" | "followups" | "foresight";
+
+type PrintableFollowUp = {
+  key: string;
+  seq?: number;
+  question: string;
+  answer: string;
+  citedConclusionIds?: string[];
+};
+
+const FORESIGHT_PROMPTS = [
+  {
+    label: "Stress verdict",
+    prompt:
+      "What would make this conclusion wrong in the next 90 days, and which early signals would prove it?",
+  },
+  {
+    label: "Change assumption",
+    prompt:
+      "Which single assumption should I change first, and how would the conclusion shift if it moved materially?",
+  },
+  {
+    label: "Add foresight",
+    prompt:
+      "Add a forward-looking scenario analysis for the next 6 months, with upside, base, and downside paths.",
+  },
+  {
+    label: "Standalone memo",
+    prompt:
+      "Turn the most important follow-up into a standalone validation memo with the decision, assumptions, evidence, and next action.",
+  },
+] as const;
+
 export function ConclusionWorkspace({
   state,
   onQuery,
@@ -359,6 +397,8 @@ export function ConclusionWorkspace({
     return m;
   }, [state.blocks]);
   const [question, setQuestion] = useState("");
+  const [tab, setTab] = useState<ConclusionTab>("report");
+  const questionInputRef = useRef<HTMLInputElement>(null);
   // Turns asked this session — persisted turns arrive via state.conversation on
   // reload, so these only cover the current page load (no double-render: the
   // run is terminal here, so the SSE is closed and won't replay them live).
@@ -370,13 +410,46 @@ export function ConclusionWorkspace({
   const report = state.finalReport;
 
   // Whole-world-model Q&A (domain-scoped Playbook asks are excluded).
-  const history = state.conversation.filter((t) => t.domains.length === 0);
+  const history = useMemo(
+    () => state.conversation.filter((t) => t.domains.length === 0),
+    [state.conversation]
+  );
+  const followUpTurns = useMemo<PrintableFollowUp[]>(
+    () => [
+      ...history.map((t) => ({
+        key: `h${t.seq}`,
+        seq: t.seq,
+        question: t.question,
+        answer: t.answer,
+        citedConclusionIds: t.citedConclusionIds,
+      })),
+      ...pending.map((t, i) => ({
+        key: `p${i}`,
+        question: t.question,
+        answer: t.answer,
+      })),
+    ],
+    [history, pending]
+  );
+  const displayedFollowUps = useMemo(
+    () => [...followUpTurns].reverse(),
+    [followUpTurns]
+  );
+  const followUpCount = followUpTurns.length;
+
+  function cueQuestion(prompt: string) {
+    setQuestion(prompt);
+    setTab("followups");
+    if (typeof window !== "undefined")
+      requestAnimationFrame(() => questionInputRef.current?.focus());
+  }
 
   async function ask(e: React.FormEvent) {
     e.preventDefault();
     const q = question.trim();
     if (!q || busy) return;
     setBusy(true);
+    setTab("followups");
     try {
       // Ask in-place — don't jump to the network graph and leave this page.
       const answer = await onQuery(q, { highlight: false });
@@ -407,200 +480,448 @@ export function ConclusionWorkspace({
     meta.push(new Date().toLocaleDateString());
     const sections: DossierSection[] = [];
     if (report) {
-      if (report.verdict) sections.push({ heading: "Verdict", body: report.verdict });
+      if (report.verdict)
+        sections.push({ heading: "Verdict", body: stripIds(report.verdict) });
       if (report.executiveSummary)
-        sections.push({ heading: "Executive summary", body: report.executiveSummary });
+        sections.push({
+          heading: "Executive summary",
+          body: stripIds(report.executiveSummary),
+        });
       for (const s of report.sections)
-        sections.push({ heading: s.title, body: s.summary, bullets: s.bullets });
+        sections.push({
+          heading: stripIds(s.title),
+          body: stripIds(s.summary),
+          bullets: s.bullets.map(stripIds),
+        });
       if (report.nextActions.length)
-        sections.push({ heading: "Next actions", bullets: report.nextActions });
+        sections.push({
+          heading: "Next actions",
+          bullets: report.nextActions.map(stripIds),
+        });
       if (report.risks.length)
-        sections.push({ heading: "Risks to validate", bullets: report.risks });
+        sections.push({
+          heading: "Risks to validate",
+          bullets: report.risks.map(stripIds),
+        });
+    }
+    if (!sections.length) {
+      sections.push({
+        heading: "Status",
+        body: state.worldModel
+          ? `${state.worldModel.conclusionCount} conclusions across ${state.worldModel.blockCount} desks.`
+          : state.phaseLabel,
+      });
     }
     return {
-      title: report?.title ?? "Conclusion dossier",
+      title: report?.title ? stripIds(report.title) : "Conclusion dossier",
       subtitle: report?.verdict ? undefined : state.phaseLabel,
       meta,
       sections,
     };
   };
-  const followUpSections = (): DossierSection[] =>
-    history.map((t, i) => ({
-      heading: `${i + 1}. ${t.question}`,
-      body: t.answer,
+  const followUpSections = (
+    turns: PrintableFollowUp[] = followUpTurns
+  ): DossierSection[] =>
+    turns.map((t, i) => ({
+      heading: `${i + 1}. ${stripIds(t.question)}`,
+      body: stripIds(t.answer),
     }));
-  const baseName = slug(report?.title ?? "conclusion");
+  const baseName = slug(stripIds(report?.title ?? "conclusion"));
+  const followUpDossier = (
+    turns: PrintableFollowUp[],
+    title = "Follow-up dossier"
+  ): Dossier => ({
+    title,
+    subtitle: report?.title ? stripIds(report.title) : "Conclusion workspace",
+    meta: [
+      `${turns.length} question${turns.length === 1 ? "" : "s"}`,
+      new Date().toLocaleDateString(),
+    ],
+    sections: followUpSections(turns),
+  });
+  const exportConclusionOnly = () => {
+    downloadDossier(conclusionDossier(), `${baseName}-dossier`);
+    setPdfOpen(false);
+  };
   // One PDF: conclusion with the follow-up Q&A appended as a supplement.
   const exportSupplement = () => {
     const d = conclusionDossier();
     const fu = followUpSections();
     if (fu.length)
-      d.sections.push({ heading: "Follow-up — Q&A" }, ...fu);
+      d.sections.push({ heading: "Follow-up Q&A", pageBreak: true }, ...fu);
     downloadDossier(d, `${baseName}-dossier`);
     setPdfOpen(false);
   };
-  // Two PDFs: the conclusion, and the follow-up Q&A as its own file.
-  const exportSeparate = () => {
-    downloadDossier(conclusionDossier(), `${baseName}-dossier`);
-    const fu = followUpSections();
-    if (fu.length)
-      downloadDossier(
-        {
-          title: "Follow-up Q&A",
-          subtitle: report?.title ?? undefined,
-          meta: [`${fu.length} question${fu.length === 1 ? "" : "s"}`, new Date().toLocaleDateString()],
-          sections: fu,
-        },
-        `${baseName}-followup`
-      );
+  const exportFollowUpsOnly = () => {
+    if (!followUpTurns.length) return;
+    downloadDossier(followUpDossier(followUpTurns), `${baseName}-followups`);
+    setPdfOpen(false);
+  };
+  const exportOneFollowUp = (turn: PrintableFollowUp) => {
+    const index = followUpTurns.findIndex((t) => t.key === turn.key);
+    const number = index >= 0 ? index + 1 : 1;
+    downloadDossier(
+      followUpDossier([turn], `Follow-up ${number}`),
+      `${baseName}-followup-${number}-${slug(turn.question).slice(0, 28)}`
+    );
     setPdfOpen(false);
   };
 
+  const tabs = [
+    { id: "report", label: "Report", icon: FileText },
+    {
+      id: "followups",
+      label: followUpCount ? `Follow-ups (${followUpCount})` : "Follow-ups",
+      icon: MessageSquareText,
+    },
+    { id: "foresight", label: "Revise", icon: Sparkles },
+  ] as const;
+
+  const worldSummaryPanel = (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
+      <p className="text-xs font-semibold text-indigo-900">World model</p>
+      <p className="mt-1 text-[11px] text-neutral-600">
+        {state.worldModel
+          ? `${state.worldModel.conclusionCount} conclusions · ${state.worldModel.blockCount} desks`
+          : state.phaseLabel}
+        {state.status === "capped" && (
+          <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] text-amber-700">
+            capped
+          </span>
+        )}
+      </p>
+      {agg && (
+        <p className="mt-2 text-[11px] leading-snug text-neutral-600">
+          <span className="font-medium text-neutral-800">
+            {agg.totalPersonas.toLocaleString()} personas
+          </span>{" "}
+          across {agg.totalCohorts} cohorts. Top channel:{" "}
+          {agg.channelShare[0]?.name} ({agg.channelShare[0]?.share}%). Top
+          platform: {agg.platformShare[0]?.name} ({agg.platformShare[0]?.share}
+          %).
+        </p>
+      )}
+    </div>
+  );
+
+  const renderAskPanel = (title = "Ask the model") => (
+    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-xs font-semibold text-neutral-800">{title}</p>
+        <button
+          type="button"
+          onClick={exportFollowUpsOnly}
+          disabled={!followUpCount}
+          title="Create one PDF from all follow-ups"
+          className="flex items-center gap-1 rounded-lg border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-500 hover:border-neutral-400 disabled:opacity-40"
+        >
+          <Printer className="h-3 w-3" />
+          Follow-ups
+        </button>
+      </div>
+      <form onSubmit={ask} className="flex items-center gap-2">
+        <input
+          ref={questionInputRef}
+          value={question}
+          onChange={(e) => setQuestion(e.target.value)}
+          placeholder={
+            ready ? "Ask a follow-up..." : "Available when the run converges..."
+          }
+          disabled={!ready || busy}
+          className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
+        />
+        <button
+          type="submit"
+          disabled={!ready || busy || !question.trim()}
+          className="rounded-lg border border-neutral-300 p-2 text-neutral-500 hover:border-indigo-400 disabled:opacity-40"
+        >
+          {busy ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <CornerDownLeft className="h-4 w-4" />
+          )}
+        </button>
+      </form>
+    </div>
+  );
+
+  const renderFollowUpList = () =>
+    followUpCount ? (
+      <div className="space-y-2">
+        {displayedFollowUps.map((t) => {
+          const index = followUpTurns.findIndex((turn) => turn.key === t.key);
+          const number = index >= 0 ? index + 1 : followUpCount;
+          return (
+            <div
+              key={t.key}
+              className="rounded-lg border border-neutral-200 bg-white p-3"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Follow-up {number}
+                  </p>
+                  <p className="mt-1 text-[12px] font-medium leading-snug text-neutral-900">
+                    {t.question}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => exportOneFollowUp(t)}
+                  title="Create a dossier for this follow-up"
+                  className="shrink-0 rounded-lg border border-neutral-200 p-2 text-neutral-500 hover:border-indigo-300 hover:text-indigo-600"
+                >
+                  <FileDown className="h-3.5 w-3.5" />
+                </button>
+              </div>
+              <p className="mt-2 whitespace-pre-wrap text-[11px] leading-relaxed text-neutral-600">
+                {t.answer}
+              </p>
+              {t.citedConclusionIds?.length ? (
+                <CitedEvidence
+                  ids={t.citedConclusionIds}
+                  conclusionsById={conclusionsById}
+                  onCite={onCite}
+                />
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    ) : (
+      <div className="rounded-xl border border-dashed border-neutral-300 bg-white p-6 text-sm text-neutral-400">
+        No follow-ups yet.
+      </div>
+    );
+
   return (
     <div className="h-full overflow-y-auto bg-neutral-50/60 p-6">
-      <div className="mx-auto max-w-7xl">
-        <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
-          <div className="space-y-2">
-            <FinalReportView
-              report={report}
-              conclusionsById={conclusionsById}
-              onCite={onCite}
-            />
+      <div className="mx-auto max-w-7xl space-y-4">
+        <div className="rounded-xl border border-neutral-200 bg-white p-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-indigo-500">
+                Conclusion
+              </p>
+              <h2 className="truncate text-sm font-semibold text-neutral-900">
+                {report ? stripIds(report.title) : "Final business report"}
+              </h2>
+              <p className="mt-1 text-[11px] text-neutral-500">
+                {followUpCount
+                  ? `${followUpCount} follow-up${followUpCount === 1 ? "" : "s"} ready for dossier export`
+                  : state.phaseLabel}
+              </p>
+            </div>
             {ready && (
               <button
-                onClick={() => onGenerateReport(!!report)}
+                type="button"
+                onClick={() => {
+                  setTab("report");
+                  onGenerateReport(!!report);
+                }}
                 disabled={reportBusy}
                 title={
                   report
-                    ? "Rewrite the report — folds in your latest financial model"
+                    ? "Rewrite the report with the latest financial model"
                     : undefined
                 }
                 className="flex items-center gap-1.5 rounded-lg border border-indigo-300 bg-white px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-50"
               >
-                {reportBusy && <Loader2 className="h-3 w-3 animate-spin" />}
+                {reportBusy ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
                 {reportBusy
-                  ? "Writing report..."
+                  ? "Writing..."
                   : report
-                    ? "Regenerate with financials"
-                    : "Generate final report"}
+                    ? "Regenerate"
+                    : "Generate report"}
               </button>
             )}
-            {report && (
-              <div className="relative inline-block">
-                <button
-                  onClick={() => setPdfOpen((o) => !o)}
-                  className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-400"
-                >
-                  <FileDown className="h-3.5 w-3.5" /> Create PDF
-                  <ChevronDown className="h-3 w-3" />
-                </button>
-                {pdfOpen && (
-                  <div className="absolute z-20 mt-1 w-64 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg">
-                    <button
-                      onClick={exportSupplement}
-                      className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100"
-                    >
-                      <span className="font-medium">Conclusion + follow-up</span>
-                      <span className="block text-[10px] text-neutral-400">
-                        One PDF — Q&amp;A appended as a supplement
-                        {history.length ? ` (${history.length})` : ""}
-                      </span>
-                    </button>
-                    <button
-                      onClick={exportSeparate}
-                      disabled={history.length === 0}
-                      className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100 disabled:opacity-40"
-                    >
-                      <span className="font-medium">Follow-up as a separate PDF</span>
-                      <span className="block text-[10px] text-neutral-400">
-                        {history.length
-                          ? "Two files: conclusion + follow-up"
-                          : "No follow-up Q&A yet"}
-                      </span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          <aside className="space-y-3">
-            <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
-              <p className="text-xs font-semibold text-indigo-900">
-                World model
-              </p>
-              <p className="mt-1 text-[11px] text-neutral-600">
-                {state.worldModel
-                  ? `${state.worldModel.conclusionCount} conclusions · ${state.worldModel.blockCount} desks`
-                  : state.phaseLabel}
-                {state.status === "capped" && (
-                  <span className="ml-1 rounded bg-amber-100 px-1 text-[9px] text-amber-700">
-                    capped
-                  </span>
-                )}
-              </p>
-              {agg && (
-                <p className="mt-2 text-[11px] leading-snug text-neutral-600">
-                  <span className="font-medium text-neutral-800">
-                    {agg.totalPersonas.toLocaleString()} personas
-                  </span>{" "}
-                  across {agg.totalCohorts} cohorts. Top channel:{" "}
-                  {agg.channelShare[0]?.name} ({agg.channelShare[0]?.share}%).
-                  Top platform: {agg.platformShare[0]?.name} (
-                  {agg.platformShare[0]?.share}%).
-                </p>
-              )}
-            </div>
-
-            <div className="rounded-xl border border-neutral-200 bg-white p-3">
-              <p className="mb-2 text-xs font-semibold text-neutral-800">
-                Ask the model
-              </p>
-              <form onSubmit={ask} className="flex items-center gap-2">
-                <input
-                  value={question}
-                  onChange={(e) => setQuestion(e.target.value)}
-                  placeholder={
-                    ready
-                      ? "Ask a follow-up..."
-                      : "Available when the run converges..."
-                  }
-                  disabled={!ready || busy}
-                  className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500 disabled:opacity-50"
-                />
-                <button
-                  type="submit"
-                  disabled={!ready || busy || !question.trim()}
-                  className="rounded-lg border border-neutral-300 p-2 text-neutral-500 hover:border-indigo-400 disabled:opacity-40"
-                >
-                  {busy ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <CornerDownLeft className="h-4 w-4" />
-                  )}
-                </button>
-              </form>
-              {(history.length > 0 || pending.length > 0) && (
-                <div className="mt-2 max-h-80 space-y-2 overflow-y-auto">
-                  {/* Newest first — latest question shows on top. */}
-                  {[...history, ...pending].reverse().map((t, i) => (
-                    <div
-                      key={"seq" in t ? `h${t.seq}` : `p${i}`}
-                      className="rounded-lg border border-neutral-200 bg-neutral-50 p-2"
-                    >
-                      <p className="text-[11px] font-medium text-neutral-800">
-                        {t.question}
-                      </p>
-                      <p className="mt-1 text-[11px] leading-relaxed text-neutral-600">
-                        {t.answer}
-                      </p>
-                    </div>
-                  ))}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setPdfOpen((o) => !o)}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-400"
+              >
+                <FileDown className="h-3.5 w-3.5" /> Dossier
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {pdfOpen && (
+                <div className="absolute right-0 z-20 mt-1 w-72 rounded-lg border border-neutral-200 bg-white p-1 shadow-lg">
+                  <button
+                    type="button"
+                    onClick={exportConclusionOnly}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100"
+                  >
+                    <span className="font-medium">Conclusion dossier</span>
+                    <span className="block text-[10px] text-neutral-400">
+                      Final report, actions, and risks
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportSupplement}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100"
+                  >
+                    <span className="font-medium">Conclusion + follow-ups</span>
+                    <span className="block text-[10px] text-neutral-400">
+                      One PDF with Q&amp;A appended
+                      {followUpCount ? ` (${followUpCount})` : ""}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={exportFollowUpsOnly}
+                    disabled={!followUpCount}
+                    className="block w-full rounded-md px-2.5 py-2 text-left text-[11px] text-neutral-700 hover:bg-neutral-100 disabled:opacity-40"
+                  >
+                    <span className="font-medium">Follow-ups only</span>
+                    <span className="block text-[10px] text-neutral-400">
+                      {followUpCount
+                        ? "Print Q&A separately"
+                        : "No follow-up Q&A yet"}
+                    </span>
+                  </button>
                 </div>
               )}
             </div>
-          </aside>
+          </div>
+
+          <div className="mt-3 flex flex-wrap gap-1">
+            {tabs.map(({ id, label, icon: Icon }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setTab(id)}
+                className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium ${
+                  tab === id
+                    ? "border-neutral-900 bg-neutral-900 text-white"
+                    : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {tab === "report" && (
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="space-y-2">
+              <FinalReportView
+                report={report}
+                conclusionsById={conclusionsById}
+                onCite={onCite}
+              />
+            </div>
+            <aside className="space-y-3">
+              {worldSummaryPanel}
+              {renderAskPanel("Ask the model")}
+            </aside>
+          </div>
+        )}
+
+        {tab === "followups" && (
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <p className="text-xs font-semibold text-neutral-800">
+                    Follow-up dossiers
+                  </p>
+                  <p className="mt-1 text-[11px] text-neutral-500">
+                    {followUpCount
+                      ? "Export one follow-up or the full Q&A set."
+                      : "Ask a follow-up to create a printable dossier."}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={exportFollowUpsOnly}
+                  disabled={!followUpCount}
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-400 disabled:opacity-40"
+                >
+                  <Printer className="h-3.5 w-3.5" />
+                  Print all
+                </button>
+              </div>
+              {renderFollowUpList()}
+            </div>
+            <aside className="space-y-3">
+              {renderAskPanel("New follow-up")}
+              {worldSummaryPanel}
+            </aside>
+          </div>
+        )}
+
+        {tab === "foresight" && (
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+            <div className="space-y-3">
+              <div className="grid gap-3 md:grid-cols-2">
+                {FORESIGHT_PROMPTS.map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => cueQuestion(item.prompt)}
+                    disabled={!ready}
+                    className="rounded-xl border border-neutral-200 bg-white p-4 text-left hover:border-indigo-300 disabled:opacity-40"
+                  >
+                    <Sparkles className="h-4 w-4 text-indigo-500" />
+                    <p className="mt-2 text-sm font-semibold text-neutral-900">
+                      {item.label}
+                    </p>
+                    <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+                      {item.prompt}
+                    </p>
+                  </button>
+                ))}
+              </div>
+              <div className="rounded-xl border border-neutral-200 bg-white p-4">
+                <p className="text-xs font-semibold text-neutral-800">
+                  Report revision
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setTab("report");
+                      onGenerateReport(!!report);
+                    }}
+                    disabled={!ready || reportBusy}
+                    className="flex items-center gap-1.5 rounded-lg border border-indigo-300 px-3 py-2 text-xs font-medium text-indigo-700 hover:bg-indigo-50 disabled:opacity-40"
+                  >
+                    {reportBusy ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    )}
+                    {report ? "Rewrite report" : "Generate report"}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      cueQuestion(
+                        "What exact change should I make before acting on this conclusion, and why?"
+                      )
+                    }
+                    disabled={!ready}
+                    className="flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-2 text-xs font-medium text-neutral-700 hover:border-neutral-400 disabled:opacity-40"
+                  >
+                    <MessageSquareText className="h-3.5 w-3.5" />
+                    Ask change
+                  </button>
+                </div>
+              </div>
+            </div>
+            <aside className="space-y-3">
+              {renderAskPanel("Foresight follow-up")}
+              {worldSummaryPanel}
+            </aside>
+          </div>
+        )}
       </div>
     </div>
   );
