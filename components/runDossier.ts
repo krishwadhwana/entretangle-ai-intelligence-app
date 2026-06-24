@@ -198,6 +198,18 @@ export function buildBrandDossier(opts: {
       },
     });
 
+  if ((kit.postConcepts ?? []).length)
+    sections.push({
+      heading: "Post concepts",
+      linkList: {
+        items: kit.postConcepts.map((p) => ({
+          text: `${p.platform} · ${p.format} — ${p.hook}`,
+          sub: `${p.caption}${p.notes ? ` Notes: ${p.notes}` : ""}`,
+          url: p.sourceUrls[0] ?? p.visualSourceUrls[0] ?? undefined,
+        })),
+      },
+    });
+
   if (kit.checklist.length)
     sections.push({
       heading: "Launch checklist",

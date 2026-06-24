@@ -78,6 +78,65 @@ function AccountCard({ a }: { a: BrandKit["comparableAccounts"][number] }) {
   );
 }
 
+function PostConceptCard({
+  concept,
+}: {
+  concept: NonNullable<BrandKit["postConcepts"]>[number];
+}) {
+  const sourceUrls = concept.sourceUrls ?? [];
+  const visualUrls = concept.visualSourceUrls ?? [];
+  return (
+    <div className="rounded-xl border border-neutral-200 bg-white p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="truncate text-[13px] font-semibold text-neutral-900">
+            {concept.hook}
+          </p>
+          <p className="text-[11px] text-neutral-500">
+            {concept.platform} · {concept.format}
+          </p>
+        </div>
+        <Pill className="bg-indigo-50 text-indigo-600">post</Pill>
+      </div>
+      <p className="mt-2 text-[11px] leading-relaxed text-neutral-600">
+        {concept.caption}
+      </p>
+      {concept.notes && (
+        <p className="mt-1 text-[11px] leading-relaxed text-neutral-500">
+          {concept.notes}
+        </p>
+      )}
+      {visualUrls.length > 0 && (
+        <div className="mt-3 flex gap-2 overflow-hidden">
+          {visualUrls.slice(0, 3).map((url) => (
+            <img
+              key={url}
+              src={url}
+              alt=""
+              className="h-14 w-14 shrink-0 rounded-md border border-neutral-200 object-cover"
+            />
+          ))}
+        </div>
+      )}
+      {sourceUrls.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-2">
+          {sourceUrls.slice(0, 4).map((url, index) => (
+            <a
+              key={`${url}-${index}`}
+              href={url}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-indigo-600 hover:underline"
+            >
+              Source {index + 1} <ExternalLink className="h-3 w-3" />
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BulletList({ title, items }: { title: string; items: string[] }) {
   if (!items?.length) return null;
   return (
@@ -217,6 +276,7 @@ export default function BrandSocialSection({
 
   const doneCount = (kit?.checklist ?? []).filter((i) => checks[i.id]).length;
   const totalCount = kit?.checklist.length ?? 0;
+  const postConcepts = kit?.postConcepts ?? [];
   const categories = [
     ...CHECK_ORDER.filter((c) => grouped.has(c)),
     ...[...grouped.keys()].filter((c) => !CHECK_ORDER.includes(c)),
@@ -376,6 +436,24 @@ export default function BrandSocialSection({
                 ))}
               </div>
             </section>
+
+            {/* Post concepts */}
+            {postConcepts.length > 0 && (
+              <section>
+                <h3 className="text-sm font-semibold text-neutral-900">
+                  Post concepts
+                </h3>
+                <p className="text-[11px] text-neutral-500">
+                  Source-backed hooks generated from collected products,
+                  articles, listings, and audience signals.
+                </p>
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {postConcepts.map((concept) => (
+                    <PostConceptCard key={concept.id} concept={concept} />
+                  ))}
+                </div>
+              </section>
+            )}
 
             {/* Action checklist */}
             <section>

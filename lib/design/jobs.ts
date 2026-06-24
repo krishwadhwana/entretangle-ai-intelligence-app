@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { createHash } from "crypto";
 import { renderCollateral, COLLATERAL_LABELS } from "./collateral";
 import { buildLogoVariants } from "./logo";
 import {
@@ -25,8 +26,13 @@ import {
   saveSiteAsset,
 } from "../store";
 import { looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
-import { readProductImageFile } from "../productImages";
-import type { ProductImageRef } from "../schema";
+import {
+  isSupportedProductImageMime,
+  MAX_PRODUCT_IMAGE_BYTES,
+  readProductImageFile,
+  safeProductImageName,
+} from "../productImages";
+import type { ProductImageRef, WebsiteAnalysis } from "../schema";
 
 const BasePayloadSchema = z.object({
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
@@ -70,12 +76,116 @@ async function projectOrThrow(projectId: string) {
   return project;
 }
 
+const REMOTE_IMAGE_TIMEOUT_MS = 8_000;
+
+function stableId(input: string): string {
+  return createHash("sha1").update(input).digest("hex").slice(0, 12);
+}
+
+function mimeFromUrl(url: string): string | null {
+  const pathname = new URL(url).pathname.toLowerCase();
+  if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) return "image/jpeg";
+  if (pathname.endsWith(".png")) return "image/png";
+  if (pathname.endsWith(".webp")) return "image/webp";
+  if (pathname.endsWith(".gif")) return "image/gif";
+  return null;
+}
+
+function websiteImageCandidates(analysis: WebsiteAnalysis | null): {
+  url: string;
+  name: string;
+  summary: string;
+  tags: string[];
+}[] {
+  const info = analysis?.infoCollected;
+  if (!info) return [];
+  const seen = new Set<string>();
+  const candidates: {
+    url: string;
+    name: string;
+    summary: string;
+    tags: string[];
+  }[] = [];
+  const add = (
+    url: string | undefined,
+    name: string,
+    summary: string,
+    tags: string[]
+  ) => {
+    if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return;
+    seen.add(url);
+    candidates.push({ url, name: safeProductImageName(name), summary, tags });
+  };
+  for (const image of info.productImages) {
+    if (image.kind === "logo" || image.kind === "founder") continue;
+    add(
+      image.url,
+      image.alt || image.caption || "scraped product image",
+      `${image.caption || "Product image scraped from the analyzed website."}${
+        image.sourceUrl ? ` Source: ${image.sourceUrl}.` : ""
+      }`,
+      ["scraped", "website", image.kind]
+    );
+  }
+  for (const listing of info.listingEvidence) {
+    add(
+      listing.imageUrl,
+      listing.productName,
+      `Listing image from ${listing.source || "source"}${
+        listing.priceText ? ` with observed price ${listing.priceText}` : ""
+      }. Source: ${listing.url}.`,
+      ["scraped", "listing", listing.sourceType]
+    );
+  }
+  return candidates.slice(0, 8);
+}
+
+async function fetchRemoteImageInput(
+  candidate: ReturnType<typeof websiteImageCandidates>[number],
+  analyzedAt: string | undefined
+): Promise<ProductImageInput | null> {
+  try {
+    const response = await fetch(candidate.url, {
+      redirect: "follow",
+      headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*" },
+      signal: AbortSignal.timeout(REMOTE_IMAGE_TIMEOUT_MS),
+    });
+    if (!response.ok) return null;
+    const contentLength = Number(response.headers.get("content-length") ?? "0");
+    if (contentLength > MAX_PRODUCT_IMAGE_BYTES) return null;
+    const mimeType =
+      response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
+      mimeFromUrl(candidate.url);
+    if (!mimeType || !isSupportedProductImageMime(mimeType)) return null;
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > MAX_PRODUCT_IMAGE_BYTES) return null;
+    const ref: ProductImageRef = {
+      id: `scraped-${stableId(candidate.url)}`,
+      name: candidate.name,
+      url: candidate.url,
+      mimeType,
+      size: buffer.length,
+      uploadedAt: analyzedAt || new Date().toISOString(),
+      visualSummary: candidate.summary,
+      tags: candidate.tags,
+    };
+    return {
+      ref,
+      buffer,
+      dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function loadProductImageInputs(
   projectId: string,
-  images: ProductImageRef[] | undefined
+  images: ProductImageRef[] | undefined,
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): Promise<ProductImageInput[]> {
   const refs = (images ?? []).slice(0, 4);
-  return Promise.all(
+  const localInputs = await Promise.all(
     refs.map(async (ref) => {
       try {
         const buffer = await readProductImageFile(projectId, ref);
@@ -89,6 +199,17 @@ async function loadProductImageInputs(
       }
     })
   );
+  const remoteInputs = await Promise.all(
+    websiteImageCandidates(websiteAnalysis)
+      .slice(0, 6)
+      .map((candidate) =>
+        fetchRemoteImageInput(candidate, websiteAnalysis?.analyzedAt)
+      )
+  );
+  return [
+    ...localInputs,
+    ...remoteInputs.filter((input): input is ProductImageInput => Boolean(input)),
+  ].slice(0, 6);
 }
 
 function replaceProductImagePlaceholders(
@@ -110,10 +231,6 @@ export async function runDesignStudioJob(args: {
   const profile = project.ventureProfile;
   if (!profile) throw new Error("Finish the venture intake first.");
   const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
-  const productImages = await loadProductImageInputs(
-    args.projectId,
-    profile.productImages
-  );
 
   if (args.type === "design_tokens") {
     const payload = TokensPayloadSchema.parse(args.payload ?? {});
@@ -184,15 +301,23 @@ export async function runDesignStudioJob(args: {
         payload.type,
         profile,
         brandKit,
-        payload.brief
+        payload.brief,
+        project.websiteAnalysis
       ));
     const shouldGenerateVisual =
       payload.type !== "business-card" &&
       (payload.useAiVisual || payload.useProductImages);
+    const productImages = payload.useProductImages
+      ? await loadProductImageInputs(
+          args.projectId,
+          profile.productImages,
+          project.websiteAnalysis
+        )
+      : [];
     const visualBrief =
       payload.visualBrief ||
       (payload.useProductImages
-        ? "Use the uploaded product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
+        ? "Use the available product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
         : "Create a polished campaign visual for this social ad.");
     const visual =
       shouldGenerateVisual
@@ -228,6 +353,11 @@ export async function runDesignStudioJob(args: {
   }
 
   const payload = SitePayloadSchema.parse(args.payload ?? {});
+  const productImages = await loadProductImageInputs(
+    args.projectId,
+    profile.productImages,
+    project.websiteAnalysis
+  );
   const out = await callSiteGenerator(
     payload.sourceRunId,
     args.projectId,

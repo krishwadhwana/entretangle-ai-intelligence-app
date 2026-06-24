@@ -1122,6 +1122,20 @@ export const BrandKitSchema = z.object({
   comparableAccounts: z.array(ComparableAccountSchema).default([]),
   brandIdentity: BrandIdentitySchema,
   socialGuidelines: SocialGuidelinesSchema,
+  postConcepts: z
+    .array(
+      z.object({
+        id: z.string(),
+        platform: z.string().default("Instagram"),
+        format: z.string().default("Post"),
+        hook: z.string(),
+        caption: z.string(),
+        sourceUrls: z.array(z.string()).default([]),
+        visualSourceUrls: z.array(z.string()).default([]),
+        notes: z.string().optional(),
+      })
+    )
+    .default([]),
   checklist: z.array(ChecklistItemSchema).default([]),
 });
 export type BrandKit = z.infer<typeof BrandKitSchema>;

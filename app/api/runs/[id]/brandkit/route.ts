@@ -4,7 +4,7 @@ import { callBrandKit } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/orchestrator";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { getFounderStory, saveBrandKit } from "@/lib/store";
-import { ClientProfileSchema } from "@/lib/schema";
+import { ClientProfileSchema, WebsiteAnalysisSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
@@ -54,12 +54,24 @@ export async function POST(
     const founderStory = run.projectId
       ? await getFounderStory(run.projectId).catch(() => null)
       : null;
+    const projectWebsite = run.projectId
+      ? await prisma.project
+          .findUnique({
+            where: { id: run.projectId },
+            select: { websiteAnalysis: true },
+          })
+          .catch(() => null)
+      : null;
+    const websiteAnalysis = projectWebsite?.websiteAnalysis
+      ? WebsiteAnalysisSchema.safeParse(projectWebsite.websiteAnalysis)
+      : null;
     const kit = await callBrandKit(
       run.id,
       profile,
       conclusions,
       aggregate,
-      founderStory
+      founderStory,
+      websiteAnalysis?.success ? websiteAnalysis.data : null
     );
     const generatedAt = new Date().toISOString();
 

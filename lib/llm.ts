@@ -58,6 +58,8 @@ import {
   type CohortSimOutput,
   type BrandKit,
   type FounderStorySection,
+  type WebsiteAnalysis,
+  type WebsiteCollectedInfo,
   type FinancialInputs,
   type FinancialModel,
   type FinalReport,
@@ -143,6 +145,10 @@ import {
   mockInspiration,
 } from "./fixtures/venture-sim";
 import { OHNEIS_AD_VISUAL_METHOD } from "./ohneis";
+import {
+  collectWebsiteEvidence,
+  mergeWebsiteCollectedInfo,
+} from "./websiteIntel";
 import {
   DEMOGRAPHICS_SYSTEM,
   DemographicsOutputSchema,
@@ -1334,6 +1340,29 @@ function fallbackBrandKit(
         },
       ],
     },
+    postConcepts: [
+      {
+        id: "hero-product-proof-post",
+        platform: "Instagram",
+        format: "Reel",
+        hook: `${product} proof in 10 seconds`,
+        caption: `Show the product close-up, name the main buyer objection, then answer it with one visible proof point for ${audience}.`,
+        sourceUrls: [],
+        visualSourceUrls: [],
+        notes: `Fallback concept generated because ${reason}. Replace with collected product/article evidence after website analysis refreshes.`,
+      },
+      {
+        id: "price-quality-carousel",
+        platform: "Instagram",
+        format: "Carousel",
+        hook: "What the price really includes",
+        caption:
+          "Use five slides to explain materials, finish, durability, fulfillment, and customer risk reversal without sounding defensive.",
+        sourceUrls: [],
+        visualSourceUrls: [],
+        notes: "Use observed listing prices when available.",
+      },
+    ],
     checklist: [
       {
         id: "setup-proof-library",
@@ -1380,7 +1409,8 @@ export async function callBrandKit(
   profile: ClientProfile,
   conclusions: Conclusion[],
   aggregate: AudienceAggregate | null,
-  founderStory: FounderStorySection | null = null
+  founderStory: FounderStorySection | null = null,
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): Promise<BrandKit> {
   if (config.mockMode) return BrandKitSchema.parse(mockBrandKit);
 
@@ -1388,7 +1418,8 @@ export async function callBrandKit(
     profile,
     conclusions,
     aggregate,
-    founderStory
+    founderStory,
+    websiteAnalysis
   )}`;
 
   // Preferred path: Responses API with web_search so accounts are verifiable.
@@ -1448,7 +1479,13 @@ export async function callBrandKit(
         runId,
         feature: "brand.social",
         system: BRAND_KIT_SYSTEM,
-        user: brandKitUser(profile, conclusions, aggregate, founderStory),
+        user: brandKitUser(
+          profile,
+          conclusions,
+          aggregate,
+          founderStory,
+          websiteAnalysis
+        ),
         schema: BrandKitSchema,
         maxCompletionTokens: 8000,
         requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
@@ -1552,7 +1589,8 @@ export async function callCollateralCopy(
   type: CollateralType,
   profile: ClientProfile,
   brandKit: BrandKit | null,
-  brief: string
+  brief: string,
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): Promise<CollateralContent> {
   if (config.mockMode) {
     return CollateralContentSchema.parse({
@@ -1570,7 +1608,7 @@ export async function callCollateralCopy(
     projectId,
     feature: "design.collateral",
     system: COLLATERAL_COPY_SYSTEM,
-    user: collateralCopyUser(type, profile, brandKit, brief),
+    user: collateralCopyUser(type, profile, brandKit, brief, websiteAnalysis),
     schema: CollateralContentSchema,
     maxCompletionTokens: 1200,
     requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
@@ -1996,6 +2034,24 @@ export async function callGeneratePlaybook(
   }
 }
 
+function collectedInfoSourceUrls(info: WebsiteCollectedInfo): string[] {
+  const urls = [
+    ...info.productImages.map((image) => image.sourceUrl || image.url),
+    ...info.products.map((product) => product.url || product.imageUrl),
+    ...info.listingEvidence.map((listing) => listing.url),
+    ...info.priceRanges.map((range) => range.sourceUrl),
+    ...info.newsArticles.map((article) => article.url),
+    ...info.socialProfiles.map((link) => link.url),
+    ...info.marketplaceLinks.map((link) => link.url),
+    ...info.facts.map((fact) => fact.sourceUrl),
+  ];
+  return Array.from(
+    new Set(
+      urls.filter((url): url is string => Boolean(url && /^https?:\/\//i.test(url)))
+    )
+  );
+}
+
 /**
  * Bootstrap a venture from the founder's website + online consumer opinion.
  * Web-grounded (reads the site and searches real reviews/sentiment); on web or
@@ -2108,6 +2164,31 @@ export async function callWebsiteAnalysis(
       sources: [url],
     });
   }
+  const scrapedInfo = await collectWebsiteEvidence(url).catch((error) => {
+    console.error("[website-analysis] direct site crawl failed:", error);
+    return null;
+  });
+  const userPrompt = websiteAnalysisUser(url, scrapedInfo);
+  const mergeAnalysis = (
+    output: WebsiteAnalysisOutput
+  ): WebsiteAnalysisOutput => {
+    if (!scrapedInfo) return output;
+    const infoCollected = mergeWebsiteCollectedInfo({
+      scraped: scrapedInfo,
+      model: output.infoCollected,
+    });
+    return WebsiteAnalysisOutputSchema.parse({
+      ...output,
+      infoCollected,
+      sources: Array.from(
+        new Set([
+          ...collectedInfoSourceUrls(scrapedInfo),
+          ...output.sources,
+          ...collectedInfoSourceUrls(output.infoCollected),
+        ])
+      ).slice(0, 80),
+    });
+  };
   try {
     const response = await client().responses.create(
       {
@@ -2115,7 +2196,7 @@ export async function callWebsiteAnalysis(
         tools: [{ type: "web_search" } as never],
         input: [
           { role: "system", content: WEBSITE_ANALYSIS_SYSTEM },
-          { role: "user", content: websiteAnalysisUser(url) },
+          { role: "user", content: userPrompt },
         ],
         max_output_tokens: 6000,
         reasoning: { effort: "low" },
@@ -2140,7 +2221,7 @@ export async function callWebsiteAnalysis(
     const parsed = WebsiteAnalysisOutputSchema.safeParse(
       JSON.parse(stripFences(response.output_text ?? ""))
     );
-    if (parsed.success) return parsed.data;
+    if (parsed.success) return mergeAnalysis(parsed.data);
     throw new Error(
       `website analysis (web) failed validation: ${JSON.stringify(
         parsed.error.issues
@@ -2153,12 +2234,12 @@ export async function callWebsiteAnalysis(
       projectId,
       feature: "website.analysis",
       system: WEBSITE_ANALYSIS_SYSTEM,
-      user: websiteAnalysisUser(url),
+      user: userPrompt,
       schema: WebsiteAnalysisOutputSchema,
       maxCompletionTokens: 6000,
       requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
       requestMaxRetries: 0,
-    });
+    }).then(mergeAnalysis);
   }
 }
 

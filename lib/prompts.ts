@@ -13,6 +13,8 @@ import type {
   Persona,
   PersonaConversationRole,
   VenturePlanningContext,
+  WebsiteAnalysis,
+  WebsiteCollectedInfo,
 } from "./schema";
 import {
   cultureContextForLocality,
@@ -1108,10 +1110,47 @@ Output JSON only:
 "infoCollected":{"brandName":"...","productImages":[{"url":"https://...","alt":"...","caption":"...","sourceUrl":"https://...","kind":"product"}],"products":[{"name":"...","description":"...","category":"...","url":"https://...","priceText":"...","imageUrl":"https://..."}],"listingEvidence":[{"productName":"...","brand":"...","source":"Amazon","sourceType":"amazon","url":"https://...","imageUrl":"https://...","currency":"INR","price":3499,"minPrice":null,"maxPrice":null,"priceText":"₹3,499","availability":"In stock","isBrandProduct":true,"confidence":0.85,"observedAt":"2026-06-24","notes":"Price from verified listing/search snippet"}],"priceRanges":[{"label":"Dresses","currency":"INR","min":2500,"max":9000,"text":"₹2,500-₹9,000","sourceUrl":"https://...","notes":"Observed on product/category pages"}],"newsArticles":[{"title":"...","url":"https://...","source":"...","publishedAt":"2025-04-10","summary":"..."}],"socialProfiles":[{"label":"Instagram","url":"https://...","detail":"@handle"}],"marketplaceLinks":[{"label":"Nykaa Fashion","url":"https://...","detail":"stockist/marketplace"}],"facts":[{"label":"Founded","value":"...","sourceUrl":"https://..."}],"openQuestions":["Could not verify ..."]},
 "sources":["https://..."]}`;
 
-export function websiteAnalysisUser(url: string): string {
+function compactCollectedInfo(info: WebsiteCollectedInfo | null | undefined) {
+  if (!info) return null;
+  return {
+    brandName: info.brandName,
+    productImages: info.productImages.slice(0, 16),
+    products: info.products.slice(0, 16),
+    listingEvidence: info.listingEvidence.slice(0, 16),
+    priceRanges: info.priceRanges.slice(0, 10),
+    newsArticles: info.newsArticles.slice(0, 16),
+    socialProfiles: info.socialProfiles.slice(0, 12),
+    marketplaceLinks: info.marketplaceLinks.slice(0, 12),
+    facts: info.facts.slice(0, 16),
+    openQuestions: info.openQuestions.slice(0, 10),
+  };
+}
+
+function compactWebsiteEvidence(analysis: WebsiteAnalysis | null | undefined) {
+  if (!analysis) return null;
+  return {
+    url: analysis.url,
+    analyzedAt: analysis.analyzedAt,
+    summary: analysis.summary,
+    consumerOpinion: analysis.consumerOpinion,
+    sentiment: analysis.sentiment,
+    sources: analysis.sources.slice(0, 20),
+    infoCollected: compactCollectedInfo(analysis.infoCollected),
+  };
+}
+
+export function websiteAnalysisUser(
+  url: string,
+  preCollected: WebsiteCollectedInfo | null = null
+): string {
+  const collected = compactCollectedInfo(preCollected);
   return `Founder website to analyse: ${url}
 
-Search the web — read the site itself AND look for real customer opinion, product pages, exact product/listing prices, product images, Amazon/marketplace listings, other D2C/retailer pages, press/news, social profiles, and store links for the brand. Also collect comparable D2C/category listings only when brand-specific prices are not available, and label them as comparable. Output JSON only.`;
+Search the web — read the site itself AND look for real customer opinion, product pages, exact product/listing prices, product images, Amazon/marketplace listings, other D2C/retailer pages, press/news, social profiles, and store links for the brand. Also collect comparable D2C/category listings only when brand-specific prices are not available, and label them as comparable. Output JSON only.${
+    collected
+      ? `\n\nPRE-COLLECTED SITE EVIDENCE FROM A DIRECT CRAWL — use this as source material, keep the exact image/article/listing URLs, and extend it with web-search findings instead of replacing it:\n${JSON.stringify(collected, null, 2)}`
+      : ""
+  }`;
 }
 
 // --- Ask-about-this Q&A (a launch scenario or a financial model) ------------
@@ -1300,13 +1339,19 @@ export function queryUser(
 export const BRAND_KIT_SYSTEM = `You are the brand & social strategist on a business-intelligence platform.
 You are given a venture's profile and the research the platform already
 concluded (market/brand, competitor, social, and synthesis findings) plus, if
-present, simulated-audience stats and a founderStory signal map. Turn it into a HANDS-ON owner action plan
+present, simulated-audience stats, a founderStory signal map, and scraped website
+evidence. Turn it into a HANDS-ON owner action plan
 the founder will actually work through.
 If an Ohneis method block is provided in the user payload, use it as the
 operating method for social strategy, post-generation guidance, and checklist
 tasks. Adapt it to THIS venture rather than naming or quoting the method.
+If websiteEvidence is provided, use exact product names, product image/source
+URLs, listing prices, availability, marketplace/D2C links, and press/news links
+as content raw material. Turn real articles, launch/founder facts, product
+photos, and price/listing facts into concrete social post hooks and checklist
+tasks. Do not invent articles, prices, reviews, founder facts, or image sources.
 
-Produce four things:
+Produce five things:
 
 1. "comparableAccounts": 6-10 REAL social accounts in this venture's category,
    country, and price tier that the founder should study and benchmark against
@@ -1328,7 +1373,15 @@ Produce four things:
 3. "socialGuidelines": "contentPillars" (3-5 recurring content themes) and
    "platformPlan" (per platform: "segment" it reaches, posting "cadence",
    "formats", and "notes" with CAC/benchmark context where known).
-4. "checklist": 10-16 CONCRETE, do-able tasks the founder ticks off, grouped by
+4. "postConcepts": 4-8 concrete social post concepts generated from the most
+   useful websiteEvidence, research, and audience signals. Each concept should
+   have a platform, format, punchy hook, ready-to-adapt caption, sourceUrls
+   (article/product/listing/profile links that ground the claim), optional
+   visualSourceUrls (product image URLs that can inspire the creative), and
+   notes on why it matters. Prefer exact product photos, press/news articles,
+   founder/story facts, observed listing prices, and credible customer-opinion
+   signals. If evidence is thin, make fewer concepts rather than inventing.
+5. "checklist": 10-16 CONCRETE, do-able tasks the founder ticks off, grouped by
    "category" in this order: "Setup", "Brand", "Content", "Growth", "Outreach".
    Each has a short "title", a one-line "detail" (how/with what), and a
    "priority" of "now" | "soon" | "later". Tasks must be specific to this
@@ -1346,19 +1399,23 @@ Output JSON ONLY, no markdown fences, matching exactly:
 "doList":[],"dontList":[]},
 "socialGuidelines":{"contentPillars":[],"platformPlan":[{"platform","segment",
 "cadence","formats":[],"notes"}]},
+"postConcepts":[{"id","platform","format","hook","caption","sourceUrls":[],
+"visualSourceUrls":[],"notes"}],
 "checklist":[{"id","category","title","detail","priority"}]}`;
 
 export function brandKitUser(
   profile: ClientProfile,
   conclusions: Conclusion[],
   aggregate: AudienceAggregate | null,
-  founderStory: FounderStorySection | null = null
+  founderStory: FounderStorySection | null = null,
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): string {
   return JSON.stringify(
     {
       clientProfile: profile,
       audienceAggregate: aggregate,
       founderStory: compactFounderStory(founderStory),
+      websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
       ohneisMethod: OHNEIS_BRAND_SOCIAL_METHOD,
       conclusions: conclusions.map((c) => ({
         id: c.id,
@@ -1459,6 +1516,10 @@ specific to the venture; never generic filler.
 If an Ohneis method block is provided in the user payload, use it to make flyer
 and poster copy work as high-performing social media post/ad copy. Adapt the
 method silently; do not mention Ohneis in the output.
+If websiteEvidence is provided, mine exact product names, product facts,
+listing/price evidence, press/news links, and consumer-opinion signals for the
+hook. Do not make claims that are not present in the venture profile,
+brand/social kit, brief, or website evidence.
 
 You are told the collateral "type" (one of "business-card", "flyer", "poster").
 Tailor the copy to it:
@@ -1480,7 +1541,8 @@ export function collateralCopyUser(
   type: string,
   profile: ClientProfile,
   brandKit: BrandKit | null,
-  brief: string
+  brief: string,
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): string {
   return JSON.stringify(
     {
@@ -1488,6 +1550,7 @@ export function collateralCopyUser(
       clientProfile: profile,
       brandVoice: brandKit?.brandIdentity?.voice ?? null,
       positioning: brandKit?.brandIdentity?.positioning ?? null,
+      websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
       brief: brief || null,
       ohneisMethod:
         type === "business-card" ? null : OHNEIS_COLLATERAL_COPY_METHOD,

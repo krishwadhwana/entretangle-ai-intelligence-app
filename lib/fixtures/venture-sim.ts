@@ -1452,6 +1452,30 @@ export const mockBrandKit: BrandKit = {
       },
     ],
   },
+  postConcepts: [
+    {
+      id: "show-the-grain-close-up",
+      platform: "Instagram",
+      format: "Reel",
+      hook: "The grain is the proof",
+      caption:
+        "A close-up maker reel that moves from raw teak grain to finished joinery, ending with the hero piece styled in a real home.",
+      sourceUrls: [],
+      visualSourceUrls: [],
+      notes: "Mock concept for local development.",
+    },
+    {
+      id: "price-as-provenance",
+      platform: "Instagram",
+      format: "Carousel",
+      hook: "Why this piece costs what it does",
+      caption:
+        "Break down wood, maker time, finish, delivery, and lifespan in five cards so premium pricing feels legible.",
+      sourceUrls: [],
+      visualSourceUrls: [],
+      notes: "Mock concept for local development.",
+    },
+  ],
   checklist: [
     {
       id: "set-up-instagram-business",

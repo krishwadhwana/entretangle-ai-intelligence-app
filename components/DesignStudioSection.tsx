@@ -1148,14 +1148,14 @@ export default function DesignStudioSection({
                   onChange={(e) => setUseProductImages(e.target.checked)}
                   className="h-3.5 w-3.5 accent-indigo-600"
                 />
-                Product images
+                Product refs
               </label>
             </div>
             <textarea
               value={visualBrief}
               onChange={(e) => setVisualBrief(e.target.value)}
               disabled={!useAiVisual}
-              placeholder="AI visual direction — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, use uploaded bottle as product reference, no text'"
+              placeholder="AI visual direction — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, use the product reference, no text'"
               rows={3}
               className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400 disabled:bg-neutral-50 disabled:text-neutral-400"
             />
