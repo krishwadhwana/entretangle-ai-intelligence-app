@@ -184,6 +184,10 @@ export default function LaunchSimulation({
   const [sourced, setSourced] = useState<string | null>(null);
 
   const engineCurrency = inputs.currency || defaults?.currency || "INR";
+  // Service / SaaS launches hold no sellable stock — the inventory knobs don't
+  // apply and the engine treats fulfilment as unconstrained.
+  const inventoryless =
+    inputs.businessModel === "services" || inputs.businessModel === "saas";
   const displayCurrency = defaults?.displayCurrency || engineCurrency;
   const displayFxRate = defaults?.displayFxRate ?? 1;
 
@@ -760,34 +764,45 @@ export default function LaunchSimulation({
                   onChange={(v) => set("launchInvestmentReserve", v)}
                   small
                 />
-                <NumField
-                  label="Initial inventory"
-                  unit="units"
-                  help="Opening sellable units. Use 0 to auto-size from expected first wave demand."
-                  value={inputs.initialInventoryUnits ?? 0}
-                  onChange={(v) =>
-                    set("initialInventoryUnits", v ? Math.round(v) : null)
-                  }
-                  small
-                />
-                <NumField
-                  label="Reorder lead"
-                  unit="days"
-                  help="Days between placing replenishment and receiving sellable inventory."
-                  value={inputs.reorderLeadTimeDays}
-                  onChange={(v) => set("reorderLeadTimeDays", Math.round(v))}
-                  small
-                />
-                <NumField
-                  label="Min order qty"
-                  unit="units/batch"
-                  help="Manufacturer minimum order quantity. Reorders are placed in whole batches, so you end holding a leftover partial batch (realistic deadstock). 0 = auto (~1 month of demand); 1 = continuous/JIT reordering."
-                  value={inputs.minOrderQtyUnits ?? 0}
-                  onChange={(v) =>
-                    set("minOrderQtyUnits", v ? Math.round(v) : null)
-                  }
-                  small
-                />
+                {inventoryless ? (
+                  <p className="col-span-full text-xs text-neutral-500">
+                    Inventory, reorder lead and minimum order quantity don&apos;t
+                    apply to a {inputs.businessModel === "saas" ? "SaaS" : "service"}{" "}
+                    launch — fulfilment is treated as unconstrained, with no stock,
+                    reorders or deadstock.
+                  </p>
+                ) : (
+                  <>
+                    <NumField
+                      label="Initial inventory"
+                      unit="units"
+                      help="Opening sellable units. Use 0 to auto-size from expected first wave demand."
+                      value={inputs.initialInventoryUnits ?? 0}
+                      onChange={(v) =>
+                        set("initialInventoryUnits", v ? Math.round(v) : null)
+                      }
+                      small
+                    />
+                    <NumField
+                      label="Reorder lead"
+                      unit="days"
+                      help="Days between placing replenishment and receiving sellable inventory."
+                      value={inputs.reorderLeadTimeDays}
+                      onChange={(v) => set("reorderLeadTimeDays", Math.round(v))}
+                      small
+                    />
+                    <NumField
+                      label="Min order qty"
+                      unit="units/batch"
+                      help="Manufacturer minimum order quantity. Reorders are placed in whole batches, so you end holding a leftover partial batch (realistic deadstock). 0 = auto (~1 month of demand); 1 = continuous/JIT reordering."
+                      value={inputs.minOrderQtyUnits ?? 0}
+                      onChange={(v) =>
+                        set("minOrderQtyUnits", v ? Math.round(v) : null)
+                      }
+                      small
+                    />
+                  </>
+                )}
               </AdvancedGroup>
 
               <AdvancedGroup

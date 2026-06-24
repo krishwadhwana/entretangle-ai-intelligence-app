@@ -272,6 +272,10 @@ export function resolveLaunchInputs(
 ): LaunchSimInputs {
   const i = LaunchSimInputsSchema.parse(raw); // apply schema defaults first
   const preset = BUSINESS_PRESETS[i.businessModel] ?? BUSINESS_PRESETS.generic;
+  // Service / SaaS models hold no sellable stock (inventoryBuffer === 0): there
+  // is nothing to pre-buy, reorder, or stock out of. We zero the inventory
+  // knobs here and the sim treats fulfilment as unconstrained.
+  const inventoryless = preset.inventoryBuffer === 0;
   const stepsPerMonth = i.granularity === "day" ? 30 : 1;
 
   // Reach ceiling: a finite pool the ad spend saturates over time.
@@ -373,8 +377,9 @@ export function resolveLaunchInputs(
     decisionSpeed,
     channels,
     returnShippingPerOrder,
-    initialInventoryUnits,
-    minOrderQtyUnits,
+    initialInventoryUnits: inventoryless ? 0 : initialInventoryUnits,
+    minOrderQtyUnits: inventoryless ? 0 : minOrderQtyUnits,
+    reorderEnabled: inventoryless ? false : i.reorderEnabled,
     monthlyGrowthPct,
     fixedCostsPerMonth,
     refundRateMult: i.refundRateMult * preset.refundMult,
@@ -886,6 +891,11 @@ export function simulateLaunch(
   const refundArrivals = new Array(inputs.horizon + returnWindowSteps + 2).fill(0);
   const inventoryArrivals = new Array(inputs.horizon + reorderLeadSteps + 2).fill(0);
 
+  // Service / SaaS models carry no physical stock: fulfilment is never capped by
+  // inventory, nothing is pre-bought or reordered, and there is no deadstock.
+  const inventoryless =
+    (BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic)
+      .inventoryBuffer === 0;
   let inventory = inputs.initialInventoryUnits ?? 0;
   let onOrder = 0;
   // Total units the founder has PAID for (opening batch + every reorder placed) —
@@ -1225,11 +1235,13 @@ export function simulateLaunch(
       }
     }
 
-    // Fulfilment capped by inventory.
-    const fillRate = demand > 0 ? Math.min(1, inventory / demand) : 0;
+    // Fulfilment capped by inventory — except service/SaaS models, which have
+    // no stock to run out of (fillRate is always 1).
+    const fillRate =
+      demand > 0 ? (inventoryless ? 1 : Math.min(1, inventory / demand)) : 0;
     const unitsFulfilled = demand * fillRate;
     const unitsStockedOut = demand - unitsFulfilled;
-    inventory -= unitsFulfilled;
+    if (!inventoryless) inventory -= unitsFulfilled;
 
     // Attribute fulfilled orders + schedule refunds, per persona.
     for (const d of desired) {
@@ -1281,7 +1293,7 @@ export function simulateLaunch(
     const refundCost =
       refundsLanding *
       (returnShipping + (1 - inputs.resellablePct) * inputs.costPrice);
-    inventory += refundsLanding * inputs.resellablePct;
+    if (!inventoryless) inventory += refundsLanding * inputs.resellablePct;
 
     // Reorder policy: keep enough to cover lead-time demand + a half-step buffer.
     emaDemand = t === 0 ? demand : 0.3 * demand + 0.7 * emaDemand;
