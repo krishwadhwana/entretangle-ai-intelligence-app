@@ -435,8 +435,19 @@ export default function RunDashboard({
           ...(opts?.domains ? { domains: opts.domains } : {}),
         }),
       });
-      if (!res.ok) throw new Error(`query failed (${res.status})`);
-      const { answer, citedConclusionIds } = await res.json();
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(
+            data?.error ?? data,
+            `query failed (${res.status})`
+          )
+        );
+      }
+      const { answer, citedConclusionIds = [] } = data ?? {};
+      if (typeof answer !== "string") {
+        throw new Error("Query returned an empty answer");
+      }
       // The Playbook asks in-place (highlight:false); the panel/network query
       // highlights the cited desks and jumps to the network graph.
       if (opts?.highlight !== false) {
@@ -745,7 +756,10 @@ export default function RunDashboard({
   const resumable =
     !resuming &&
     !replaying &&
-    (state.status === "capped" || state.status === "failed" || stale);
+    (state.status === "capped" ||
+      state.status === "failed" ||
+      state.status === "cancelled" ||
+      stale);
   const cancellable =
     !cancelling &&
     (state.status === "connecting" ||
@@ -928,14 +942,18 @@ export default function RunDashboard({
             onClick={onResume}
             disabled={resuming}
             className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-            title="Continue this run — re-runs only the unfinished cohorts, reusing the completed desks (no re-paying)"
+            title="Continue this run from the last saved work — re-runs only unfinished cohorts and reuses completed desks"
           >
             {resuming ? (
               <Loader2 className="h-3 w-3 animate-spin" />
             ) : (
               <Play className="h-3 w-3" />
             )}
-            {resuming ? "Continuing…" : "Continue run"}
+            {resuming
+              ? "Continuing..."
+              : state.status === "cancelled"
+                ? "Resume run"
+                : "Continue run"}
           </button>
         )}
         {(cancellable || cancelling || state.status === "cancelling") && (
@@ -1165,6 +1183,7 @@ export default function RunDashboard({
               <KnowHowDrawer
                 key={knowHowNode.id}
                 runId={runId}
+                runStatus={state.status}
                 projectId={projectId}
                 module={moduleForNode(knowHowNode)}
                 nodeLabel={knowHowNode.label}

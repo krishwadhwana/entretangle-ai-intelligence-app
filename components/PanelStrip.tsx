@@ -456,10 +456,13 @@ export function ConclusionWorkspace({
       const answer = await onQuery(q, { highlight: false });
       setPending((p) => [...p, { question: q, answer }]);
       setQuestion("");
-    } catch {
+    } catch (e) {
       setPending((p) => [
         ...p,
-        { question: q, answer: "Query failed — try again." },
+        {
+          question: q,
+          answer: e instanceof Error ? e.message : "Query failed - try again.",
+        },
       ]);
     } finally {
       setBusy(false);

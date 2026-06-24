@@ -18,6 +18,7 @@ import {
   type DesignStudioSection,
   type DesignTokens,
   type LogoAsset,
+  type SiteAsset,
   type FounderStorySection,
   type WebsiteAnalysis,
   type MarketDatum,
@@ -724,6 +725,45 @@ export async function deleteLogoAsset(
   const owner = await readOwnerDashboard(id);
   owner.designStudio.logos = owner.designStudio.logos.filter(
     (l) => l.id !== logoId
+  );
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
+/** Append (or replace by id) a generated site, newest first. */
+export async function saveSiteAsset(
+  id: string,
+  site: SiteAsset
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  const rest = owner.designStudio.sites.filter((s) => s.id !== site.id);
+  owner.designStudio.sites = [site, ...rest];
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
+/** Record a site's published Vercel URL after a successful deploy. */
+export async function setSiteDeployUrl(
+  id: string,
+  siteId: string,
+  deployUrl: string
+): Promise<SiteAsset | null> {
+  const owner = await readOwnerDashboard(id);
+  const site = owner.designStudio.sites.find((s) => s.id === siteId);
+  if (!site) return null;
+  site.deployUrl = deployUrl;
+  await writeOwnerDashboard(id, owner);
+  return site;
+}
+
+/** Remove a generated site by id. */
+export async function deleteSiteAsset(
+  id: string,
+  siteId: string
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  owner.designStudio.sites = owner.designStudio.sites.filter(
+    (s) => s.id !== siteId
   );
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;

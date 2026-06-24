@@ -791,11 +791,11 @@ export async function executeRun(runId: string): Promise<void> {
 const resumingRuns = new Set<string>();
 
 /**
- * Resume a run that stalled, capped, or failed mid-audience — WITHOUT redoing
- * the expensive research desks. Re-runs only the cohorts that never finished
- * (clearing any partial personas first), then aggregates, synthesises and
- * converges. Reuses the completed desks and existing personas, so the founder
- * never re-pays for work that already succeeded.
+ * Resume a run that stalled, capped, failed, or was manually cancelled —
+ * WITHOUT redoing the expensive research desks. Re-runs only the cohorts that
+ * never finished (clearing any partial personas first), then aggregates,
+ * synthesises and converges. Reuses the completed desks and existing personas,
+ * so the founder never re-pays for work that already succeeded.
  */
 export async function resumeRun(runId: string): Promise<void> {
   if (resumingRuns.has(runId)) {
@@ -814,6 +814,13 @@ export async function resumeRun(runId: string): Promise<void> {
       additionalContext: run.additionalContext,
     };
     profileForSnapshot = profile;
+    await setStatus(
+      emitter,
+      "running",
+      run.status === "cancelled"
+        ? "Resuming cancelled run"
+        : "Continuing run"
+    );
     await throwIfRunCancelled(runId);
 
     // Cohorts that didn't finish (stuck "simulating", "failed", or never

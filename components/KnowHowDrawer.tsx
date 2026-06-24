@@ -24,6 +24,7 @@ type Tab = "calculate" | "ask" | "scenarios";
 
 type Props = {
   runId: string;
+  runStatus: string;
   projectId: string | null;
   module: KnowHowModule;
   nodeLabel: string;
@@ -103,6 +104,7 @@ function headlineMetrics(model: FinancialModel): { label: string; value: string 
 
 export default function KnowHowDrawer({
   runId,
+  runStatus,
   projectId,
   module,
   nodeLabel,
@@ -127,6 +129,15 @@ export default function KnowHowDrawer({
   const [asking, setAsking] = useState(false);
   const [askError, setAskError] = useState<string | null>(null);
   const askEndRef = useRef<HTMLDivElement>(null);
+  const queryReady = runStatus === "complete" || runStatus === "capped";
+  const askBlockedReason =
+    isFinancials && model
+      ? null
+      : queryReady
+        ? null
+        : runStatus === "cancelled"
+          ? "This run was cancelled, so the world model is not queryable yet. Resume the run first, then ask once it completes."
+          : `Ask is available once the run is complete. Current status: ${runStatus}.`;
 
   // ----- Scenarios (in-session what-ifs) -----------------------------------
   const [scenarios, setScenarios] = useState<Scenario[]>([]);
@@ -243,6 +254,10 @@ export default function KnowHowDrawer({
   const ask = useCallback(async () => {
     const q = question.trim();
     if (!q || asking) return;
+    if (askBlockedReason) {
+      setAskError(askBlockedReason);
+      return;
+    }
     setAsking(true);
     setAskError(null);
     setQuestion("");
@@ -261,9 +276,20 @@ export default function KnowHowDrawer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const json = await res.json();
+      const json = await res.json().catch(() => null);
       if (!res.ok) {
-        setAskError(providerErrorMessage(json.error ?? json, "Could not answer that"));
+        const outOfQuota =
+          json?.code === "openai_quota_exceeded" || res.status === 429;
+        setAskError(
+          outOfQuota
+            ? "Ask can't run right now because the OpenAI account is out of credits/quota. Add credits to the OpenAI project (or switch to a funded API key), then try again. This affects every AI feature, not just Ask."
+            : providerErrorMessage(json?.error ?? json, "Could not answer that")
+        );
+        setQuestion(q);
+        return;
+      }
+      if (typeof json?.answer !== "string") {
+        setAskError("Could not answer that because the response was empty.");
         setQuestion(q);
         return;
       }
@@ -280,7 +306,16 @@ export default function KnowHowDrawer({
     } finally {
       setAsking(false);
     }
-  }, [question, asking, isFinancials, model, runId, module.domains, history]);
+  }, [
+    question,
+    asking,
+    askBlockedReason,
+    isFinancials,
+    model,
+    runId,
+    module.domains,
+    history,
+  ]);
 
   const saveScenario = useCallback(() => {
     if (!model || !inputs) return;
@@ -402,6 +437,9 @@ export default function KnowHowDrawer({
               {askError && (
                 <p className="text-sm text-rose-600">{askError}</p>
               )}
+              {!askError && askBlockedReason && (
+                <p className="text-sm text-amber-700">{askBlockedReason}</p>
+              )}
               <div ref={askEndRef} />
             </div>
             <div className="sticky bottom-0 mt-3 flex items-end gap-2 bg-white pt-2">
@@ -411,7 +449,7 @@ export default function KnowHowDrawer({
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    ask();
+                    void ask();
                   }
                 }}
                 rows={2}
@@ -419,8 +457,11 @@ export default function KnowHowDrawer({
                 className="flex-1 resize-none rounded-xl border border-neutral-300 px-3 py-2 text-sm focus:border-indigo-400 focus:outline-none"
               />
               <button
-                onClick={ask}
-                disabled={!question.trim() || asking}
+                type="button"
+                onClick={() => void ask()}
+                disabled={!question.trim() || asking || Boolean(askBlockedReason)}
+                title={askBlockedReason ?? "Ask"}
+                aria-label="Ask"
                 className="flex h-10 items-center gap-1.5 rounded-xl bg-indigo-600 px-3.5 text-sm font-semibold text-white hover:bg-indigo-500 disabled:opacity-50"
               >
                 {asking ? (
@@ -428,6 +469,7 @@ export default function KnowHowDrawer({
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
+                <span>Ask</span>
               </button>
             </div>
           </div>

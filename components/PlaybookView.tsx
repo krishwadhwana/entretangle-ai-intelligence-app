@@ -150,8 +150,8 @@ function ModuleSection({
     setAnswer(null);
     try {
       setAnswer(await onQuery(q.trim(), { domains: [domain], highlight: false }));
-    } catch {
-      setAnswer("Query failed — try again.");
+    } catch (e) {
+      setAnswer(e instanceof Error ? e.message : "Query failed - try again.");
     } finally {
       setBusy(false);
     }
@@ -371,8 +371,8 @@ export default function PlaybookView({
     setGAnswer(null);
     try {
       setGAnswer(await onQuery(gq.trim(), { highlight: false }));
-    } catch {
-      setGAnswer("Query failed — try again.");
+    } catch (e) {
+      setGAnswer(e instanceof Error ? e.message : "Query failed - try again.");
     } finally {
       setGBusy(false);
     }

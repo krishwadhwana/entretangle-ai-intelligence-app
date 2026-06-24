@@ -4,11 +4,14 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AlertCircle,
   Download,
+  ExternalLink,
   FileImage,
+  Globe,
   Hexagon,
   Loader2,
   Palette,
   RefreshCw,
+  Rocket,
   Trash2,
   Type,
 } from "lucide-react";
@@ -17,6 +20,7 @@ import type {
   DesignAsset,
   DesignStudioSection as DesignStudioState,
   LogoAsset,
+  SiteAsset,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
@@ -233,6 +237,81 @@ function LogoCard({
   );
 }
 
+function downloadHtml(site: SiteAsset) {
+  downloadBlob(new Blob([site.html], { type: "text/html" }), "index.html");
+}
+
+function SiteCard({
+  site,
+  deployEnabled,
+  deploying,
+  onDeploy,
+  onDelete,
+}: {
+  site: SiteAsset;
+  deployEnabled: boolean;
+  deploying: boolean;
+  onDeploy: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+      {/* Live preview of the self-contained, script-free page. */}
+      <iframe
+        title={site.title}
+        srcDoc={site.html}
+        sandbox=""
+        className="h-72 w-full border-0 bg-white"
+      />
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
+        <p className="truncate text-[11px] text-neutral-500">{site.title}</p>
+        <div className="flex shrink-0 items-center gap-1">
+          {site.deployUrl ? (
+            <a
+              href={site.deployUrl}
+              target="_blank"
+              rel="noreferrer"
+              title="Open live site"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-emerald-600 hover:bg-emerald-50"
+            >
+              <ExternalLink className="h-3.5 w-3.5" /> Live
+            </a>
+          ) : null}
+          <button
+            onClick={() => downloadHtml(site)}
+            title="Download index.html"
+            className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+          >
+            <Download className="h-3.5 w-3.5" />
+          </button>
+          {deployEnabled ? (
+            <button
+              onClick={() => onDeploy(site.id)}
+              disabled={deploying}
+              title="Publish to Vercel"
+              className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+            >
+              {deploying ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Rocket className="h-3.5 w-3.5" />
+              )}
+              {site.deployUrl ? "Redeploy" : "Publish"}
+            </button>
+          ) : null}
+          <button
+            onClick={() => onDelete(site.id)}
+            title="Delete"
+            className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+          >
+            <Trash2 className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DesignStudioSection({
   projectId,
   sourceRunId,
@@ -245,10 +324,14 @@ export default function DesignStudioSection({
   const [studio, setStudio] = useState<DesignStudioState | null>(null);
   const [assets, setAssets] = useState<DesignAsset[]>([]);
   const [logos, setLogos] = useState<LogoAsset[]>([]);
+  const [sites, setSites] = useState<SiteAsset[]>([]);
+  const [deployEnabled, setDeployEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [makingType, setMakingType] = useState<CollateralType | null>(null);
   const [makingLogo, setMakingLogo] = useState(false);
+  const [makingSite, setMakingSite] = useState(false);
+  const [deployingId, setDeployingId] = useState<string | null>(null);
   const [brief, setBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -270,7 +353,16 @@ export default function DesignStudioSection({
             setStudio(designStudio);
             setAssets(designStudio?.assets ?? []);
             setLogos(designStudio?.logos ?? []);
+            setSites(designStudio?.sites ?? []);
           }
+        }
+        // Whether one-click Vercel publish is configured (VERCEL_TOKEN set).
+        const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
+        if (siteRes.ok) {
+          const { deployEnabled: enabled } = (await siteRes.json()) as {
+            deployEnabled?: boolean;
+          };
+          if (!cancelled) setDeployEnabled(Boolean(enabled));
         }
       } catch {
         /* best-effort hydration */
@@ -399,6 +491,86 @@ export default function DesignStudioSection({
       }
     },
     [projectId, logos]
+  );
+
+  const makeSite = useCallback(async () => {
+    if (!projectId) return;
+    setMakingSite(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/design/site`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "generate",
+          brief,
+          sourceRunId: sourceRunId ?? null,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(
+          providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
+        );
+        return;
+      }
+      setSites((data.sites as SiteAsset[]) ?? []);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Generation failed.");
+    } finally {
+      setMakingSite(false);
+    }
+  }, [projectId, brief, sourceRunId]);
+
+  const deploySite = useCallback(
+    async (siteId: string) => {
+      if (!projectId) return;
+      setDeployingId(siteId);
+      setError(null);
+      try {
+        const res = await fetch(`/api/projects/${projectId}/design/site`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "deploy", siteId }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          setError(
+            providerErrorMessage(data.error ?? data, `Deploy failed (${res.status}).`)
+          );
+          return;
+        }
+        const updated = data.site as SiteAsset | null;
+        if (updated) {
+          setSites((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
+        }
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Deploy failed.");
+      } finally {
+        setDeployingId(null);
+      }
+    },
+    [projectId]
+  );
+
+  const removeSite = useCallback(
+    async (siteId: string) => {
+      if (!projectId) return;
+      const prev = sites;
+      setSites((s) => s.filter((x) => x.id !== siteId)); // optimistic
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/design/site?siteId=${encodeURIComponent(
+            siteId
+          )}`,
+          { method: "DELETE" }
+        );
+        if (!res.ok) setSites(prev);
+      } catch {
+        setSites(prev);
+      }
+    },
+    [projectId, sites]
   );
 
   if (loading) {
@@ -582,6 +754,52 @@ export default function DesignStudioSection({
                 as SVG (editable, imports into Figma) or PNG.
               </p>
             )}
+          </section>
+
+          {/* Website generator */}
+          <section>
+            <div className="mb-2 flex items-center justify-between">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                <Globe className="h-3.5 w-3.5" /> Website
+              </p>
+              <button
+                onClick={makeSite}
+                disabled={makingSite}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+              >
+                {makingSite ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Globe className="h-3.5 w-3.5" />
+                )}
+                {sites.length ? "New version" : "Generate site"}
+              </button>
+            </div>
+            {sites.length ? (
+              <div className="space-y-3">
+                {sites.map((site) => (
+                  <SiteCard
+                    key={site.id}
+                    site={site}
+                    deployEnabled={deployEnabled}
+                    deploying={deployingId === site.id}
+                    onDeploy={deploySite}
+                    onDelete={removeSite}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-neutral-400">
+                No site yet — generate a one-page landing site from your tokens.
+                Preview it live, download <code>index.html</code>
+                {deployEnabled ? ", or publish straight to Vercel." : "."}
+              </p>
+            )}
+            {!deployEnabled ? (
+              <p className="mt-1 text-[10px] text-neutral-300">
+                Set <code>VERCEL_TOKEN</code> to enable one-click publish.
+              </p>
+            ) : null}
           </section>
 
           {studio?.generatedAt ? (

@@ -45,14 +45,22 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
     if (!run) {
       throw new Error(`run not found: ${job.runId}`);
     }
-    // add_cohort runs ON a finished run (adding an audience to it), so don't
-    // skip it for terminal status — only execute/resume are skipped there.
+    // add_cohort runs ON a finished run. resume intentionally runs FROM failed,
+    // capped, cancelled, or stale running states. Only execute jobs should be
+    // skipped once their run has reached a terminal status.
     if (
-      job.type !== "add_cohort" &&
+      job.type === "execute" &&
       ["complete", "failed", "capped", "cancelled"].includes(run.status)
     ) {
       console.log(
         `[worker ${workerId}] skipping ${job.type} ${job.runId}; run is ${run.status}`
+      );
+      await markJobSucceeded(job.id);
+      return;
+    }
+    if (job.type === "resume" && run.status === "complete") {
+      console.log(
+        `[worker ${workerId}] skipping resume ${job.runId}; run is already complete`
       );
       await markJobSucceeded(job.id);
       return;
@@ -81,7 +89,9 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       await markJobSucceeded(job.id);
       return;
     }
-    await throwIfRunCancelled(job.runId);
+    if (job.type !== "resume") {
+      await throwIfRunCancelled(job.runId);
+    }
     if (job.type === "execute") {
       await executeRun(job.runId);
     } else if (job.type === "resume") {
