@@ -207,6 +207,40 @@ export type WebsiteCollectedPriceRange = z.infer<
   typeof WebsiteCollectedPriceRangeSchema
 >;
 
+export const WebsiteCollectedListingSchema = z.object({
+  productName: z.string().default("Product listing"),
+  brand: z.string().optional(),
+  source: z.string().optional(),
+  sourceType: z
+    .enum([
+      "brand_site",
+      "amazon",
+      "marketplace",
+      "d2c_site",
+      "retailer",
+      "social_shop",
+      "search_result",
+      "comparable",
+      "other",
+    ])
+    .default("other"),
+  url: z.string(),
+  imageUrl: z.string().optional(),
+  currency: z.string().optional(),
+  price: z.number().nullable().optional(),
+  minPrice: z.number().nullable().optional(),
+  maxPrice: z.number().nullable().optional(),
+  priceText: z.string().optional(),
+  availability: z.string().optional(),
+  isBrandProduct: z.boolean().default(true),
+  confidence: z.number().min(0).max(1).optional(),
+  observedAt: z.string().optional(),
+  notes: z.string().optional(),
+});
+export type WebsiteCollectedListing = z.infer<
+  typeof WebsiteCollectedListingSchema
+>;
+
 export const WebsiteCollectedProductSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -238,6 +272,7 @@ export const WebsiteCollectedInfoSchema = z
     brandName: z.string().optional(),
     productImages: z.array(WebsiteCollectedImageSchema).default([]),
     products: z.array(WebsiteCollectedProductSchema).default([]),
+    listingEvidence: z.array(WebsiteCollectedListingSchema).default([]),
     priceRanges: z.array(WebsiteCollectedPriceRangeSchema).default([]),
     newsArticles: z.array(WebsiteCollectedArticleSchema).default([]),
     socialProfiles: z.array(WebsiteCollectedLinkSchema).default([]),

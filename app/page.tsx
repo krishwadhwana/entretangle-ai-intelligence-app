@@ -606,6 +606,38 @@ function priceRangeText(
   return "Price signal found";
 }
 
+function listingPriceText(
+  listing: WebsiteAnalysis["infoCollected"]["listingEvidence"][number],
+): string {
+  if (listing.priceText?.trim()) return listing.priceText.trim();
+  const currency = listing.currency?.trim();
+  const money = (value: number) =>
+    [currency, value.toLocaleString()].filter(Boolean).join(" ");
+  if (typeof listing.price === "number") return money(listing.price);
+  if (
+    typeof listing.minPrice === "number" &&
+    typeof listing.maxPrice === "number"
+  ) {
+    return `${money(listing.minPrice)} - ${money(listing.maxPrice)}`;
+  }
+  if (typeof listing.minPrice === "number") {
+    return `from ${money(listing.minPrice)}`;
+  }
+  if (typeof listing.maxPrice === "number") {
+    return `up to ${money(listing.maxPrice)}`;
+  }
+  return "Price not visible";
+}
+
+function listingTypeLabel(
+  sourceType: WebsiteAnalysis["infoCollected"]["listingEvidence"][number]["sourceType"],
+): string {
+  return sourceType
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
 function collectedInfoCount(
   analysis: WebsiteAnalysis | null,
   uploadedImages: ProductImageRef[],
@@ -617,6 +649,7 @@ function collectedInfoCount(
     (analysis?.consumerOpinion?.trim() ? 1 : 0) +
     (info?.productImages.length ?? 0) +
     (info?.products.length ?? 0) +
+    (info?.listingEvidence.length ?? 0) +
     (info?.priceRanges.length ?? 0) +
     (info?.newsArticles.length ?? 0) +
     (info?.socialProfiles.length ?? 0) +
@@ -643,6 +676,7 @@ function InfoCollectedPanel({
   const info = analysis?.infoCollected;
   const webImages = info?.productImages ?? [];
   const products = info?.products ?? [];
+  const listingEvidence = info?.listingEvidence ?? [];
   const priceRanges = info?.priceRanges ?? [];
   const articles = info?.newsArticles ?? [];
   const socialProfiles = info?.socialProfiles ?? [];
@@ -681,6 +715,16 @@ function InfoCollectedPanel({
       sourceUrl: image.sourceUrl ?? image.url,
       sourceLabel: hostForUrl(image.sourceUrl ?? image.url),
     })),
+    ...listingEvidence
+      .filter((listing) => Boolean(listing.imageUrl))
+      .map((listing, index) => ({
+        id: `listing-${index}-${listing.imageUrl}`,
+        url: listing.imageUrl || "",
+        title: listing.productName,
+        detail: `${listing.source || listingTypeLabel(listing.sourceType)} · ${listingPriceText(listing)}`,
+        sourceUrl: listing.url,
+        sourceLabel: listing.source || hostForUrl(listing.url),
+      })),
   ];
   const collectedCount = collectedInfoCount(analysis, uploadedImages);
   const sourceUrls = Array.from(
@@ -688,6 +732,7 @@ function InfoCollectedPanel({
       ...(analysis?.sources ?? []),
       ...facts.map((fact) => fact.sourceUrl).filter(Boolean),
       ...priceRanges.map((range) => range.sourceUrl).filter(Boolean),
+      ...listingEvidence.map((listing) => listing.url),
     ] as string[]),
   );
 
@@ -931,6 +976,102 @@ function InfoCollectedPanel({
                 ) : (
                   <p className="mt-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
                     No individual products or SKUs were identified.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                    <Store className="h-4 w-4 text-neutral-400" />
+                    Prices and listings
+                  </h4>
+                  <span className="text-[11px] text-neutral-400">
+                    {listingEvidence.length}
+                  </span>
+                </div>
+                {listingEvidence.length > 0 ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {listingEvidence.map((listing, index) => (
+                      <article
+                        key={`${listing.url}-${index}`}
+                        className="rounded-lg border border-neutral-200 p-3"
+                      >
+                        <div className="flex gap-3">
+                          {listing.imageUrl ? (
+                            <img
+                              src={listing.imageUrl}
+                              alt={listing.productName}
+                              loading="lazy"
+                              className="h-16 w-16 shrink-0 rounded-md object-cover"
+                            />
+                          ) : (
+                            <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-neutral-400">
+                              <Store className="h-5 w-5" />
+                            </div>
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-1.5">
+                              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600">
+                                {listing.source || listingTypeLabel(listing.sourceType)}
+                              </span>
+                              <span
+                                className={`rounded-full px-2 py-0.5 text-[10px] font-medium ${
+                                  listing.isBrandProduct
+                                    ? "bg-emerald-50 text-emerald-700"
+                                    : "bg-amber-50 text-amber-700"
+                                }`}
+                              >
+                                {listing.isBrandProduct ? "Brand" : "Comparable"}
+                              </span>
+                            </div>
+                            <p className="mt-2 line-clamp-2 text-sm font-semibold text-neutral-900">
+                              {listing.productName}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-neutral-700">
+                              {listingPriceText(listing)}
+                            </p>
+                            <p className="mt-1 truncate text-[11px] text-neutral-400">
+                              {[
+                                listing.brand,
+                                listing.availability,
+                                listing.observedAt
+                                  ? `seen ${new Date(listing.observedAt).toLocaleDateString()}`
+                                  : null,
+                              ]
+                                .filter(Boolean)
+                                .join(" | ")}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                          {listing.notes ? (
+                            <p className="line-clamp-2 min-w-0 flex-1 text-[11px] leading-relaxed text-neutral-500">
+                              {listing.notes}
+                            </p>
+                          ) : (
+                            <span className="text-[11px] text-neutral-400">
+                              Source-backed listing evidence
+                            </span>
+                          )}
+                          <a
+                            href={listing.url}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex shrink-0 items-center gap-1 text-[10px] font-medium text-indigo-600 hover:underline"
+                          >
+                            {hostForUrl(listing.url)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
+                    No Amazon, marketplace, D2C, or retailer listing prices have
+                    been collected yet. Refresh the URL analysis to run the
+                    deeper listing search.
                   </p>
                 )}
               </section>
