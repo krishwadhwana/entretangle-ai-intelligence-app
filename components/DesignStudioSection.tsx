@@ -434,7 +434,7 @@ export default function DesignStudioSection({
     if (!projectId) return;
     const res = await fetch(`/api/projects/${projectId}/design/tokens`);
     if (res.ok) {
-      const { designStudio } = (await res.json()) as {
+      const { designStudio } = (await readJsonResponse(res)) as {
         designStudio: DesignStudioState | null;
       };
       setStudio(designStudio);
@@ -458,7 +458,7 @@ export default function DesignStudioSection({
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
         const res = await fetch(`/api/jobs/${jobId}`);
-        const data = (await res.json().catch(() => ({}))) as {
+        const data = (await readJsonResponse(res)) as {
           job?: JobStatus;
           error?: unknown;
         };

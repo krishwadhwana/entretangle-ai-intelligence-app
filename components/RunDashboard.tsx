@@ -823,7 +823,7 @@ export default function RunDashboard({
       try {
         const res = await fetch(`/api/projects/${projectId}/owner-dashboard`);
         if (!res.ok) return;
-        const data = (await res.json()) as {
+        const data = (await res.json().catch(() => ({}))) as {
           ownerDashboard?: { usage?: UsageLedger | null } | null;
         };
         if (!cancelled) setProjectUsage(data.ownerDashboard?.usage ?? null);

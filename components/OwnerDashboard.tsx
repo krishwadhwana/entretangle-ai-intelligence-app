@@ -91,7 +91,7 @@ export default function OwnerDashboard({
           `/api/projects/${projectId}/owner-dashboard?runId=${encodeURIComponent(runId)}`
         );
         if (res.ok) {
-          const { ownerDashboard } = (await res.json()) as {
+          const { ownerDashboard } = (await res.json().catch(() => ({}))) as {
             ownerDashboard: OwnerDashboardRunSlice | null;
           };
           if (!cancelled) {
