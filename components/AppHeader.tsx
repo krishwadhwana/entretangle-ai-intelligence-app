@@ -28,7 +28,6 @@ export function ProjectSelector({
 
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [open, setOpen] = useState(false);
-  const [busy, setBusy] = useState(false);
   const [localSelectedId, setLocalSelectedId] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -91,31 +90,12 @@ export function ProjectSelector({
     projects.find((p) => p.id === localSelectedId) ??
     projects.find((p) => p.id === selectedParam);
 
-  async function createProject() {
-    if (busy) return;
-    setBusy(true);
-    try {
-      const name = window.prompt("Name the new project:", "Untitled venture");
-      if (name === null) return;
-      const res = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() || "Untitled venture" }),
-      });
-      if (!res.ok) return;
-      const { project } = await res.json();
-      setOpen(false);
-      if (pathname === "/") {
-        setLocalSelectedId(project.id);
-        window.dispatchEvent(
-          new CustomEvent("et:project-created", { detail: { project } }),
-        );
-        void refresh();
-      } else {
-        router.push(`/?project=${project.id}`);
-      }
-    } finally {
-      setBusy(false);
+  function openCreateProjectModal() {
+    setOpen(false);
+    if (pathname === "/") {
+      window.dispatchEvent(new CustomEvent("et:open-create-project"));
+    } else {
+      router.push("/?newProject=1");
     }
   }
 
@@ -221,7 +201,7 @@ export function ProjectSelector({
           </div>
           <div className="mt-1 border-t border-neutral-100 pt-1">
             <button
-              onClick={() => void createProject()}
+              onClick={openCreateProjectModal}
               className="flex w-full items-center gap-1.5 px-3 py-2 text-left text-xs font-medium text-indigo-600 hover:bg-indigo-50"
             >
               <Plus className="h-3.5 w-3.5" /> New project
@@ -236,34 +216,16 @@ export function ProjectSelector({
 export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
-  const [creating, setCreating] = useState(false);
 
   if (pathname.startsWith("/runs/")) {
     return null;
   }
 
-  async function createProject() {
-    if (creating) return;
-    setCreating(true);
-    try {
-      const name = window.prompt("Name the new project:", "Untitled venture");
-      if (name === null) return;
-      const res = await fetch("/api/projects", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: name.trim() || "Untitled venture" }),
-      });
-      if (!res.ok) return;
-      const { project } = await res.json();
-      if (pathname === "/") {
-        window.dispatchEvent(
-          new CustomEvent("et:project-created", { detail: { project } }),
-        );
-      } else {
-        router.push(`/?project=${project.id}`);
-      }
-    } finally {
-      setCreating(false);
+  function openCreateProjectModal() {
+    if (pathname === "/") {
+      window.dispatchEvent(new CustomEvent("et:open-create-project"));
+    } else {
+      router.push("/?newProject=1");
     }
   }
 
@@ -275,9 +237,8 @@ export default function AppHeader() {
       <div className="flex items-center gap-2">
         <button
           type="button"
-          onClick={() => void createProject()}
-          disabled={creating}
-          className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          onClick={openCreateProjectModal}
+          className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-700"
         >
           <Plus className="h-3.5 w-3.5" />
           New

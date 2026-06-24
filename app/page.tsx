@@ -15,15 +15,19 @@ import {
   CornerDownLeft,
   CreditCard,
   Database,
+  ExternalLink,
   Factory,
   FileText,
   FolderOpen,
   Globe,
+  Grid2X2,
   ImageIcon,
   LayoutTemplate,
   Link2,
+  List,
   Loader2,
   Megaphone,
+  Newspaper,
   Palette,
   Pencil,
   Plus,
@@ -31,8 +35,10 @@ import {
   Printer,
   Share2,
   Ship,
+  ShoppingBag,
   Sparkles,
   Store,
+  Tags,
   Target,
   Trash2,
   Upload,
@@ -168,6 +174,26 @@ type ProjectSummary = {
   name: string;
   createdAt: string;
   updatedAt: string;
+};
+
+type DashboardViewMode = "grid" | "list";
+type DashboardSort =
+  | "updated-desc"
+  | "updated-asc"
+  | "name-asc"
+  | "name-desc"
+  | "runs-desc"
+  | "assets-desc";
+type DashboardStatusFilter = "all" | "setup" | "running" | "active" | "ready";
+type DashboardProjectStatus =
+  | "Loading"
+  | "Setup"
+  | "Running"
+  | "Active"
+  | "Ready"
+  | "Details";
+type DashboardProjectRow = ProjectData & {
+  hasPreview: boolean;
 };
 
 type DocSummary = {
@@ -555,6 +581,584 @@ function ProjectWorkspaceRail({
   );
 }
 
+function hostForUrl(url?: string | null): string {
+  if (!url) return "";
+  try {
+    const normalised = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+    return new URL(normalised).hostname.replace(/^www\./, "");
+  } catch {
+    return url;
+  }
+}
+
+function priceRangeText(
+  range: WebsiteAnalysis["infoCollected"]["priceRanges"][number],
+): string {
+  if (range.text?.trim()) return range.text.trim();
+  const currency = range.currency?.trim();
+  const money = (value: number) =>
+    [currency, value.toLocaleString()].filter(Boolean).join(" ");
+  if (typeof range.min === "number" && typeof range.max === "number") {
+    return `${money(range.min)} - ${money(range.max)}`;
+  }
+  if (typeof range.min === "number") return `from ${money(range.min)}`;
+  if (typeof range.max === "number") return `up to ${money(range.max)}`;
+  return "Price signal found";
+}
+
+function collectedInfoCount(
+  analysis: WebsiteAnalysis | null,
+  uploadedImages: ProductImageRef[],
+): number {
+  const info = analysis?.infoCollected;
+  return (
+    uploadedImages.length +
+    (analysis?.summary?.trim() ? 1 : 0) +
+    (analysis?.consumerOpinion?.trim() ? 1 : 0) +
+    (info?.productImages.length ?? 0) +
+    (info?.products.length ?? 0) +
+    (info?.priceRanges.length ?? 0) +
+    (info?.newsArticles.length ?? 0) +
+    (info?.socialProfiles.length ?? 0) +
+    (info?.marketplaceLinks.length ?? 0) +
+    (info?.facts.length ?? 0)
+  );
+}
+
+function InfoCollectedPanel({
+  analysis,
+  uploadedImages,
+  websiteUrl,
+  analyzing,
+  onWebsiteUrlChange,
+  onAnalyze,
+}: {
+  analysis: WebsiteAnalysis | null;
+  uploadedImages: ProductImageRef[];
+  websiteUrl: string;
+  analyzing: boolean;
+  onWebsiteUrlChange: (value: string) => void;
+  onAnalyze: () => void;
+}) {
+  const info = analysis?.infoCollected;
+  const webImages = info?.productImages ?? [];
+  const products = info?.products ?? [];
+  const priceRanges = info?.priceRanges ?? [];
+  const articles = info?.newsArticles ?? [];
+  const socialProfiles = info?.socialProfiles ?? [];
+  const marketplaceLinks = info?.marketplaceLinks ?? [];
+  const facts = info?.facts ?? [];
+  const openQuestions = info?.openQuestions ?? [];
+  const profileFacts = analysis
+    ? [
+        ["Product", analysis.draftProfile.product],
+        ["Category", analysis.draftProfile.category],
+        ["Price band", analysis.draftProfile.priceBand],
+        ["Audience", analysis.draftProfile.targetAudience],
+        ["Geography", analysis.draftProfile.geography?.join(", ")],
+        ["Hero products", analysis.draftProfile.heroProducts?.join(", ")],
+        ["Style", analysis.draftProfile.styleKeywords?.join(", ")],
+        ["Differentiation", analysis.draftProfile.differentiation],
+        ["Experience", analysis.draftProfile.experience],
+      ].filter((item): item is [string, string] =>
+        Boolean(item[1]?.trim()),
+      )
+    : [];
+  const imageCards = [
+    ...uploadedImages.map((image) => ({
+      id: `uploaded-${image.id}`,
+      url: image.url,
+      title: image.name,
+      detail: image.visualSummary || "Uploaded product reference.",
+      sourceUrl: null as string | null,
+      sourceLabel: "Uploaded",
+    })),
+    ...webImages.map((image, index) => ({
+      id: `web-${index}-${image.url}`,
+      url: image.url,
+      title: image.caption || image.alt || `${image.kind} image`,
+      detail: image.alt || image.caption || "Found during website analysis.",
+      sourceUrl: image.sourceUrl ?? image.url,
+      sourceLabel: hostForUrl(image.sourceUrl ?? image.url),
+    })),
+  ];
+  const collectedCount = collectedInfoCount(analysis, uploadedImages);
+  const sourceUrls = Array.from(
+    new Set([
+      ...(analysis?.sources ?? []),
+      ...facts.map((fact) => fact.sourceUrl).filter(Boolean),
+      ...priceRanges.map((range) => range.sourceUrl).filter(Boolean),
+    ] as string[]),
+  );
+
+  return (
+    <section className="space-y-4">
+      <div className="rounded-lg border border-neutral-200 bg-white p-4">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Info collected
+            </p>
+            <h3 className="mt-1 text-lg font-semibold text-neutral-950">
+              {info?.brandName || hostForUrl(analysis?.url) || "Brand intelligence"}
+            </h3>
+            <p className="mt-1 max-w-3xl text-sm leading-6 text-neutral-500">
+              {analysis?.summary ||
+                "Analyze a brand URL to collect product images, articles, pricing, social/store links, and source-backed facts in one place."}
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2 text-[11px]">
+            <span className="rounded-full bg-indigo-50 px-2.5 py-1 font-medium text-indigo-700">
+              {collectedCount} items
+            </span>
+            {analysis?.sentiment && (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 font-medium capitalize text-neutral-600">
+                {analysis.sentiment}
+              </span>
+            )}
+            {analysis?.analyzedAt && (
+              <span className="rounded-full bg-neutral-100 px-2.5 py-1 font-medium text-neutral-500">
+                {new Date(analysis.analyzedAt).toLocaleDateString()}
+              </span>
+            )}
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={websiteUrl}
+            onChange={(event) => onWebsiteUrlChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onAnalyze();
+              }
+            }}
+            placeholder="yourbrand.com"
+            disabled={analyzing}
+            className="min-w-0 flex-1 rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 disabled:opacity-60"
+          />
+          <button
+            type="button"
+            onClick={onAnalyze}
+            disabled={analyzing || !websiteUrl.trim()}
+            className="flex items-center justify-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-sm font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+          >
+            {analyzing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            {analysis ? "Refresh info" : "Analyze URL"}
+          </button>
+        </div>
+      </div>
+
+      {analysis ? (
+        <>
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+            <div className="rounded-lg border border-neutral-200 bg-white p-4">
+              <h4 className="text-sm font-semibold text-neutral-900">
+                What the URL revealed
+              </h4>
+              {profileFacts.length > 0 ? (
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {profileFacts.map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded-md border border-neutral-100 bg-neutral-50 px-3 py-2"
+                    >
+                      <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                        {label}
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-neutral-700">
+                        {value}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="mt-2 text-sm text-neutral-500">
+                  No confident profile fields were extracted yet.
+                </p>
+              )}
+            </div>
+
+            <div className="rounded-lg border border-neutral-200 bg-white p-4">
+              <h4 className="text-sm font-semibold text-neutral-900">
+                Customer opinion
+              </h4>
+              <p className="mt-2 text-sm leading-6 text-neutral-600">
+                {analysis.consumerOpinion ||
+                  "No brand-specific customer opinion was found."}
+              </p>
+              {analysis.knownFields.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {analysis.knownFields.map((field) => (
+                    <span
+                      key={field}
+                      className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700"
+                    >
+                      {field}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-4">
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                    <ImageIcon className="h-4 w-4 text-neutral-400" />
+                    Product images
+                  </h4>
+                  <span className="text-[11px] text-neutral-400">
+                    {imageCards.length}
+                  </span>
+                </div>
+                {imageCards.length > 0 ? (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {imageCards.map((image) => (
+                      <article
+                        key={image.id}
+                        className="overflow-hidden rounded-lg border border-neutral-200 bg-white"
+                      >
+                        <div className="aspect-[4/3] bg-neutral-100">
+                          <img
+                            src={image.url}
+                            alt={image.title}
+                            loading="lazy"
+                            className="h-full w-full object-cover"
+                          />
+                        </div>
+                        <div className="min-h-24 p-3">
+                          <p className="line-clamp-1 text-xs font-semibold text-neutral-800">
+                            {image.title}
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-neutral-500">
+                            {image.detail}
+                          </p>
+                          {image.sourceUrl ? (
+                            <a
+                              href={image.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-2 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 hover:underline"
+                            >
+                              {image.sourceLabel || "Source"}
+                              <ExternalLink className="h-3 w-3" />
+                            </a>
+                          ) : (
+                            <p className="mt-2 text-[10px] font-medium text-neutral-400">
+                              {image.sourceLabel}
+                            </p>
+                          )}
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
+                    No product images were found yet. Refresh the URL analysis
+                    or upload references from Overview.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                    <ShoppingBag className="h-4 w-4 text-neutral-400" />
+                    Products found
+                  </h4>
+                  <span className="text-[11px] text-neutral-400">
+                    {products.length}
+                  </span>
+                </div>
+                {products.length > 0 ? (
+                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                    {products.map((product, index) => (
+                      <article
+                        key={`${product.name}-${index}`}
+                        className="flex gap-3 rounded-lg border border-neutral-200 p-3"
+                      >
+                        {product.imageUrl ? (
+                          <img
+                            src={product.imageUrl}
+                            alt={product.name}
+                            loading="lazy"
+                            className="h-16 w-16 shrink-0 rounded-md object-cover"
+                          />
+                        ) : (
+                          <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-md bg-neutral-100 text-neutral-400">
+                            <ShoppingBag className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-sm font-semibold text-neutral-900">
+                            {product.name}
+                          </p>
+                          <p className="mt-1 line-clamp-2 text-xs leading-relaxed text-neutral-500">
+                            {product.description ||
+                              product.category ||
+                              "Product discovered from brand sources."}
+                          </p>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {product.priceText && (
+                              <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600">
+                                {product.priceText}
+                              </span>
+                            )}
+                            {product.url && (
+                              <a
+                                href={product.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 hover:underline"
+                              >
+                                {hostForUrl(product.url)}
+                                <ExternalLink className="h-3 w-3" />
+                              </a>
+                            )}
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
+                    No individual products or SKUs were identified.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                    <Newspaper className="h-4 w-4 text-neutral-400" />
+                    News and articles
+                  </h4>
+                  <span className="text-[11px] text-neutral-400">
+                    {articles.length}
+                  </span>
+                </div>
+                {articles.length > 0 ? (
+                  <div className="mt-3 divide-y divide-neutral-100 rounded-lg border border-neutral-200">
+                    {articles.map((article, index) => (
+                      <a
+                        key={`${article.url}-${index}`}
+                        href={article.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="block px-3 py-3 hover:bg-neutral-50"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="line-clamp-2 text-sm font-semibold text-neutral-900">
+                              {article.title}
+                            </p>
+                            <p className="mt-1 text-[11px] text-neutral-400">
+                              {[article.source || hostForUrl(article.url), article.publishedAt]
+                                .filter(Boolean)
+                                .join(" | ")}
+                            </p>
+                          </div>
+                          <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-neutral-300" />
+                        </div>
+                        {article.summary && (
+                          <p className="mt-2 line-clamp-2 text-xs leading-relaxed text-neutral-500">
+                            {article.summary}
+                          </p>
+                        )}
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-neutral-300 bg-neutral-50 p-4 text-sm text-neutral-500">
+                    No product or brand articles were found.
+                  </p>
+                )}
+              </section>
+            </div>
+
+            <aside className="space-y-4">
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                  <BadgeDollarSign className="h-4 w-4 text-neutral-400" />
+                  Price ranges
+                </h4>
+                {priceRanges.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {priceRanges.map((range, index) => (
+                      <div
+                        key={`${range.label}-${index}`}
+                        className="rounded-lg border border-neutral-200 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs font-semibold text-neutral-900">
+                              {range.label}
+                            </p>
+                            <p className="mt-1 text-sm font-semibold text-neutral-700">
+                              {priceRangeText(range)}
+                            </p>
+                          </div>
+                          {range.sourceUrl && (
+                            <a
+                              href={range.sourceUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="shrink-0 text-neutral-300 hover:text-indigo-600"
+                              title={hostForUrl(range.sourceUrl)}
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          )}
+                        </div>
+                        {range.notes && (
+                          <p className="mt-2 text-[11px] leading-relaxed text-neutral-500">
+                            {range.notes}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm leading-6 text-neutral-500">
+                    No source-backed price range found yet.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                  <Link2 className="h-4 w-4 text-neutral-400" />
+                  Social and stores
+                </h4>
+                {[...socialProfiles, ...marketplaceLinks].length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {[...socialProfiles, ...marketplaceLinks].map((link, index) => (
+                      <a
+                        key={`${link.url}-${index}`}
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="flex items-center justify-between gap-3 rounded-lg border border-neutral-200 px-3 py-2 text-xs hover:border-indigo-300 hover:bg-indigo-50/40"
+                      >
+                        <span className="min-w-0">
+                          <span className="block truncate font-semibold text-neutral-800">
+                            {link.label}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                            {link.detail || hostForUrl(link.url)}
+                          </span>
+                        </span>
+                        <ExternalLink className="h-3.5 w-3.5 shrink-0 text-neutral-300" />
+                      </a>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm leading-6 text-neutral-500">
+                    No social or marketplace links collected yet.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
+                  <Tags className="h-4 w-4 text-neutral-400" />
+                  Facts
+                </h4>
+                {facts.length > 0 ? (
+                  <div className="mt-3 space-y-2">
+                    {facts.map((fact, index) => (
+                      <div
+                        key={`${fact.label}-${index}`}
+                        className="rounded-lg border border-neutral-200 px-3 py-2"
+                      >
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                          {fact.label}
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-neutral-700">
+                          {fact.value}
+                        </p>
+                        {fact.sourceUrl && (
+                          <a
+                            href={fact.sourceUrl}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="mt-1 inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 hover:underline"
+                          >
+                            {hostForUrl(fact.sourceUrl)}
+                            <ExternalLink className="h-3 w-3" />
+                          </a>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm leading-6 text-neutral-500">
+                    No extra source-backed facts collected yet.
+                  </p>
+                )}
+              </section>
+
+              {(openQuestions.length > 0 || sourceUrls.length > 0) && (
+                <section className="rounded-lg border border-neutral-200 bg-white p-4">
+                  {openQuestions.length > 0 && (
+                    <>
+                      <h4 className="text-sm font-semibold text-neutral-900">
+                        Gaps to verify
+                      </h4>
+                      <ul className="mt-2 space-y-1.5">
+                        {openQuestions.map((question, index) => (
+                          <li
+                            key={`${question}-${index}`}
+                            className="rounded-md bg-amber-50 px-2.5 py-2 text-xs leading-relaxed text-amber-800"
+                          >
+                            {question}
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                  {sourceUrls.length > 0 && (
+                    <div className={openQuestions.length > 0 ? "mt-4" : ""}>
+                      <h4 className="text-sm font-semibold text-neutral-900">
+                        Sources
+                      </h4>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        {sourceUrls.slice(0, 16).map((source) => (
+                          <a
+                            key={source}
+                            href={source}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-600 hover:bg-indigo-50 hover:text-indigo-700"
+                          >
+                            {hostForUrl(source)}
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </section>
+              )}
+            </aside>
+          </div>
+        </>
+      ) : (
+        <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-center text-sm text-neutral-500">
+          No URL analysis has been saved for this project yet.
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ModuleRegistryGrid({
   modules,
   savingId,
@@ -842,6 +1446,67 @@ function projectAssetTotal(project: ProjectData) {
   );
 }
 
+function projectCompletedRunCount(project: ProjectData) {
+  return project.simulationRuns.filter(
+    (run) => run.status === "complete" || run.status === "capped",
+  ).length;
+}
+
+function projectActiveRun(project: ProjectData) {
+  return [...project.simulationRuns]
+    .reverse()
+    .find(
+      (run) =>
+        run.status === "planning" ||
+        run.status === "running" ||
+        run.status === "cancelling",
+    );
+}
+
+function projectLatestRun(project: ProjectData) {
+  return [...project.simulationRuns].sort(
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime(),
+  )[0];
+}
+
+function dashboardProjectStatus(
+  project: ProjectData,
+  hasPreview = true,
+  loadingPreview = false,
+): DashboardProjectStatus {
+  if (!hasPreview) return loadingPreview ? "Loading" : "Details";
+  if (!project.interviewTranscript.done) return "Setup";
+  if (projectActiveRun(project)) return "Running";
+  if (projectCompletedRunCount(project) > 0) return "Active";
+  return "Ready";
+}
+
+function dashboardStatusTone(status: DashboardProjectStatus) {
+  if (status === "Running") return "bg-amber-50 text-amber-700";
+  if (status === "Active") return "bg-emerald-50 text-emerald-700";
+  if (status === "Ready") return "bg-indigo-50 text-indigo-700";
+  if (status === "Loading") return "bg-sky-50 text-sky-700";
+  if (status === "Details") return "bg-neutral-100 text-neutral-500";
+  return "bg-neutral-100 text-neutral-600";
+}
+
+function dashboardProjectSummary(
+  project: ProjectData,
+  hasPreview = true,
+  loadingPreview = false,
+) {
+  if (!hasPreview) {
+    return loadingPreview
+      ? "Loading project profile and run history."
+      : "Open workspace to load full project details.";
+  }
+  return (
+    project.ventureProfile?.product ??
+    project.interviewTranscript.brief ??
+    "No venture profile yet."
+  );
+}
+
 function readyModulesForProject(project: ProjectData) {
   return buildBusinessModules({
     profile: project.ventureProfile,
@@ -856,7 +1521,7 @@ function ProjectComparePanel({
   selectedIds,
   onOpen,
 }: {
-  projects: ProjectData[];
+  projects: DashboardProjectRow[];
   selectedIds: Set<string>;
   onOpen: (id: string) => void;
 }) {
@@ -892,9 +1557,14 @@ function ProjectComparePanel({
           </thead>
           <tbody className="divide-y divide-neutral-100 bg-white">
             {selected.map((project) => {
-              const completeRuns = project.simulationRuns.filter(
-                (run) => run.status === "complete" || run.status === "capped",
-              ).length;
+              const completeRuns = project.hasPreview
+                ? projectCompletedRunCount(project)
+                : null;
+              const status = dashboardProjectStatus(
+                project,
+                project.hasPreview,
+                false,
+              );
               return (
                 <tr key={project.id}>
                   <td className="max-w-[220px] px-3 py-3">
@@ -902,30 +1572,28 @@ function ProjectComparePanel({
                       {project.name}
                     </p>
                     <p className="mt-0.5 line-clamp-1 text-neutral-400">
-                      {project.ventureProfile?.product ??
-                        project.interviewTranscript.brief ??
-                        "No brief yet"}
+                      {dashboardProjectSummary(project, project.hasPreview)}
                     </p>
                   </td>
                   <td className="px-3 py-3">
                     <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                        project.interviewTranscript.done
-                          ? "bg-emerald-50 text-emerald-700"
-                          : "bg-amber-50 text-amber-700"
-                      }`}
+                      className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
+                        status,
+                      )}`}
                     >
-                      {project.interviewTranscript.done ? "Complete" : "Setup"}
+                      {status}
                     </span>
                   </td>
                   <td className="px-3 py-3 font-semibold text-neutral-800">
-                    {readyModulesForProject(project)}
+                    {project.hasPreview ? readyModulesForProject(project) : "-"}
                   </td>
                   <td className="px-3 py-3 text-neutral-600">
-                    {completeRuns} / {project.simulationRuns.length}
+                    {project.hasPreview
+                      ? `${completeRuns} / ${project.simulationRuns.length}`
+                      : "-"}
                   </td>
                   <td className="px-3 py-3 font-semibold text-neutral-800">
-                    {projectAssetTotal(project)}
+                    {project.hasPreview ? projectAssetTotal(project) : "-"}
                   </td>
                   <td className="px-3 py-3 text-neutral-500">
                     {new Date(project.updatedAt).toLocaleDateString()}
@@ -1837,6 +2505,7 @@ function IntakePageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const projectParam = searchParams.get("project");
+  const newProjectParam = searchParams.get("newProject");
 
   const [view, setView] = useState<"dashboard" | "project">(
     projectParam ? "project" : "dashboard",
@@ -1846,6 +2515,12 @@ function IntakePageInner() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectPreviews, setProjectPreviews] = useState<ProjectData[]>([]);
   const [projectQuery, setProjectQuery] = useState("");
+  const [dashboardViewMode, setDashboardViewMode] =
+    useState<DashboardViewMode>("grid");
+  const [dashboardSort, setDashboardSort] =
+    useState<DashboardSort>("updated-desc");
+  const [dashboardStatusFilter, setDashboardStatusFilter] =
+    useState<DashboardStatusFilter>("all");
   const [createOpen, setCreateOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
@@ -2177,6 +2852,17 @@ function IntakePageInner() {
     view,
   ]);
 
+  useEffect(() => {
+    function onOpenCreateProject() {
+      openCreateProjectModal();
+    }
+    window.addEventListener("et:open-create-project", onOpenCreateProject);
+    if (newProjectParam) openCreateProjectModal();
+    return () => {
+      window.removeEventListener("et:open-create-project", onOpenCreateProject);
+    };
+  }, [newProjectParam]);
+
   // Auto-save the transcript. Fire-and-forget on purpose: a failed save must
   // not block the conversation, and the next save carries the full state.
   const persistTranscript = useCallback(
@@ -2245,6 +2931,28 @@ function IntakePageInner() {
     setView("dashboard");
   }
 
+  function clearCreateProjectRequestFromUrl() {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("newProject")) return;
+    url.searchParams.delete("newProject");
+    window.history.replaceState(
+      null,
+      "",
+      `${url.pathname}${url.search}${url.hash}`,
+    );
+  }
+
+  function openCreateProjectModal() {
+    setError(null);
+    setCreateOpen(true);
+  }
+
+  function closeCreateProjectModal() {
+    setCreateOpen(false);
+    clearCreateProjectRequestFromUrl();
+  }
+
   async function createProjectFromDashboard(e?: React.FormEvent) {
     e?.preventDefault();
     if (creatingProject) return;
@@ -2267,6 +2975,7 @@ function IntakePageInner() {
       }
       setCreateOpen(false);
       setNewProjectName("");
+      clearCreateProjectRequestFromUrl();
       window.dispatchEvent(
         new CustomEvent("et:project-created", {
           detail: { project: data.project as ProjectData },
@@ -2875,6 +3584,15 @@ function IntakePageInner() {
         );
       const analysis = data.analysis as WebsiteAnalysis;
       setWebsiteAnalysis(analysis);
+      setWebsiteUrl(analysis.url || url);
+      setProjectPreviews((prev) =>
+        prev.map((p) =>
+          p.id === projectId ? { ...p, websiteAnalysis: analysis } : p,
+        ),
+      );
+      setActiveWorkspaceSection("workspace-info");
+
+      if (done) return;
 
       const summaryMsg = [
         `Here's what I gathered from your site:`,
@@ -3373,6 +4091,7 @@ function IntakePageInner() {
       ].filter(Boolean)
     : [];
   const productImages = profile?.productImages ?? [];
+  const infoCollectedTotal = collectedInfoCount(websiteAnalysis, productImages);
   const activeProjectPreview = projectId
     ? projectPreviews.find((p) => p.id === projectId)
     : null;
@@ -3453,6 +4172,12 @@ function IntakePageInner() {
   ).length;
   const workspaceNavItems: WorkspaceNavItem[] = [
     { id: "workspace-overview", label: "Overview", icon: LayoutTemplate },
+    {
+      id: "workspace-info",
+      label: "Info collected",
+      icon: ClipboardList,
+      count: infoCollectedTotal,
+    },
     {
       id: "workspace-modules",
       label: "Modules",
@@ -3538,9 +4263,9 @@ function IntakePageInner() {
   }
 
   const previewByProject = new Map(projectPreviews.map((p) => [p.id, p]));
-  const dashboardSourceProjects = projects.map<ProjectData>((p) => {
+  const dashboardSourceProjects = projects.map<DashboardProjectRow>((p) => {
     const preview = previewByProject.get(p.id);
-    if (preview) return preview;
+    if (preview) return { ...preview, hasPreview: true };
     return {
       id: p.id,
       name: p.name,
@@ -3554,31 +4279,54 @@ function IntakePageInner() {
       },
       ventureProfile: null,
       simulationRuns: [],
+      hasPreview: false,
     };
   });
-  const dashboardProjects = dashboardSourceProjects.filter((p) => {
-    const q = projectQuery.trim().toLowerCase();
-    if (!q) return true;
-    return [
-      p.name,
-      p.ventureProfile?.product,
-      p.ventureProfile?.category,
-      p.ventureProfile?.targetAudience,
-      p.interviewTranscript.brief,
-    ]
-      .filter(Boolean)
-      .some((value) => String(value).toLowerCase().includes(q));
-  });
+  const dashboardDetailsReady =
+    projects.length === 0 || projectPreviews.length >= projects.length;
+  const dashboardProjects = dashboardSourceProjects
+    .filter((p) => {
+      const q = projectQuery.trim().toLowerCase();
+      const status = dashboardProjectStatus(p, p.hasPreview, loadingPreviews);
+      const statusMatch =
+        dashboardStatusFilter === "all" ||
+        (p.hasPreview && status.toLowerCase() === dashboardStatusFilter);
+      if (!statusMatch) return false;
+      if (!q) return true;
+      return [
+        p.name,
+        p.hasPreview ? p.ventureProfile?.product : null,
+        p.hasPreview ? p.ventureProfile?.category : null,
+        p.hasPreview ? p.ventureProfile?.targetAudience : null,
+        p.hasPreview ? p.interviewTranscript.brief : null,
+      ]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(q));
+    })
+    .sort((a, b) => {
+      const updatedA = new Date(a.updatedAt).getTime();
+      const updatedB = new Date(b.updatedAt).getTime();
+      if (dashboardSort === "updated-asc") return updatedA - updatedB;
+      if (dashboardSort === "name-asc") return a.name.localeCompare(b.name);
+      if (dashboardSort === "name-desc") return b.name.localeCompare(a.name);
+      if (dashboardSort === "runs-desc") {
+        const runsA = a.hasPreview ? a.simulationRuns.length : -1;
+        const runsB = b.hasPreview ? b.simulationRuns.length : -1;
+        return runsB - runsA || updatedB - updatedA;
+      }
+      if (dashboardSort === "assets-desc") {
+        const assetsA = a.hasPreview ? projectAssetTotal(a) : -1;
+        const assetsB = b.hasPreview ? projectAssetTotal(b) : -1;
+        return assetsB - assetsA || updatedB - updatedA;
+      }
+      return updatedB - updatedA;
+    });
   const totalRuns = projectPreviews.reduce(
     (sum, p) => sum + p.simulationRuns.length,
     0,
   );
   const completeRunCount = projectPreviews.reduce(
-    (sum, p) =>
-      sum +
-      p.simulationRuns.filter(
-        (r) => r.status === "complete" || r.status === "capped",
-      ).length,
+    (sum, p) => sum + projectCompletedRunCount(p),
     0,
   );
   const setupCompleteCount = projectPreviews.filter(
@@ -3590,6 +4338,61 @@ function IntakePageInner() {
         new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
     )
     .slice(0, 5);
+  const createProjectDialog = createOpen ? (
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
+      <form
+        onSubmit={(e) => void createProjectFromDashboard(e)}
+        className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              New project
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-neutral-950">
+              Name this venture
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={closeCreateProjectModal}
+            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <input
+          value={newProjectName}
+          onChange={(e) => setNewProjectName(e.target.value)}
+          placeholder="Untitled venture"
+          autoFocus
+          className="mt-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+        />
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={closeCreateProjectModal}
+            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={creatingProject}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {creatingProject ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="h-3.5 w-3.5" />
+            )}
+            Create and open
+          </button>
+        </div>
+      </form>
+    </div>
+  ) : null;
 
   if (view === "dashboard" || !projectId) {
     return (
@@ -3611,7 +4414,7 @@ function IntakePageInner() {
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
-                onClick={() => setCreateOpen(true)}
+                onClick={openCreateProjectModal}
                 className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700"
               >
                 <Plus className="h-4 w-4" />
@@ -3639,20 +4442,24 @@ function IntakePageInner() {
                 Profiles complete
               </p>
               <p className="mt-2 text-2xl font-semibold">
-                {setupCompleteCount}
+                {dashboardDetailsReady ? setupCompleteCount : "-"}
               </p>
             </div>
             <div className="rounded-lg border border-neutral-200 bg-white p-4">
               <p className="text-xs font-medium text-neutral-500">
                 Simulation runs
               </p>
-              <p className="mt-2 text-2xl font-semibold">{totalRuns}</p>
+              <p className="mt-2 text-2xl font-semibold">
+                {dashboardDetailsReady ? totalRuns : "-"}
+              </p>
             </div>
             <div className="rounded-lg border border-neutral-200 bg-white p-4">
               <p className="text-xs font-medium text-neutral-500">
                 Completed runs
               </p>
-              <p className="mt-2 text-2xl font-semibold">{completeRunCount}</p>
+              <p className="mt-2 text-2xl font-semibold">
+                {dashboardDetailsReady ? completeRunCount : "-"}
+              </p>
             </div>
           </section>
 
@@ -3672,163 +4479,332 @@ function IntakePageInner() {
 
           <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
             <section className="min-w-0 space-y-3">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold">Projects</h2>
-                  <p className="mt-1 text-xs text-neutral-500">
-                    Open a workspace, rename it, delete it, or mark it for a
-                    future comparison.
-                  </p>
-                  {loadingPreviews ? (
-                    <p className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      Hydrating run details
+              <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+                  <div>
+                    <h2 className="text-sm font-semibold">Projects</h2>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Open a workspace, rename it, delete it, or mark it for a
+                      future comparison.
                     </p>
-                  ) : null}
+                    {loadingPreviews ? (
+                      <p className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Hydrating project details
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-col gap-2 lg:flex-row lg:items-center">
+                    <div className="inline-flex w-fit rounded-lg border border-neutral-200 bg-neutral-50 p-1">
+                      <button
+                        type="button"
+                        onClick={() => setDashboardViewMode("grid")}
+                        title="Grid view"
+                        aria-pressed={dashboardViewMode === "grid"}
+                        className={`flex h-8 w-8 items-center justify-center rounded-md ${
+                          dashboardViewMode === "grid"
+                            ? "bg-white text-neutral-900 shadow-sm"
+                            : "text-neutral-400 hover:text-neutral-700"
+                        }`}
+                      >
+                        <Grid2X2 className="h-4 w-4" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setDashboardViewMode("list")}
+                        title="List view"
+                        aria-pressed={dashboardViewMode === "list"}
+                        className={`flex h-8 w-8 items-center justify-center rounded-md ${
+                          dashboardViewMode === "list"
+                            ? "bg-white text-neutral-900 shadow-sm"
+                            : "text-neutral-400 hover:text-neutral-700"
+                        }`}
+                      >
+                        <List className="h-4 w-4" />
+                      </button>
+                    </div>
+                    <input
+                      value={projectQuery}
+                      onChange={(e) => setProjectQuery(e.target.value)}
+                      placeholder="Search projects"
+                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 lg:w-56"
+                    />
+                    <select
+                      value={dashboardSort}
+                      onChange={(e) =>
+                        setDashboardSort(e.target.value as DashboardSort)
+                      }
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-indigo-500"
+                    >
+                      <option value="updated-desc">Newest updated</option>
+                      <option value="updated-asc">Oldest updated</option>
+                      <option value="name-asc">Name A-Z</option>
+                      <option value="name-desc">Name Z-A</option>
+                      <option value="runs-desc">Most runs</option>
+                      <option value="assets-desc">Most assets</option>
+                    </select>
+                    <select
+                      value={dashboardStatusFilter}
+                      onChange={(e) =>
+                        setDashboardStatusFilter(
+                          e.target.value as DashboardStatusFilter,
+                        )
+                      }
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-indigo-500"
+                    >
+                      <option value="all">All statuses</option>
+                      <option value="setup">Setup</option>
+                      <option value="running">Running</option>
+                      <option value="active">Active</option>
+                      <option value="ready">Ready</option>
+                    </select>
+                  </div>
                 </div>
-                <input
-                  value={projectQuery}
-                  onChange={(e) => setProjectQuery(e.target.value)}
-                  placeholder="Search projects"
-                  className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 sm:w-64"
-                />
               </div>
 
               {dashboardProjects.length > 0 ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  {dashboardProjects.map((p) => {
-                    const runs = p.simulationRuns;
-                    const completed = runs.filter(
-                      (r) => r.status === "complete" || r.status === "capped",
-                    ).length;
-                    const activeRun = [...runs]
-                      .reverse()
-                      .find(
-                        (r) =>
-                          r.status === "planning" ||
-                          r.status === "running" ||
-                          r.status === "cancelling",
+                dashboardViewMode === "list" ? (
+                  <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
+                    <div className="max-h-[620px] overflow-auto">
+                      <table className="min-w-[860px] w-full divide-y divide-neutral-200 text-left text-xs">
+                        <thead className="sticky top-0 z-10 bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-400">
+                          <tr>
+                            <th className="w-12 px-3 py-2 font-semibold">
+                              Compare
+                            </th>
+                            <th className="px-3 py-2 font-semibold">
+                              Project
+                            </th>
+                            <th className="px-3 py-2 font-semibold">
+                              Status
+                            </th>
+                            <th className="px-3 py-2 font-semibold">Runs</th>
+                            <th className="px-3 py-2 font-semibold">
+                              Assets
+                            </th>
+                            <th className="px-3 py-2 font-semibold">
+                              Updated
+                            </th>
+                            <th className="px-3 py-2 font-semibold"></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-neutral-100">
+                          {dashboardProjects.map((p) => {
+                            const status = dashboardProjectStatus(
+                              p,
+                              p.hasPreview,
+                              loadingPreviews,
+                            );
+                            const latest = p.hasPreview
+                              ? projectLatestRun(p)
+                              : null;
+                            return (
+                              <tr key={p.id} className="hover:bg-neutral-50">
+                                <td className="px-3 py-3">
+                                  <input
+                                    type="checkbox"
+                                    checked={compareIds.has(p.id)}
+                                    onChange={() => toggleCompareProject(p.id)}
+                                    title="Select for comparison"
+                                    className="h-4 w-4 rounded accent-indigo-600"
+                                  />
+                                </td>
+                                <td className="max-w-[320px] px-3 py-3">
+                                  <button
+                                    type="button"
+                                    onClick={() => switchProject(p.id)}
+                                    className="block max-w-full text-left"
+                                  >
+                                    <span className="block truncate font-semibold text-neutral-950">
+                                      {p.name}
+                                    </span>
+                                    <span className="mt-0.5 block truncate text-neutral-400">
+                                      {dashboardProjectSummary(
+                                        p,
+                                        p.hasPreview,
+                                        loadingPreviews,
+                                      )}
+                                    </span>
+                                  </button>
+                                </td>
+                                <td className="px-3 py-3">
+                                  <span
+                                    className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
+                                      status,
+                                    )}`}
+                                  >
+                                    {status}
+                                  </span>
+                                </td>
+                                <td className="px-3 py-3 text-neutral-600">
+                                  {p.hasPreview
+                                    ? `${projectCompletedRunCount(p)} / ${
+                                        p.simulationRuns.length
+                                      }`
+                                    : "-"}
+                                  {latest ? (
+                                    <span className="mt-0.5 block max-w-[220px] truncate text-[11px] text-neutral-400">
+                                      {simulationRunTitle(latest)}
+                                    </span>
+                                  ) : null}
+                                </td>
+                                <td className="px-3 py-3 font-semibold text-neutral-800">
+                                  {p.hasPreview ? projectAssetTotal(p) : "-"}
+                                </td>
+                                <td className="px-3 py-3 text-neutral-500">
+                                  {new Date(p.updatedAt).toLocaleDateString()}
+                                </td>
+                                <td className="px-3 py-3">
+                                  <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => switchProject(p.id)}
+                                      title="Open workspace"
+                                      className="rounded-md p-1.5 text-neutral-400 hover:bg-indigo-50 hover:text-indigo-600"
+                                    >
+                                      <ArrowRight className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => promptRenameProject(p)}
+                                      title="Rename project"
+                                      className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
+                                    >
+                                      <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => deleteProject(p.id)}
+                                      title="Delete project"
+                                      className="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="grid gap-3 lg:grid-cols-2">
+                    {dashboardProjects.map((p) => {
+                      const completed = p.hasPreview
+                        ? projectCompletedRunCount(p)
+                        : null;
+                      const latest = p.hasPreview ? projectLatestRun(p) : null;
+                      const status = dashboardProjectStatus(
+                        p,
+                        p.hasPreview,
+                        loadingPreviews,
                       );
-                    const latest = [...runs].sort(
-                      (a, b) =>
-                        new Date(b.timestamp).getTime() -
-                        new Date(a.timestamp).getTime(),
-                    )[0];
-                    const status = !p.interviewTranscript.done
-                      ? "Setup"
-                      : activeRun
-                        ? "Running"
-                        : completed > 0
-                          ? "Active"
-                          : "Ready";
-                    const statusTone =
-                      status === "Running"
-                        ? "bg-amber-50 text-amber-700"
-                        : status === "Active"
-                          ? "bg-emerald-50 text-emerald-700"
-                          : status === "Ready"
-                            ? "bg-indigo-50 text-indigo-700"
-                            : "bg-neutral-100 text-neutral-600";
-                    const summary =
-                      p.ventureProfile?.product ??
-                      p.interviewTranscript.brief ??
-                      "No venture profile yet.";
-                    return (
-                      <article
-                        key={p.id}
-                        className="rounded-lg border border-neutral-200 bg-white p-4 transition hover:border-indigo-300 hover:shadow-sm"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <span
-                              className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${statusTone}`}
+                      const summary = dashboardProjectSummary(
+                        p,
+                        p.hasPreview,
+                        loadingPreviews,
+                      );
+                      return (
+                        <article
+                          key={p.id}
+                          className="rounded-lg border border-neutral-200 bg-white p-4 transition hover:border-indigo-300 hover:shadow-sm"
+                        >
+                          <div className="flex items-start justify-between gap-3">
+                            <div className="min-w-0">
+                              <span
+                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
+                                  status,
+                                )}`}
+                              >
+                                {status}
+                              </span>
+                              <h3 className="mt-2 truncate text-base font-semibold text-neutral-950">
+                                {p.name}
+                              </h3>
+                              <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-neutral-500">
+                                {summary}
+                              </p>
+                            </div>
+                            <label
+                              className="flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[11px] font-medium text-neutral-500"
+                              title="Select for future project comparison"
                             >
-                              {status}
-                            </span>
-                            <h3 className="mt-2 truncate text-base font-semibold text-neutral-950">
-                              {p.name}
-                            </h3>
-                            <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-neutral-500">
-                              {summary}
-                            </p>
+                              <input
+                                type="checkbox"
+                                checked={compareIds.has(p.id)}
+                                onChange={() => toggleCompareProject(p.id)}
+                                className="h-3.5 w-3.5 accent-indigo-600"
+                              />
+                              Compare
+                            </label>
                           </div>
-                          <label
-                            className="flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[11px] font-medium text-neutral-500"
-                            title="Select for future project comparison"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={compareIds.has(p.id)}
-                              onChange={() => toggleCompareProject(p.id)}
-                              className="h-3.5 w-3.5 accent-indigo-600"
-                            />
-                            Compare
-                          </label>
-                        </div>
 
-                        <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                          <div className="rounded-md bg-neutral-50 px-2 py-2">
-                            <p className="text-neutral-400">Runs</p>
-                            <p className="mt-1 font-semibold text-neutral-800">
-                              {runs.length}
-                            </p>
+                          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+                            <div className="rounded-md bg-neutral-50 px-2 py-2">
+                              <p className="text-neutral-400">Runs</p>
+                              <p className="mt-1 font-semibold text-neutral-800">
+                                {p.hasPreview ? p.simulationRuns.length : "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-md bg-neutral-50 px-2 py-2">
+                              <p className="text-neutral-400">Complete</p>
+                              <p className="mt-1 font-semibold text-neutral-800">
+                                {p.hasPreview ? completed : "-"}
+                              </p>
+                            </div>
+                            <div className="rounded-md bg-neutral-50 px-2 py-2">
+                              <p className="text-neutral-400">Updated</p>
+                              <p className="mt-1 truncate font-semibold text-neutral-800">
+                                {new Date(p.updatedAt).toLocaleDateString()}
+                              </p>
+                            </div>
                           </div>
-                          <div className="rounded-md bg-neutral-50 px-2 py-2">
-                            <p className="text-neutral-400">Complete</p>
-                            <p className="mt-1 font-semibold text-neutral-800">
-                              {completed}
-                            </p>
-                          </div>
-                          <div className="rounded-md bg-neutral-50 px-2 py-2">
-                            <p className="text-neutral-400">Updated</p>
-                            <p className="mt-1 truncate font-semibold text-neutral-800">
-                              {new Date(p.updatedAt).toLocaleDateString()}
-                            </p>
-                          </div>
-                        </div>
 
-                        {latest ? (
                           <p className="mt-3 truncate text-[11px] text-neutral-400">
-                            Latest: {simulationRunTitle(latest)}
+                            {p.hasPreview
+                              ? latest
+                                ? `Latest: ${simulationRunTitle(latest)}`
+                                : "No simulations yet."
+                              : loadingPreviews
+                                ? "Loading run history..."
+                                : "Open workspace to load details."}
                           </p>
-                        ) : (
-                          <p className="mt-3 text-[11px] text-neutral-400">
-                            No simulations yet.
-                          </p>
-                        )}
 
-                        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
-                          <button
-                            type="button"
-                            onClick={() => switchProject(p.id)}
-                            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500"
-                          >
-                            Open workspace
-                            <ArrowRight className="h-3.5 w-3.5" />
-                          </button>
-                          <div className="flex items-center gap-1">
+                          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
                             <button
                               type="button"
-                              onClick={() => promptRenameProject(p)}
-                              title="Rename project"
-                              className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
+                              onClick={() => switchProject(p.id)}
+                              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500"
                             >
-                              <Pencil className="h-3.5 w-3.5" />
+                              Open workspace
+                              <ArrowRight className="h-3.5 w-3.5" />
                             </button>
-                            <button
-                              type="button"
-                              onClick={() => deleteProject(p.id)}
-                              title="Delete project"
-                              className="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => promptRenameProject(p)}
+                                title="Rename project"
+                                className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
+                              >
+                                <Pencil className="h-3.5 w-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => deleteProject(p.id)}
+                                title="Delete project"
+                                className="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
-                        </div>
-                      </article>
-                    );
-                  })}
-                </div>
+                        </article>
+                      );
+                    })}
+                  </div>
+                )
               ) : (
                 <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-8 text-center">
                   <FolderOpen className="mx-auto h-8 w-8 text-neutral-300" />
@@ -3845,7 +4821,7 @@ function IntakePageInner() {
                   {projects.length === 0 ? (
                     <button
                       type="button"
-                      onClick={() => setCreateOpen(true)}
+                      onClick={openCreateProjectModal}
                       className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700"
                     >
                       <Plus className="h-4 w-4" />
@@ -3916,61 +4892,7 @@ function IntakePageInner() {
           </div>
         </section>
 
-        {createOpen ? (
-          <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
-            <form
-              onSubmit={(e) => void createProjectFromDashboard(e)}
-              className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                    New project
-                  </p>
-                  <h2 className="mt-1 text-lg font-semibold text-neutral-950">
-                    Name this venture
-                  </h2>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setCreateOpen(false)}
-                  className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-                  title="Close"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              </div>
-              <input
-                value={newProjectName}
-                onChange={(e) => setNewProjectName(e.target.value)}
-                placeholder="Untitled venture"
-                autoFocus
-                className="mt-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
-              />
-              <div className="mt-4 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setCreateOpen(false)}
-                  className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={creatingProject}
-                  className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
-                >
-                  {creatingProject ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : (
-                    <Plus className="h-3.5 w-3.5" />
-                  )}
-                  Create and open
-                </button>
-              </div>
-            </form>
-          </div>
-        ) : null}
+        {createProjectDialog}
       </main>
     );
   }
@@ -4036,6 +4958,24 @@ function IntakePageInner() {
                     </p>
                   </div>
                 </div>
+              </section>
+
+              <section
+                id="workspace-info"
+                className={
+                  activeWorkspaceSection === "workspace-info"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <InfoCollectedPanel
+                  analysis={websiteAnalysis}
+                  uploadedImages={productImages}
+                  websiteUrl={websiteUrl}
+                  analyzing={analyzing}
+                  onWebsiteUrlChange={setWebsiteUrl}
+                  onAnalyze={() => void analyzeWebsite()}
+                />
               </section>
 
               <div className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -4287,6 +5227,7 @@ function IntakePageInner() {
             </div>
           </div>
         </section>
+        {createProjectDialog}
       </main>
     );
   }
@@ -4381,6 +5322,23 @@ function IntakePageInner() {
                   </p>
                 </div>
               </div>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-info"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <InfoCollectedPanel
+                  analysis={websiteAnalysis}
+                  uploadedImages={productImages}
+                  websiteUrl={websiteUrl}
+                  analyzing={analyzing}
+                  onWebsiteUrlChange={setWebsiteUrl}
+                  onAnalyze={() => void analyzeWebsite()}
+                />
+              </section>
 
               <section
                 className={
@@ -5307,6 +6265,7 @@ function IntakePageInner() {
           </aside>
         </div>
       </section>
+      {createProjectDialog}
     </main>
   );
 }

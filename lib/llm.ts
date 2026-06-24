@@ -2020,6 +2020,58 @@ export async function callWebsiteAnalysis(
         "(mock) Customers like the fit and fabric; some flag pricing and delivery times.",
       sentiment: "mixed",
       summary: `(mock) Inferred a premium contemporary apparel brand from ${url}.`,
+      infoCollected: {
+        brandName: "Mock Apparel",
+        productImages: [
+          {
+            url: "https://images.unsplash.com/photo-1523398002811-999ca8dec234",
+            alt: "Mock apparel product photo",
+            caption: "Representative product imagery found on the brand site.",
+            sourceUrl: url,
+            kind: "product",
+          },
+        ],
+        products: [
+          {
+            name: "Signature shirt",
+            description: "Contemporary hero product used for mock analysis.",
+            category: "apparel",
+            url,
+            priceText: "$80-$120",
+          },
+        ],
+        priceRanges: [
+          {
+            label: "Core apparel",
+            currency: "USD",
+            min: 80,
+            max: 160,
+            text: "$80-$160",
+            sourceUrl: url,
+            notes: "Mock observed price range.",
+          },
+        ],
+        newsArticles: [
+          {
+            title: "Mock Apparel expands its contemporary basics line",
+            url,
+            source: "Mock Press",
+            summary: "Sample press item for local development.",
+          },
+        ],
+        socialProfiles: [
+          { label: "Instagram", url, detail: "@mockapparel" },
+        ],
+        marketplaceLinks: [],
+        facts: [
+          {
+            label: "Positioning",
+            value: "Premium contemporary apparel for urban customers.",
+            sourceUrl: url,
+          },
+        ],
+        openQuestions: ["Verify exact stockists and current best-selling SKUs."],
+      },
       sources: [url],
     });
   }

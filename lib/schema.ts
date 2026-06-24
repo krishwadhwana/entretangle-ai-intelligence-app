@@ -170,6 +170,84 @@ export const WebsiteDraftProfileSchema = z.object({
 });
 export type WebsiteDraftProfile = z.infer<typeof WebsiteDraftProfileSchema>;
 
+export const WebsiteCollectedImageSchema = z.object({
+  url: z.string(),
+  alt: z.string().optional(),
+  caption: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  kind: z
+    .enum(["product", "lifestyle", "logo", "storefront", "founder", "other"])
+    .default("product"),
+});
+export type WebsiteCollectedImage = z.infer<
+  typeof WebsiteCollectedImageSchema
+>;
+
+export const WebsiteCollectedArticleSchema = z.object({
+  title: z.string(),
+  url: z.string(),
+  source: z.string().optional(),
+  publishedAt: z.string().optional(),
+  summary: z.string().optional(),
+});
+export type WebsiteCollectedArticle = z.infer<
+  typeof WebsiteCollectedArticleSchema
+>;
+
+export const WebsiteCollectedPriceRangeSchema = z.object({
+  label: z.string().default("Price range"),
+  currency: z.string().optional(),
+  min: z.number().nullable().optional(),
+  max: z.number().nullable().optional(),
+  text: z.string().optional(),
+  sourceUrl: z.string().optional(),
+  notes: z.string().optional(),
+});
+export type WebsiteCollectedPriceRange = z.infer<
+  typeof WebsiteCollectedPriceRangeSchema
+>;
+
+export const WebsiteCollectedProductSchema = z.object({
+  name: z.string(),
+  description: z.string().optional(),
+  category: z.string().optional(),
+  url: z.string().optional(),
+  priceText: z.string().optional(),
+  imageUrl: z.string().optional(),
+});
+export type WebsiteCollectedProduct = z.infer<
+  typeof WebsiteCollectedProductSchema
+>;
+
+export const WebsiteCollectedLinkSchema = z.object({
+  label: z.string(),
+  url: z.string(),
+  detail: z.string().optional(),
+});
+export type WebsiteCollectedLink = z.infer<typeof WebsiteCollectedLinkSchema>;
+
+export const WebsiteCollectedFactSchema = z.object({
+  label: z.string(),
+  value: z.string(),
+  sourceUrl: z.string().optional(),
+});
+export type WebsiteCollectedFact = z.infer<typeof WebsiteCollectedFactSchema>;
+
+export const WebsiteCollectedInfoSchema = z
+  .object({
+    brandName: z.string().optional(),
+    productImages: z.array(WebsiteCollectedImageSchema).default([]),
+    products: z.array(WebsiteCollectedProductSchema).default([]),
+    priceRanges: z.array(WebsiteCollectedPriceRangeSchema).default([]),
+    newsArticles: z.array(WebsiteCollectedArticleSchema).default([]),
+    socialProfiles: z.array(WebsiteCollectedLinkSchema).default([]),
+    marketplaceLinks: z.array(WebsiteCollectedLinkSchema).default([]),
+    facts: z.array(WebsiteCollectedFactSchema).default([]),
+    openQuestions: z.array(z.string()).default([]),
+  })
+  .default({});
+export type WebsiteCollectedInfo = z.infer<typeof WebsiteCollectedInfoSchema>;
+
 export const WebsiteAnalysisOutputSchema = z.object({
   draftProfile: WebsiteDraftProfileSchema,
   // ClientProfile field names the analysis is confident about (intake skips them).
@@ -181,6 +259,9 @@ export const WebsiteAnalysisOutputSchema = z.object({
     .default("unknown"),
   // Founder-facing recap of everything inferred, to confirm/correct in one tap.
   summary: z.string().default(""),
+  // Categorised source material found during URL analysis, rendered in the
+  // workspace's Info collected tab.
+  infoCollected: WebsiteCollectedInfoSchema,
   sources: z.array(z.string()).default([]),
 });
 export type WebsiteAnalysisOutput = z.infer<typeof WebsiteAnalysisOutputSchema>;

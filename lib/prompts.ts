@@ -1094,6 +1094,7 @@ Use web search to:
 1. Read the founder's website at the given URL — what they sell, the category, price band, hero products, the style/aesthetic, who it's for, the geography it serves, and its differentiation.
 2. Find REAL online consumer opinion about this brand/product: reviews, ratings, social comments, marketplace feedback, press. Capture what customers actually praise and complain about, and what triggers a purchase. If you cannot find brand-specific opinion, fall back to category-level sentiment and SAY so.
 3. Infer the FOUNDERS' EXISTING SKILLS & BACKGROUND — read the About / Our Story / Team / founder-bio pages, plus press, LinkedIn or interviews if linked. Capture relevant experience: prior ventures, years in the category, design/manufacturing/retail/operating/technical background, whether this is a first venture or a family/heritage business. Write it as the "experience" field, in the same plain style the intake would record (e.g. "10+ years as a menswear designer; previously ran a boutique label"). If the site gives no founder/team signal at all, LEAVE experience empty — do not guess.
+4. Collect the raw brand intelligence a founder would expect to inspect later: product image URLs, product/SKU names, price ranges, press/news articles, social profiles, marketplace/store links, and notable factual signals. Prefer brand-specific source URLs. If you only find category-level evidence, put that limitation in openQuestions or notes instead of pretending it is brand-specific.
 
 Only fill draftProfile fields you are genuinely confident about from the evidence; leave the rest empty. List the confident fields in knownFields using EXACTLY these keys when known: product, category, priceBand, geography, targetAudience, styleKeywords, heroProducts, differentiation, experience.
 
@@ -1102,12 +1103,14 @@ consumerOpinion: a tight 3-6 sentence brief of real customer sentiment (praise +
 Output JSON only:
 {"draftProfile":{"product":"...","category":"...","priceBand":"...","geography":["..."],"targetAudience":"...","styleKeywords":["..."],"heroProducts":["..."],"differentiation":"...","experience":"..."},
 "knownFields":["product","category","experience"],
-"consumerOpinion":"...","sentiment":"mixed","summary":"...","sources":["https://..."]}`;
+"consumerOpinion":"...","sentiment":"mixed","summary":"...",
+"infoCollected":{"brandName":"...","productImages":[{"url":"https://...","alt":"...","caption":"...","sourceUrl":"https://...","kind":"product"}],"products":[{"name":"...","description":"...","category":"...","url":"https://...","priceText":"...","imageUrl":"https://..."}],"priceRanges":[{"label":"Dresses","currency":"INR","min":2500,"max":9000,"text":"₹2,500-₹9,000","sourceUrl":"https://...","notes":"Observed on product/category pages"}],"newsArticles":[{"title":"...","url":"https://...","source":"...","publishedAt":"2025-04-10","summary":"..."}],"socialProfiles":[{"label":"Instagram","url":"https://...","detail":"@handle"}],"marketplaceLinks":[{"label":"Nykaa Fashion","url":"https://...","detail":"stockist/marketplace"}],"facts":[{"label":"Founded","value":"...","sourceUrl":"https://..."}],"openQuestions":["Could not verify ..."]},
+"sources":["https://..."]}`;
 
 export function websiteAnalysisUser(url: string): string {
   return `Founder website to analyse: ${url}
 
-Search the web — read the site itself AND look for real customer opinion about the brand — then output JSON only.`;
+Search the web — read the site itself AND look for real customer opinion, product pages, price evidence, product images, press/news, social profiles, and marketplace/store links for the brand — then output JSON only.`;
 }
 
 // --- Ask-about-this Q&A (a launch scenario or a financial model) ------------
