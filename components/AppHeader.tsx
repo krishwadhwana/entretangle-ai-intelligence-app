@@ -89,8 +89,7 @@ export function ProjectSelector({
   const current =
     projects.find((p) => p.id === selectedProjectId) ??
     projects.find((p) => p.id === localSelectedId) ??
-    projects.find((p) => p.id === selectedParam) ??
-    (pathname === "/" ? projects[0] : undefined);
+    projects.find((p) => p.id === selectedParam);
 
   async function createProject() {
     if (busy) return;
@@ -109,7 +108,7 @@ export function ProjectSelector({
       if (pathname === "/") {
         setLocalSelectedId(project.id);
         window.dispatchEvent(
-          new CustomEvent("et:project-created", { detail: { project } })
+          new CustomEvent("et:project-created", { detail: { project } }),
         );
         void refresh();
       } else {
@@ -134,7 +133,7 @@ export function ProjectSelector({
   async function deleteProject(p: ProjectSummary) {
     if (
       !window.confirm(
-        `Delete "${p.name}"? Its interview, profile and simulation history will be removed.`
+        `Delete "${p.name}"? Its interview, profile and simulation history will be removed.`,
       )
     )
       return;
@@ -143,7 +142,7 @@ export function ProjectSelector({
     setOpen(false);
     if (pathname === "/") {
       window.dispatchEvent(
-        new CustomEvent("et:project-deleted", { detail: { id: p.id } })
+        new CustomEvent("et:project-deleted", { detail: { id: p.id } }),
       );
     } else if (selectedParam === p.id) {
       router.push("/");
@@ -189,7 +188,7 @@ export function ProjectSelector({
                       window.dispatchEvent(
                         new CustomEvent("et:switch-project", {
                           detail: { id: p.id },
-                        })
+                        }),
                       );
                     } else {
                       router.push(`/?project=${p.id}`);
@@ -258,7 +257,7 @@ export default function AppHeader() {
       const { project } = await res.json();
       if (pathname === "/") {
         window.dispatchEvent(
-          new CustomEvent("et:project-created", { detail: { project } })
+          new CustomEvent("et:project-created", { detail: { project } }),
         );
       } else {
         router.push(`/?project=${project.id}`);

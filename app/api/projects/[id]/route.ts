@@ -1,14 +1,30 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  deleteProjectWorkspaceItem,
   deleteProject,
   getProjectLean,
   renameProject,
   saveInterviewTranscript,
   saveOwnerChecks,
+  saveProjectCampaign,
+  saveProjectAssetRating,
+  saveProjectFolder,
+  saveProjectGenerationPreference,
+  saveProjectMetaPixel,
+  saveProjectModuleIntent,
+  saveProjectPrintSpec,
   saveVentureProfile,
 } from "@/lib/store";
-import { ClientProfileSchema, InterviewTranscriptSchema } from "@/lib/schema";
+import {
+  ClientProfileSchema,
+  GenerationCountSchema,
+  InterviewTranscriptSchema,
+  MetaPixelStatusSchema,
+  PrintColorSourceSchema,
+  ProjectCampaignStatusSchema,
+} from "@/lib/schema";
+import { AssetLibraryStatusSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +32,7 @@ export const dynamic = "force-dynamic";
 // not 6000 agents per run). Full agent output stays saved in the DB.
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const project = await getProjectLean(params.id);
   if (!project) {
@@ -36,16 +52,97 @@ const PatchSchema = z.object({
   // merged into the active run's owner_dashboard.brandSocialByRun entry.
   ownerDashboardChecks: z.record(z.boolean()).optional(),
   ownerDashboardRunId: z.string().optional(),
+  projectModuleIntent: z
+    .object({
+      moduleId: z.string().min(1).max(80),
+      label: z.string().min(1).max(120),
+      intent: z.string().min(1).max(2000),
+      reason: z.string().max(1000).optional(),
+    })
+    .optional(),
+  projectAssetRating: z
+    .object({
+      assetId: z.string().min(1).max(200),
+      type: z.string().min(1).max(80),
+      title: z.string().min(1).max(200),
+      status: AssetLibraryStatusSchema,
+    })
+    .optional(),
+  projectFolder: z
+    .object({
+      id: z.string().min(1).max(120).optional(),
+      moduleId: z.string().min(1).max(80),
+      name: z.string().min(1).max(120),
+      description: z.string().max(2000).optional(),
+    })
+    .optional(),
+  projectCampaign: z
+    .object({
+      id: z.string().min(1).max(120).optional(),
+      moduleId: z.string().min(1).max(80),
+      folderId: z.string().min(1).max(120).nullable().optional(),
+      name: z.string().min(1).max(120),
+      description: z.string().max(3000).optional(),
+      status: ProjectCampaignStatusSchema.optional(),
+    })
+    .optional(),
+  generationPreference: z
+    .object({
+      moduleId: z.string().min(1).max(80),
+      count: GenerationCountSchema,
+    })
+    .optional(),
+  printSpec: z
+    .object({
+      cmyk: z
+        .object({
+          primary: z.string().max(80).optional(),
+          secondary: z.string().max(80).optional(),
+          accent: z.string().max(80).optional(),
+        })
+        .optional(),
+      pantone: z
+        .object({
+          primary: z.string().max(80).optional(),
+          secondary: z.string().max(80).optional(),
+          accent: z.string().max(80).optional(),
+        })
+        .optional(),
+      exactPantoneSource: PrintColorSourceSchema.optional(),
+      notes: z.string().max(2000).optional(),
+    })
+    .optional(),
+  metaPixel: z
+    .object({
+      status: MetaPixelStatusSchema.optional(),
+      pixelId: z.string().max(120).optional(),
+      notes: z.string().max(2000).optional(),
+    })
+    .optional(),
+  deleteProjectWorkspaceItem: z
+    .object({
+      type: z.enum(["folder", "campaign"]),
+      itemId: z.string().min(1).max(120),
+    })
+    .optional(),
 });
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   const body = PatchSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
+  let moduleIntent = null;
+  let assetRating = null;
+  let folder = null;
+  let campaign = null;
+  let generationPreference = null;
+  let printSpec = null;
+  let metaPixel = null;
+  let projectWorkspace = null;
   try {
     if (body.data.name !== undefined) {
       await renameProject(params.id, body.data.name);
@@ -60,18 +157,67 @@ export async function PATCH(
       await saveOwnerChecks(
         params.id,
         body.data.ownerDashboardChecks,
-        body.data.ownerDashboardRunId
+        body.data.ownerDashboardRunId,
+      );
+    }
+    if (body.data.projectModuleIntent !== undefined) {
+      moduleIntent = await saveProjectModuleIntent(
+        params.id,
+        body.data.projectModuleIntent,
+      );
+    }
+    if (body.data.projectAssetRating !== undefined) {
+      assetRating = await saveProjectAssetRating(
+        params.id,
+        body.data.projectAssetRating,
+      );
+    }
+    if (body.data.projectFolder !== undefined) {
+      folder = await saveProjectFolder(params.id, body.data.projectFolder);
+    }
+    if (body.data.projectCampaign !== undefined) {
+      campaign = await saveProjectCampaign(
+        params.id,
+        body.data.projectCampaign,
+      );
+    }
+    if (body.data.generationPreference !== undefined) {
+      generationPreference = await saveProjectGenerationPreference(
+        params.id,
+        body.data.generationPreference,
+      );
+    }
+    if (body.data.printSpec !== undefined) {
+      printSpec = await saveProjectPrintSpec(params.id, body.data.printSpec);
+    }
+    if (body.data.metaPixel !== undefined) {
+      metaPixel = await saveProjectMetaPixel(params.id, body.data.metaPixel);
+    }
+    if (body.data.deleteProjectWorkspaceItem !== undefined) {
+      projectWorkspace = await deleteProjectWorkspaceItem(
+        params.id,
+        body.data.deleteProjectWorkspaceItem,
       );
     }
   } catch {
     return NextResponse.json({ error: "not found" }, { status: 404 });
   }
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({
+    ok: true,
+    moduleIntent,
+    assetRating,
+    folder,
+    campaign,
+    generationPreference,
+    printSpec,
+    metaPixel,
+    projectWorkspace,
+  });
 }
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   try {
     await deleteProject(params.id);

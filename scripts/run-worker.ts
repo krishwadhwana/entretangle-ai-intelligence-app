@@ -79,11 +79,13 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       await markJobSucceeded(job.id);
       return;
     }
-    const hasWork =
+    const hasSavedSimulationWork =
       run._count.blocks > 0 ||
-      run._count.cohorts > 0 ||
+      run._count.cohorts > 0;
+    const hasAnyRunHistory =
+      hasSavedSimulationWork ||
       run._count.events > 0;
-    if (job.type === "execute" && hasWork) {
+    if (job.type === "execute" && hasAnyRunHistory) {
       // attempts === 1 → a duplicate execute that never started: safe to skip.
       // attempts > 1 → THIS execute was reclaimed after a worker died mid-run;
       // finish it via resume (re-runs only unfinished cohorts, reuses the desks)
@@ -100,6 +102,14 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       console.log(
         `[worker ${workerId}] skipping stale execute ${job.runId}; run already has persisted work`
       );
+      await markJobSucceeded(job.id);
+      return;
+    }
+    if (job.type === "resume" && !hasSavedSimulationWork) {
+      console.log(
+        `[worker ${workerId}] resume ${job.runId} has no saved simulation work; starting from the beginning`
+      );
+      await executeRun(job.runId);
       await markJobSucceeded(job.id);
       return;
     }

@@ -21,13 +21,7 @@ dist
 node_modules
 out
 .vercel
-
-# TypeScript incremental build cache (collides with Nixpacks cache mount)
 tsconfig.tsbuildinfo
-
-# generated PDF artifacts
 *.pdf
-
-# user-uploaded product media
 data/uploads
 data/ohneis resource

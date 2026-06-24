@@ -1,10 +1,12 @@
 import { Prisma } from "@prisma/client";
+import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "./db";
 import { config } from "./config";
 import {
   GeneratedPlaybookSchema,
   type GeneratedPlaybook,
+  AssetLibraryRatingSchema,
   BrandSocialSectionSchema,
   ClientProfileSchema,
   FinancialsSectionSchema,
@@ -13,11 +15,22 @@ import {
   InspirationSectionSchema,
   InterviewTranscriptSchema,
   InvestorOSSectionSchema,
+  ProjectModuleIntentSchema,
+  ProjectModuleRegistrySchema,
+  ProjectAssetLibrarySchema,
+  ProjectCampaignSchema,
+  ProjectFolderSchema,
+  ProjectGenerationPreferenceSchema,
+  ProjectMetaPixelSchema,
+  ProjectPrintSpecSchema,
+  ProjectWorkspaceSchema,
   UsageLedgerSchema,
   WebsiteAnalysisSchema,
   type DesignAsset,
+  type AssetLibraryRating,
   type DesignStudioSection,
   type DesignTokens,
+  type GenerationCount,
   type LogoAsset,
   type SiteAsset,
   type FounderStorySection,
@@ -36,6 +49,12 @@ import {
   type InvestorOSSection,
   type RoadmapItem,
   type OwnerDashboard,
+  type ProjectCampaign,
+  type ProjectFolder,
+  type ProjectGenerationPreference,
+  type ProjectMetaPixel,
+  type ProjectModuleIntent,
+  type ProjectPrintSpec,
   type RunStatus,
   type SimulationRunRecord,
   type UsageLedger,
@@ -139,6 +158,35 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     generatedAt: null,
     sourceRunId: null,
   },
+  moduleRegistry: {
+    intents: {},
+    updatedAt: null,
+  },
+  assetLibrary: {
+    ratings: {},
+    updatedAt: null,
+  },
+  projectWorkspace: {
+    folders: [],
+    campaigns: [],
+    generationPrefs: {},
+    printSpec: {
+      cmyk: { primary: "", secondary: "", accent: "" },
+      pantone: { primary: "", secondary: "", accent: "" },
+      exactPantoneSource: "approximation",
+      notes: "",
+      updatedAt: null,
+    },
+    integrations: {
+      metaPixel: {
+        status: "not_connected",
+        pixelId: "",
+        notes: "",
+        updatedAt: null,
+      },
+    },
+    updatedAt: null,
+  },
   usage: {
     tokensUsed: 0,
     costUsd: 0,
@@ -158,19 +206,28 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     unknown
   >;
   const brand = BrandSocialSectionSchema.safeParse(obj.brandSocial);
-  const brandByRun = z.record(BrandSocialSectionSchema).safeParse(
-    obj.brandSocialByRun
-  );
+  const brandByRun = z
+    .record(BrandSocialSectionSchema)
+    .safeParse(obj.brandSocialByRun);
   const fin = FinancialsSectionSchema.safeParse(obj.financials);
-  const finByRun = z.record(FinancialsSectionSchema).safeParse(obj.financialsByRun);
+  const finByRun = z
+    .record(FinancialsSectionSchema)
+    .safeParse(obj.financialsByRun);
   const insp = InspirationSectionSchema.safeParse(obj.inspiration);
-  const inspByRun = z.record(InspirationSectionSchema).safeParse(
-    obj.inspirationByRun
-  );
+  const inspByRun = z
+    .record(InspirationSectionSchema)
+    .safeParse(obj.inspirationByRun);
   const founderStory = FounderStorySectionSchema.safeParse(obj.founderStory);
   const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
   const investorOS = InvestorOSSectionSchema.safeParse(obj.investorOS);
   const designStudio = DesignStudioSectionSchema.safeParse(obj.designStudio);
+  const moduleRegistry = ProjectModuleRegistrySchema.safeParse(
+    obj.moduleRegistry,
+  );
+  const assetLibrary = ProjectAssetLibrarySchema.safeParse(obj.assetLibrary);
+  const projectWorkspace = ProjectWorkspaceSchema.safeParse(
+    obj.projectWorkspace,
+  );
   const usage = UsageLedgerSchema.safeParse(obj.usage);
   const brandSocialByRun = brandByRun.success ? { ...brandByRun.data } : {};
   if (
@@ -219,6 +276,15 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     designStudio: designStudio.success
       ? designStudio.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.designStudio),
+    moduleRegistry: moduleRegistry.success
+      ? moduleRegistry.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.moduleRegistry),
+    assetLibrary: assetLibrary.success
+      ? assetLibrary.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.assetLibrary),
+    projectWorkspace: projectWorkspace.success
+      ? projectWorkspace.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.projectWorkspace),
     usage: usage.success
       ? usage.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.usage),
@@ -226,7 +292,7 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
 }
 
 function rawObject(
-  raw: Prisma.JsonValue | null | undefined
+  raw: Prisma.JsonValue | null | undefined,
 ): Record<string, unknown> {
   return raw && typeof raw === "object" && !Array.isArray(raw)
     ? (raw as Record<string, unknown>)
@@ -243,7 +309,7 @@ function parseRunSection<T extends { sourceRunId: string | null }>(
   byRunKey: string,
   legacyKey: string,
   schema: RunSectionSchema<T>,
-  hasContent: (section: T) => boolean
+  hasContent: (section: T) => boolean,
 ): T | null {
   const obj = rawObject(raw);
   const byRun = rawObject(obj[byRunKey] as Prisma.JsonValue | null);
@@ -284,7 +350,7 @@ function toFull(row: {
   websiteAnalysis?: Prisma.JsonValue | null;
 }): ProjectFull {
   const transcript = InterviewTranscriptSchema.safeParse(
-    row.interviewTranscript
+    row.interviewTranscript,
   );
   const website = row.websiteAnalysis
     ? WebsiteAnalysisSchema.safeParse(row.websiteAnalysis)
@@ -306,9 +372,10 @@ function toFull(row: {
   };
 }
 
-function emptyRunResults(
-  run: { tokensUsed: number; costUsd: number }
-): SimulationRunRecord["results"] {
+function emptyRunResults(run: {
+  tokensUsed: number;
+  costUsd: number;
+}): SimulationRunRecord["results"] {
   return {
     tokensUsed: run.tokensUsed,
     costUsd: run.costUsd,
@@ -381,12 +448,12 @@ function displayStatusForLiveRun(row: {
     row.jobs?.filter(
       (job) =>
         job.cancelRequested &&
-        (job.status === "queued" || job.status === "running")
+        (job.status === "queued" || job.status === "running"),
     ) ?? [];
   if (activeCancelJobs.length === 0) return "cancelled";
 
   const newestUpdate = Math.max(
-    ...activeCancelJobs.map((job) => job.updatedAt.getTime())
+    ...activeCancelJobs.map((job) => job.updatedAt.getTime()),
   );
   const staleAfterMs = Math.max(config.cohortTimeoutMs * 2, 5 * 60_000);
   return Date.now() - newestUpdate > staleAfterMs ? "cancelled" : "cancelling";
@@ -396,7 +463,9 @@ function displayStatusForLiveRun(row: {
  * Merge live Run rows into the saved project snapshots so the home page can
  * show queued/planning/running runs before the final snapshot is appended.
  */
-async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> {
+async function withLiveRunSummaries(
+  project: ProjectFull,
+): Promise<ProjectFull> {
   const rows = await prisma.run.findMany({
     where: { projectId: project.id },
     orderBy: { createdAt: "asc" },
@@ -448,7 +517,7 @@ async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> 
               costUsd: row.costUsd,
             },
           }
-        : live
+        : live,
     );
   }
 
@@ -456,7 +525,7 @@ async function withLiveRunSummaries(project: ProjectFull): Promise<ProjectFull> 
     ...project,
     simulationRuns: Array.from(byRunId.values()).sort(
       (a, b) =>
-        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     ),
   };
 }
@@ -499,17 +568,19 @@ export async function deleteProject(id: string): Promise<void> {
 
 export async function saveInterviewTranscript(
   id: string,
-  transcript: InterviewTranscript
+  transcript: InterviewTranscript,
 ): Promise<void> {
   await prisma.project.update({
     where: { id },
-    data: { interviewTranscript: transcript as unknown as Prisma.InputJsonValue },
+    data: {
+      interviewTranscript: transcript as unknown as Prisma.InputJsonValue,
+    },
   });
 }
 
 export async function saveVentureProfile(
   id: string,
-  profile: ClientProfile
+  profile: ClientProfile,
 ): Promise<void> {
   await prisma.project.update({
     where: { id },
@@ -519,7 +590,7 @@ export async function saveVentureProfile(
 
 export async function saveWebsiteAnalysis(
   id: string,
-  analysis: WebsiteAnalysis
+  analysis: WebsiteAnalysis,
 ): Promise<void> {
   await prisma.project.update({
     where: { id },
@@ -530,7 +601,7 @@ export async function saveWebsiteAnalysis(
 // Web-sourced market benchmark overrides, keyed "<market>:<category>". Read with
 // a lean column select (never drags in the heavy simulation_runs blob).
 export async function getMarketData(
-  id: string
+  id: string,
 ): Promise<Record<string, MarketDatum>> {
   const row = await prisma.project.findUnique({
     where: { id },
@@ -545,20 +616,23 @@ export async function getMarketData(
 export async function saveMarketDatum(
   id: string,
   key: string,
-  datum: MarketDatum
+  datum: MarketDatum,
 ): Promise<void> {
   const current = await getMarketData(id);
   await prisma.project.update({
     where: { id },
     data: {
-      marketData: { ...current, [key]: datum } as unknown as Prisma.InputJsonValue,
+      marketData: {
+        ...current,
+        [key]: datum,
+      } as unknown as Prisma.InputJsonValue,
     },
   });
 }
 
 export async function saveAudienceConfig(
   id: string,
-  audienceConfig: unknown
+  audienceConfig: unknown,
 ): Promise<void> {
   await prisma.project.update({
     where: { id },
@@ -586,7 +660,7 @@ async function readOwnerDashboard(id: string): Promise<OwnerDashboard> {
 
 async function writeOwnerDashboard(
   id: string,
-  owner: OwnerDashboard
+  owner: OwnerDashboard,
 ): Promise<void> {
   await prisma.project.update({
     where: { id },
@@ -598,7 +672,7 @@ async function writeOwnerDashboard(
 export async function savePlaybook(
   projectId: string,
   runId: string,
-  playbook: GeneratedPlaybook
+  playbook: GeneratedPlaybook,
 ): Promise<void> {
   const owner = await readOwnerDashboard(projectId);
   owner.playbooks = { ...owner.playbooks, [runId]: playbook };
@@ -608,15 +682,267 @@ export async function savePlaybook(
 /** Fetch a previously-generated playbook for a run, if any. */
 export async function getPlaybook(
   projectId: string,
-  runId: string
+  runId: string,
 ): Promise<GeneratedPlaybook | null> {
   const owner = await readOwnerDashboard(projectId);
   return owner.playbooks[runId] ?? null;
 }
 
+export async function saveProjectModuleIntent(
+  id: string,
+  input: {
+    moduleId: string;
+    label: string;
+    intent: string;
+    reason?: string;
+  },
+): Promise<ProjectModuleIntent> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const prior = owner.moduleRegistry.intents[input.moduleId];
+  const intent = ProjectModuleIntentSchema.parse({
+    moduleId: input.moduleId,
+    label: input.label,
+    intent: input.intent,
+    reason: input.reason ?? "",
+    createdAt: prior?.createdAt ?? now,
+    updatedAt: now,
+  });
+  owner.moduleRegistry = ProjectModuleRegistrySchema.parse({
+    intents: {
+      ...owner.moduleRegistry.intents,
+      [input.moduleId]: intent,
+    },
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return intent;
+}
+
+export async function saveProjectAssetRating(
+  id: string,
+  input: {
+    assetId: string;
+    type: string;
+    title: string;
+    status: AssetLibraryRating["status"];
+  },
+): Promise<AssetLibraryRating> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const rating = AssetLibraryRatingSchema.parse({
+    assetId: input.assetId,
+    type: input.type,
+    title: input.title,
+    status: input.status,
+    updatedAt: now,
+  });
+  owner.assetLibrary = ProjectAssetLibrarySchema.parse({
+    ratings: {
+      ...owner.assetLibrary.ratings,
+      [input.assetId]: rating,
+    },
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return rating;
+}
+
+export async function saveProjectFolder(
+  id: string,
+  input: {
+    id?: string;
+    moduleId: string;
+    name: string;
+    description?: string;
+  },
+): Promise<ProjectFolder> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const prior = input.id
+    ? owner.projectWorkspace.folders.find((folder) => folder.id === input.id)
+    : null;
+  const folder = ProjectFolderSchema.parse({
+    id: input.id ?? randomUUID(),
+    moduleId: input.moduleId,
+    name: input.name,
+    description: input.description ?? "",
+    createdAt: prior?.createdAt ?? now,
+    updatedAt: now,
+  });
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    folders: prior
+      ? owner.projectWorkspace.folders.map((item) =>
+          item.id === folder.id ? folder : item,
+        )
+      : [...owner.projectWorkspace.folders, folder],
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return folder;
+}
+
+export async function saveProjectCampaign(
+  id: string,
+  input: {
+    id?: string;
+    moduleId: string;
+    folderId?: string | null;
+    name: string;
+    description?: string;
+    status?: ProjectCampaign["status"];
+  },
+): Promise<ProjectCampaign> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const prior = input.id
+    ? owner.projectWorkspace.campaigns.find(
+        (campaign) => campaign.id === input.id,
+      )
+    : null;
+  const campaign = ProjectCampaignSchema.parse({
+    id: input.id ?? randomUUID(),
+    moduleId: input.moduleId,
+    folderId: input.folderId ?? prior?.folderId ?? null,
+    name: input.name,
+    description: input.description ?? "",
+    status: input.status ?? prior?.status ?? "draft",
+    createdAt: prior?.createdAt ?? now,
+    updatedAt: now,
+  });
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    campaigns: prior
+      ? owner.projectWorkspace.campaigns.map((item) =>
+          item.id === campaign.id ? campaign : item,
+        )
+      : [...owner.projectWorkspace.campaigns, campaign],
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return campaign;
+}
+
+export async function saveProjectGenerationPreference(
+  id: string,
+  input: {
+    moduleId: string;
+    count: GenerationCount;
+  },
+): Promise<ProjectGenerationPreference> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const preference = ProjectGenerationPreferenceSchema.parse({
+    moduleId: input.moduleId,
+    count: input.count,
+    updatedAt: now,
+  });
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    generationPrefs: {
+      ...owner.projectWorkspace.generationPrefs,
+      [input.moduleId]: preference,
+    },
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return preference;
+}
+
+export async function saveProjectPrintSpec(
+  id: string,
+  input: {
+    cmyk?: Partial<ProjectPrintSpec["cmyk"]>;
+    pantone?: Partial<ProjectPrintSpec["pantone"]>;
+    exactPantoneSource?: ProjectPrintSpec["exactPantoneSource"];
+    notes?: string;
+  },
+): Promise<ProjectPrintSpec> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const prior = owner.projectWorkspace.printSpec;
+  const printSpec = ProjectPrintSpecSchema.parse({
+    cmyk: { ...prior.cmyk, ...(input.cmyk ?? {}) },
+    pantone: { ...prior.pantone, ...(input.pantone ?? {}) },
+    exactPantoneSource: input.exactPantoneSource ?? prior.exactPantoneSource,
+    notes: input.notes ?? prior.notes,
+    updatedAt: now,
+  });
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    printSpec,
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return printSpec;
+}
+
+export async function saveProjectMetaPixel(
+  id: string,
+  input: {
+    status?: ProjectMetaPixel["status"];
+    pixelId?: string;
+    notes?: string;
+  },
+): Promise<ProjectMetaPixel> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const prior = owner.projectWorkspace.integrations.metaPixel;
+  const metaPixel = ProjectMetaPixelSchema.parse({
+    status: input.status ?? prior.status,
+    pixelId: input.pixelId ?? prior.pixelId,
+    notes: input.notes ?? prior.notes,
+    updatedAt: now,
+  });
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    integrations: {
+      ...owner.projectWorkspace.integrations,
+      metaPixel,
+    },
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return metaPixel;
+}
+
+export async function deleteProjectWorkspaceItem(
+  id: string,
+  input: {
+    type: "folder" | "campaign";
+    itemId: string;
+  },
+): Promise<OwnerDashboard["projectWorkspace"]> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  owner.projectWorkspace = ProjectWorkspaceSchema.parse({
+    ...owner.projectWorkspace,
+    folders:
+      input.type === "folder"
+        ? owner.projectWorkspace.folders.filter(
+            (folder) => folder.id !== input.itemId,
+          )
+        : owner.projectWorkspace.folders,
+    campaigns:
+      input.type === "campaign"
+        ? owner.projectWorkspace.campaigns.filter(
+            (campaign) => campaign.id !== input.itemId,
+          )
+        : owner.projectWorkspace.campaigns.map((campaign) =>
+            campaign.folderId === input.itemId
+              ? { ...campaign, folderId: null, updatedAt: now }
+              : campaign,
+          ),
+    updatedAt: now,
+  });
+  await writeOwnerDashboard(id, owner);
+  return owner.projectWorkspace;
+}
+
 export async function saveFounderStory(
   id: string,
-  section: FounderStorySection
+  section: FounderStorySection,
 ): Promise<FounderStorySection> {
   const parsed = FounderStorySectionSchema.parse(section);
   const owner = await readOwnerDashboard(id);
@@ -626,7 +952,7 @@ export async function saveFounderStory(
 }
 
 export async function getFounderStory(
-  id: string
+  id: string,
 ): Promise<FounderStorySection | null> {
   const owner = await readOwnerDashboard(id);
   return owner.founderStory.evidence.length || owner.founderStory.confidence > 0
@@ -638,7 +964,7 @@ export async function saveBrandKit(
   id: string,
   kit: BrandKit,
   sourceRunId: string,
-  generatedAt: string
+  generatedAt: string,
 ): Promise<OwnerDashboard["brandSocial"]> {
   const owner = await readOwnerDashboard(id);
   const validIds = new Set(kit.checklist.map((c) => c.id));
@@ -671,7 +997,7 @@ export async function saveDesignTokens(
   id: string,
   tokens: DesignTokens,
   sourceRunId: string | null,
-  generatedAt: string
+  generatedAt: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   owner.designStudio = DesignStudioSectionSchema.parse({
@@ -685,7 +1011,7 @@ export async function saveDesignTokens(
 }
 
 export async function getDesignStudio(
-  id: string
+  id: string,
 ): Promise<DesignStudioSection | null> {
   const owner = await readOwnerDashboard(id);
   return owner.designStudio.tokens || owner.designStudio.assets.length
@@ -696,7 +1022,7 @@ export async function getDesignStudio(
 /** Append (or replace by id) a rendered collateral asset, newest first. */
 export async function saveDesignAsset(
   id: string,
-  asset: DesignAsset
+  asset: DesignAsset,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   const rest = owner.designStudio.assets.filter((a) => a.id !== asset.id);
@@ -708,11 +1034,11 @@ export async function saveDesignAsset(
 /** Remove a generated asset by id. */
 export async function deleteDesignAsset(
   id: string,
-  assetId: string
+  assetId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   owner.designStudio.assets = owner.designStudio.assets.filter(
-    (a) => a.id !== assetId
+    (a) => a.id !== assetId,
   );
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
@@ -721,7 +1047,7 @@ export async function deleteDesignAsset(
 /** Append (or replace by id) a generated logo, newest first. */
 export async function saveLogoAsset(
   id: string,
-  logo: LogoAsset
+  logo: LogoAsset,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   const rest = owner.designStudio.logos.filter((l) => l.id !== logo.id);
@@ -733,11 +1059,11 @@ export async function saveLogoAsset(
 /** Remove a generated logo by id. */
 export async function deleteLogoAsset(
   id: string,
-  logoId: string
+  logoId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   owner.designStudio.logos = owner.designStudio.logos.filter(
-    (l) => l.id !== logoId
+    (l) => l.id !== logoId,
   );
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
@@ -746,7 +1072,7 @@ export async function deleteLogoAsset(
 /** Append (or replace by id) a generated site, newest first. */
 export async function saveSiteAsset(
   id: string,
-  site: SiteAsset
+  site: SiteAsset,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   const rest = owner.designStudio.sites.filter((s) => s.id !== site.id);
@@ -759,7 +1085,7 @@ export async function saveSiteAsset(
 export async function setSiteDeployUrl(
   id: string,
   siteId: string,
-  deployUrl: string
+  deployUrl: string,
 ): Promise<SiteAsset | null> {
   const owner = await readOwnerDashboard(id);
   const site = owner.designStudio.sites.find((s) => s.id === siteId);
@@ -772,11 +1098,11 @@ export async function setSiteDeployUrl(
 /** Remove a generated site by id. */
 export async function deleteSiteAsset(
   id: string,
-  siteId: string
+  siteId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
   owner.designStudio.sites = owner.designStudio.sites.filter(
-    (s) => s.id !== siteId
+    (s) => s.id !== siteId,
   );
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
@@ -785,7 +1111,7 @@ export async function deleteSiteAsset(
 export async function saveOwnerChecks(
   id: string,
   patch: Record<string, boolean>,
-  runId?: string | null
+  runId?: string | null,
 ): Promise<void> {
   const owner = await readOwnerDashboard(id);
   if (runId) {
@@ -815,7 +1141,7 @@ export async function saveOwnerChecks(
 export async function saveFinancials(
   id: string,
   section: FinancialsSection,
-  runId?: string | null
+  runId?: string | null,
 ): Promise<FinancialsSection> {
   const parsed = FinancialsSectionSchema.parse(section);
   const owner = await readOwnerDashboard(id);
@@ -832,7 +1158,7 @@ export async function saveFinancials(
 
 export async function getFinancialsSection(
   projectId: string,
-  runId?: string | null
+  runId?: string | null,
 ): Promise<FinancialsSection | null> {
   try {
     const owner = await readOwnerDashboard(projectId);
@@ -863,7 +1189,7 @@ export async function saveInspiration(
   id: string,
   kit: InspirationKit,
   sourceRunId: string,
-  generatedAt: string
+  generatedAt: string,
 ): Promise<InspirationSection> {
   const owner = await readOwnerDashboard(id);
   const section = { kit, generatedAt, sourceRunId };
@@ -883,14 +1209,14 @@ export async function saveInspiration(
  */
 export async function getFinancialModel(
   projectId: string,
-  runId?: string | null
+  runId?: string | null,
 ): Promise<FinancialModel | null> {
   const section = await getFinancialsSection(projectId, runId);
   return section?.model ?? null;
 }
 
 export async function getInvestorOS(
-  projectId: string
+  projectId: string,
 ): Promise<InvestorOSSection> {
   const owner = await readOwnerDashboard(projectId);
   return owner.investorOS;
@@ -898,7 +1224,7 @@ export async function getInvestorOS(
 
 export async function saveInvestorOS(
   projectId: string,
-  section: InvestorOSSection
+  section: InvestorOSSection,
 ): Promise<InvestorOSSection> {
   const parsed = InvestorOSSectionSchema.parse(section);
   const owner = await readOwnerDashboard(projectId);
@@ -909,7 +1235,7 @@ export async function saveInvestorOS(
 
 export async function addInvestorEvidence(
   projectId: string,
-  evidence: EvidenceItem
+  evidence: EvidenceItem,
 ): Promise<InvestorOSSection> {
   const owner = await readOwnerDashboard(projectId);
   owner.investorOS.manualEvidence = [
@@ -923,7 +1249,7 @@ export async function addInvestorEvidence(
 
 export async function saveInvestorRoadmap(
   projectId: string,
-  roadmap: RoadmapItem[]
+  roadmap: RoadmapItem[],
 ): Promise<InvestorOSSection> {
   const owner = await readOwnerDashboard(projectId);
   owner.investorOS.roadmap = roadmap;
@@ -934,7 +1260,7 @@ export async function saveInvestorRoadmap(
 
 export async function saveInvestorKit(
   projectId: string,
-  kit: InvestorKit
+  kit: InvestorKit,
 ): Promise<InvestorOSSection> {
   const owner = await readOwnerDashboard(projectId);
   owner.investorOS.kits = [
@@ -948,7 +1274,7 @@ export async function saveInvestorKit(
 
 export async function saveInvestorKitEdits(
   projectId: string,
-  edits: InvestorKitEdits
+  edits: InvestorKitEdits,
 ): Promise<InvestorOSSection> {
   const owner = await readOwnerDashboard(projectId);
   owner.investorOS.edits = { ...edits, updatedAt: new Date().toISOString() };
@@ -963,13 +1289,11 @@ export async function saveInvestorKitEdits(
  */
 export async function appendSimulationRun(
   id: string,
-  record: SimulationRunRecord
+  record: SimulationRunRecord,
 ): Promise<void> {
   await prisma.$executeRaw`
     UPDATE projects
-    SET simulation_runs = simulation_runs || ${JSON.stringify([
-      record,
-    ])}::jsonb,
+    SET simulation_runs = simulation_runs || ${JSON.stringify([record])}::jsonb,
         -- Prisma writes UTC into this timestamp-without-tz column; bare now()
         -- would write server-local wall time and corrupt recency ordering.
         updated_at = now() AT TIME ZONE 'utc'
@@ -983,7 +1307,7 @@ export async function appendSimulationRun(
  */
 export async function renameSimulationRun(
   runId: string,
-  brief: string
+  brief: string,
 ): Promise<void> {
   const run = await prisma.run.update({
     where: { id: runId },
@@ -1061,7 +1385,7 @@ export async function deleteSimulationRun(runId: string): Promise<void> {
  */
 export async function buildRunRecord(
   runId: string,
-  profile: ClientProfile
+  profile: ClientProfile,
 ): Promise<SimulationRunRecord> {
   const run = await prisma.run.findUniqueOrThrow({ where: { id: runId } });
   const [blocks, edges, cohorts, aggEvent] = await Promise.all([
@@ -1074,7 +1398,7 @@ export async function buildRunRecord(
     }),
   ]);
   const audienceAggregate: SimulationRunRecord["results"]["audienceAggregate"] =
-    aggEvent ? JSON.parse(aggEvent.payload).aggregate ?? null : null;
+    aggEvent ? (JSON.parse(aggEvent.payload).aggregate ?? null) : null;
 
   return {
     runId,
@@ -1157,7 +1481,9 @@ export async function getProjectLean(id: string): Promise<ProjectFull | null> {
 // simulation_runs snapshot embedded on the project row. Select just that column
 // so Postgres never ships (and we never parse) megabytes of run/persona data;
 // loading the whole project here was timing the Owner tab out.
-export async function getOwnerDashboard(id: string): Promise<OwnerDashboard | null> {
+export async function getOwnerDashboard(
+  id: string,
+): Promise<OwnerDashboard | null> {
   const row = await prisma.project.findUnique({
     where: { id },
     select: { ownerDashboard: true },
@@ -1172,7 +1498,7 @@ export async function getProjectUsage(id: string): Promise<UsageLedger | null> {
 
 export async function getOwnerDashboardRunSlice(
   id: string,
-  runId: string
+  runId: string,
 ): Promise<OwnerDashboardRunSlice | null> {
   const row = await prisma.project.findUnique({
     where: { id },
@@ -1192,7 +1518,7 @@ export async function getOwnerDashboardRunSlice(
       "brandSocialByRun",
       "brandSocial",
       BrandSocialSectionSchema,
-      (s) => Boolean(s.kit)
+      (s) => Boolean(s.kit),
     ),
     financials: parseRunSection(
       row.ownerDashboard,
@@ -1200,7 +1526,7 @@ export async function getOwnerDashboardRunSlice(
       "financialsByRun",
       "financials",
       FinancialsSectionSchema,
-      (s) => Boolean(s.model)
+      (s) => Boolean(s.model),
     ),
     inspiration: parseRunSection(
       row.ownerDashboard,
@@ -1208,7 +1534,7 @@ export async function getOwnerDashboardRunSlice(
       "inspirationByRun",
       "inspiration",
       InspirationSectionSchema,
-      (s) => Boolean(s.kit)
+      (s) => Boolean(s.kit),
     ),
     usage: owner.usage,
   };
@@ -1243,7 +1569,12 @@ export type StoredChunk = DocChunk & { docId: string; docName: string };
 
 export async function createDocument(
   projectId: string,
-  data: { name: string; charCount: number; embModel: string; chunks: DocChunk[] }
+  data: {
+    name: string;
+    charCount: number;
+    embModel: string;
+    chunks: DocChunk[];
+  },
 ): Promise<DocumentSummary> {
   const row = await prisma.document.create({
     data: {
@@ -1267,7 +1598,7 @@ export async function createDocument(
 }
 
 export async function listDocuments(
-  projectId: string
+  projectId: string,
 ): Promise<DocumentSummary[]> {
   const rows = await prisma.document.findMany({
     where: { projectId },
@@ -1286,18 +1617,20 @@ export async function listDocuments(
 
 export async function deleteDocument(
   projectId: string,
-  docId: string
+  docId: string,
 ): Promise<void> {
   await prisma.document.deleteMany({ where: { id: docId, projectId } });
 }
 
-export async function countProjectDocuments(projectId: string): Promise<number> {
+export async function countProjectDocuments(
+  projectId: string,
+): Promise<number> {
   return prisma.document.count({ where: { projectId } });
 }
 
 /** All chunks (with embeddings) for a project, tagged with their document. */
 export async function getProjectChunks(
-  projectId: string
+  projectId: string,
 ): Promise<{ chunks: StoredChunk[]; embModels: Set<string> }> {
   const rows = await prisma.document.findMany({
     where: { projectId },
@@ -1328,7 +1661,7 @@ export type IndustryKnowledgeRow = {
 };
 
 export async function getIndustryKnowledge(
-  industryKey: string
+  industryKey: string,
 ): Promise<IndustryKnowledgeRow | null> {
   const row = await prisma.industryKnowledge.findUnique({
     where: { industryKey },

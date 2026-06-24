@@ -20,6 +20,10 @@ import {
   PAN_INDIA_MIN_RELEVANT_SPOTS,
 } from "./audienceCoverage";
 import { formatRegion } from "./datasources/politicalGeography";
+import {
+  OHNEIS_BRAND_SOCIAL_METHOD,
+  OHNEIS_COLLATERAL_COPY_METHOD,
+} from "./ohneis";
 
 // All prompts demand JSON only, no markdown fences, and include the literal
 // JSON schema (SPEC §5). Anti-fabrication clause in the executor is
@@ -1294,6 +1298,9 @@ You are given a venture's profile and the research the platform already
 concluded (market/brand, competitor, social, and synthesis findings) plus, if
 present, simulated-audience stats and a founderStory signal map. Turn it into a HANDS-ON owner action plan
 the founder will actually work through.
+If an Ohneis method block is provided in the user payload, use it as the
+operating method for social strategy, post-generation guidance, and checklist
+tasks. Adapt it to THIS venture rather than naming or quoting the method.
 
 Produce four things:
 
@@ -1348,6 +1355,7 @@ export function brandKitUser(
       clientProfile: profile,
       audienceAggregate: aggregate,
       founderStory: compactFounderStory(founderStory),
+      ohneisMethod: OHNEIS_BRAND_SOCIAL_METHOD,
       conclusions: conclusions.map((c) => ({
         id: c.id,
         blockId: c.blockId,
@@ -1444,6 +1452,9 @@ export const COLLATERAL_COPY_SYSTEM = `You are a brand copywriter producing the 
 collateral. The visual layout, colors and fonts are handled separately from the
 brand's design tokens — your ONLY job is the words. Write in the brand's voice,
 specific to the venture; never generic filler.
+If an Ohneis method block is provided in the user payload, use it to make flyer
+and poster copy work as high-performing social media post/ad copy. Adapt the
+method silently; do not mention Ohneis in the output.
 
 You are told the collateral "type" (one of "business-card", "flyer", "poster").
 Tailor the copy to it:
@@ -1474,6 +1485,8 @@ export function collateralCopyUser(
       brandVoice: brandKit?.brandIdentity?.voice ?? null,
       positioning: brandKit?.brandIdentity?.positioning ?? null,
       brief: brief || null,
+      ohneisMethod:
+        type === "business-card" ? null : OHNEIS_COLLATERAL_COPY_METHOD,
       task: `Write the copy for this ${type} as specified.`,
     },
     null,

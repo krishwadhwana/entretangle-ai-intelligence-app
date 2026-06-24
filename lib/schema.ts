@@ -522,7 +522,7 @@ export const PlannerOutputSchema = z.object({
         name: z.string(),
         mission: z.string(),
         params: BlockParamsSchema.default({}),
-      })
+      }),
     )
     .min(2)
     .max(4),
@@ -544,7 +544,9 @@ export const VenturePlanningContextSchema = z.object({
   productSpecifics: z.array(z.string()).max(12).default([]),
   planningNotes: z.array(z.string()).max(10).default([]),
 });
-export type VenturePlanningContext = z.infer<typeof VenturePlanningContextSchema>;
+export type VenturePlanningContext = z.infer<
+  typeof VenturePlanningContextSchema
+>;
 
 const DeskPlanSchema = z.object({
   name: z.string(),
@@ -568,7 +570,7 @@ export const CohortPlanSchema = z.object({
         country: z.string(),
         lat: z.number().min(-90).max(90),
         lng: z.number().min(-180).max(180),
-      })
+      }),
     )
     .min(1)
     .max(60),
@@ -579,7 +581,7 @@ export const CohortPlanSchema = z.object({
         segment: SegmentSchema,
         role: RoleSchema,
         weightPct: z.number().min(0).max(100),
-      })
+      }),
     )
     .min(4)
     .max(160),
@@ -632,7 +634,7 @@ export const CohortSimOutputSchema = z.object({
         reasoning: cappedStr(1000).default(""),
         personality: cappedStr(700).default(""),
         personalityTraits: cappedArr(12).default([]),
-      })
+      }),
     )
     .min(1)
     .max(60),
@@ -649,7 +651,7 @@ export const ExecutorOutputSchema = z.object({
         confidence: z.number().min(0).max(1),
         entities: z.array(z.string()).min(1),
         sources: z.array(z.string()).min(1),
-      })
+      }),
     )
     .min(1)
     .max(5),
@@ -664,7 +666,7 @@ export const EntanglerOutputSchema = z.object({
         toBlockId: z.string(),
         trigger: z.enum(["shared_entity", "contradiction", "dependency"]),
         reason: z.string().max(140),
-      })
+      }),
     )
     .default([]),
   synthesisBlocks: z
@@ -674,7 +676,7 @@ export const EntanglerOutputSchema = z.object({
         mission: z.string(),
         inputBlockIds: z.array(z.string()).min(1),
         domain: DomainSchema.default("synthesis"),
-      })
+      }),
     )
     .max(4)
     .default([]),
@@ -709,7 +711,7 @@ export const AudienceChatOutputSchema = z.object({
         content: z.string().min(1).max(900),
         intentAfter: z.number().min(0).max(1).nullable().default(null),
         objection: z.string().max(180).nullable().default(null),
-      })
+      }),
     )
     .min(1)
     .max(8),
@@ -821,7 +823,7 @@ export const SocialGuidelinesSchema = z.object({
         cadence: z.string(),
         formats: z.array(z.string()).default([]),
         notes: z.string().default(""),
-      })
+      }),
     )
     .default([]),
 });
@@ -853,7 +855,7 @@ export const FinNumSchema = z.object({
   // value can never fail the parse and silently wipe the saved dashboard.
   value: z.preprocess(
     (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0),
-    z.number()
+    z.number(),
   ),
   unit: z.string().default(""),
   source: FinSourceSchema.default("ai_estimated"),
@@ -970,7 +972,7 @@ export const FinancialInputsSchema = z.object({
         amount: z.number(),
         note: z.string().default(""),
         sourceConclusionIds: z.array(z.string()).default([]),
-      })
+      }),
     )
     .min(1),
   // Candidate price points to model (retail price per unit).
@@ -981,7 +983,7 @@ export const FinancialInputsSchema = z.object({
         segment: SegmentSchema.nullable().default(null),
         price: z.number(),
         landedCogs: z.number().nullable().default(null), // null → sum costStructure
-      })
+      }),
     )
     .min(1)
     .max(6),
@@ -1344,7 +1346,7 @@ export const InvestorKitArtifactsSchema = z.object({
         question: z.string(),
         answer: z.string(),
         evidenceIds: z.array(z.string()).default([]),
-      })
+      }),
     )
     .default([]),
   useOfFundsPlan: z.array(z.string()).default([]),
@@ -1592,6 +1594,183 @@ const EMPTY_USAGE_LEDGER = {
   updatedAt: null,
 };
 
+export const ProjectModuleIntentSchema = z.object({
+  moduleId: z.string(),
+  label: z.string(),
+  intent: z.string().min(1).max(2000),
+  reason: z.string().default(""),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectModuleIntent = z.infer<typeof ProjectModuleIntentSchema>;
+
+export const ProjectModuleRegistrySchema = z.object({
+  intents: z.record(ProjectModuleIntentSchema).default({}),
+  updatedAt: z.string().nullable().default(null),
+});
+export type ProjectModuleRegistry = z.infer<typeof ProjectModuleRegistrySchema>;
+
+const EMPTY_MODULE_REGISTRY = {
+  intents: {},
+  updatedAt: null,
+};
+
+export const AssetLibraryStatusSchema = z.enum(["good", "medium", "reject"]);
+export type AssetLibraryStatus = z.infer<typeof AssetLibraryStatusSchema>;
+
+export const AssetLibraryRatingSchema = z.object({
+  assetId: z.string(),
+  type: z.string(),
+  title: z.string(),
+  status: AssetLibraryStatusSchema,
+  updatedAt: z.string(),
+});
+export type AssetLibraryRating = z.infer<typeof AssetLibraryRatingSchema>;
+
+export const ProjectAssetLibrarySchema = z.object({
+  ratings: z.record(AssetLibraryRatingSchema).default({}),
+  updatedAt: z.string().nullable().default(null),
+});
+export type ProjectAssetLibrary = z.infer<typeof ProjectAssetLibrarySchema>;
+
+const EMPTY_ASSET_LIBRARY = {
+  ratings: {},
+  updatedAt: null,
+};
+
+export const ProjectFolderSchema = z.object({
+  id: z.string(),
+  moduleId: z.string(),
+  name: z.string().min(1).max(120),
+  description: z.string().max(2000).default(""),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectFolder = z.infer<typeof ProjectFolderSchema>;
+
+export const ProjectCampaignStatusSchema = z.enum([
+  "draft",
+  "active",
+  "paused",
+  "complete",
+]);
+export type ProjectCampaignStatus = z.infer<typeof ProjectCampaignStatusSchema>;
+
+export const ProjectCampaignSchema = z.object({
+  id: z.string(),
+  moduleId: z.string(),
+  folderId: z.string().nullable().default(null),
+  name: z.string().min(1).max(120),
+  description: z.string().max(3000).default(""),
+  status: ProjectCampaignStatusSchema.default("draft"),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type ProjectCampaign = z.infer<typeof ProjectCampaignSchema>;
+
+export const GenerationCountSchema = z.union([
+  z.literal(1),
+  z.literal(3),
+  z.literal(5),
+  z.literal(10),
+]);
+export type GenerationCount = z.infer<typeof GenerationCountSchema>;
+
+export const ProjectGenerationPreferenceSchema = z.object({
+  moduleId: z.string(),
+  count: GenerationCountSchema,
+  updatedAt: z.string(),
+});
+export type ProjectGenerationPreference = z.infer<
+  typeof ProjectGenerationPreferenceSchema
+>;
+
+export const PrintColorSourceSchema = z.enum([
+  "approximation",
+  "user_entered",
+  "licensed_exact",
+]);
+export type PrintColorSource = z.infer<typeof PrintColorSourceSchema>;
+
+const PrintColorSetSchema = z.object({
+  primary: z.string().max(80).default(""),
+  secondary: z.string().max(80).default(""),
+  accent: z.string().max(80).default(""),
+});
+
+const EMPTY_PRINT_COLOR_SET = {
+  primary: "",
+  secondary: "",
+  accent: "",
+};
+
+export const ProjectPrintSpecSchema = z.object({
+  cmyk: PrintColorSetSchema.default(EMPTY_PRINT_COLOR_SET),
+  pantone: PrintColorSetSchema.default(EMPTY_PRINT_COLOR_SET),
+  exactPantoneSource: PrintColorSourceSchema.default("approximation"),
+  notes: z.string().max(2000).default(""),
+  updatedAt: z.string().nullable().default(null),
+});
+export type ProjectPrintSpec = z.infer<typeof ProjectPrintSpecSchema>;
+
+const EMPTY_PRINT_SPEC = {
+  cmyk: EMPTY_PRINT_COLOR_SET,
+  pantone: EMPTY_PRINT_COLOR_SET,
+  exactPantoneSource: "approximation" as const,
+  notes: "",
+  updatedAt: null,
+};
+
+export const MetaPixelStatusSchema = z.enum([
+  "not_connected",
+  "planned",
+  "connected",
+]);
+export type MetaPixelStatus = z.infer<typeof MetaPixelStatusSchema>;
+
+export const ProjectMetaPixelSchema = z.object({
+  status: MetaPixelStatusSchema.default("not_connected"),
+  pixelId: z.string().max(120).default(""),
+  notes: z.string().max(2000).default(""),
+  updatedAt: z.string().nullable().default(null),
+});
+export type ProjectMetaPixel = z.infer<typeof ProjectMetaPixelSchema>;
+
+const EMPTY_META_PIXEL = {
+  status: "not_connected" as const,
+  pixelId: "",
+  notes: "",
+  updatedAt: null,
+};
+
+export const ProjectIntegrationsSchema = z.object({
+  metaPixel: ProjectMetaPixelSchema.default(EMPTY_META_PIXEL),
+});
+export type ProjectIntegrations = z.infer<typeof ProjectIntegrationsSchema>;
+
+const EMPTY_PROJECT_INTEGRATIONS = {
+  metaPixel: EMPTY_META_PIXEL,
+};
+
+export const ProjectWorkspaceSchema = z.object({
+  folders: z.array(ProjectFolderSchema).default([]),
+  campaigns: z.array(ProjectCampaignSchema).default([]),
+  generationPrefs: z.record(ProjectGenerationPreferenceSchema).default({}),
+  printSpec: ProjectPrintSpecSchema.default(EMPTY_PRINT_SPEC),
+  integrations: ProjectIntegrationsSchema.default(EMPTY_PROJECT_INTEGRATIONS),
+  updatedAt: z.string().nullable().default(null),
+});
+export type ProjectWorkspace = z.infer<typeof ProjectWorkspaceSchema>;
+
+const EMPTY_PROJECT_WORKSPACE = {
+  folders: [],
+  campaigns: [],
+  generationPrefs: {},
+  printSpec: EMPTY_PRINT_SPEC,
+  integrations: EMPTY_PROJECT_INTEGRATIONS,
+  updatedAt: null,
+};
+
 export const OwnerDashboardSchema = z.object({
   founderStory: FounderStorySectionSchema.default(EMPTY_FOUNDER_STORY),
   brandSocial: BrandSocialSectionSchema.default({
@@ -1616,11 +1795,19 @@ export const OwnerDashboardSchema = z.object({
   // Project-level brand design tokens (palette, type, logo direction) that the
   // design generators (collateral, logos, website) all consume.
   designStudio: DesignStudioSectionSchema.default(EMPTY_DESIGN_STUDIO),
+  // Project-level business option registry. A saved intent explains how a
+  // module that does not obviously fit the project should be used anyway.
+  moduleRegistry: ProjectModuleRegistrySchema.default(EMPTY_MODULE_REGISTRY),
+  // Project-level asset rating library. Generated assets can be sorted into
+  // Good / Medium / Reject without mutating the generator-specific asset.
+  assetLibrary: ProjectAssetLibrarySchema.default(EMPTY_ASSET_LIBRARY),
+  // Project-level workspace primitives for folders, campaigns, print specs,
+  // generation settings and future integrations.
+  projectWorkspace: ProjectWorkspaceSchema.default(EMPTY_PROJECT_WORKSPACE),
   // Project-level LLM spend ledger, broken down by feature.
   usage: UsageLedgerSchema.default(EMPTY_USAGE_LEDGER),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
-
 
 // Intake interview (Shot 8, v2.1: structured MCQ): either the next question
 // — with clickable options, Cursor-style — or the final profile. The UI
@@ -1752,7 +1939,7 @@ export const PlanningTemplateSchema = z.object({
         name: z.string(),
         domain: DomainSchema,
         why: z.string().default(""),
-      })
+      }),
     )
     .max(16)
     .default([]),
@@ -1770,7 +1957,7 @@ export const IndustryKnowledgePackSchema = z.object({
       z.object({
         text: z.string(),
         source: z.string().default(""),
-      })
+      }),
     )
     .max(20)
     .default([]),
@@ -1908,7 +2095,12 @@ export const LaunchSimInputsSchema = z.object({
   returnShippingPerOrder: z.number().nonnegative().nullable().default(null), // null → shippingPerOrder
 
   // --- inventory ---
-  initialInventoryUnits: z.number().int().nonnegative().nullable().default(null), // null → derived from demand
+  initialInventoryUnits: z
+    .number()
+    .int()
+    .nonnegative()
+    .nullable()
+    .default(null), // null → derived from demand
   reorderLeadTimeDays: z.number().int().min(0).max(180).default(30),
   reorderEnabled: z.boolean().default(true),
   // Minimum order quantity: reorders are placed in whole MOQ batches (realistic
@@ -1956,7 +2148,11 @@ export const LaunchSimStepSchema = z.object({
 });
 export type LaunchSimStep = z.infer<typeof LaunchSimStepSchema>;
 
-const NameCount = z.object({ name: z.string(), orders: z.number(), revenue: z.number() });
+const NameCount = z.object({
+  name: z.string(),
+  orders: z.number(),
+  revenue: z.number(),
+});
 const LaunchChannelResult = z.object({
   id: z.string(),
   name: z.string(),
@@ -2030,7 +2226,10 @@ export const LaunchSimResultSchema = z.object({
     byLocality: z.array(NameCount),
     byAgeBand: z.array(NameCount),
     byGender: z.array(NameCount),
-    newVsReturning: z.object({ newCustomers: z.number(), returningOrders: z.number() }),
+    newVsReturning: z.object({
+      newCustomers: z.number(),
+      returningOrders: z.number(),
+    }),
   }),
   assumptions: z.array(LaunchAssumptionSchema).default([]),
 });
@@ -2195,7 +2394,11 @@ export const ExportViabilityReportSchema = z.object({
   resolvedInputs: ExportSimInputsSchema,
   scenarios: z.array(ExportScenarioResultSchema),
   recommended: z
-    .object({ path: FulfillmentPathSchema, requiredPrice: z.number(), reason: z.string() })
+    .object({
+      path: FulfillmentPathSchema,
+      requiredPrice: z.number(),
+      reason: z.string(),
+    })
     .nullable(),
   // ± bands on the recommended path's required price — the honest answer given
   // FX / tariff / de-minimis uncertainty (the live-sourced inputs that move most).

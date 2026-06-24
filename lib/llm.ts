@@ -142,6 +142,7 @@ import {
   mockBrandKit,
   mockInspiration,
 } from "./fixtures/venture-sim";
+import { OHNEIS_AD_VISUAL_METHOD } from "./ohneis";
 import {
   DEMOGRAPHICS_SYSTEM,
   DemographicsOutputSchema,
@@ -1693,6 +1694,7 @@ export async function callAdVisualImage(args: {
   const prompt = [
     `Create the main advertising visual for a ${args.type} social ad.`,
     `Founder visual brief: ${args.visualBrief}`,
+    OHNEIS_AD_VISUAL_METHOD,
     `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
     `Category: ${args.profile.category || "unknown"}.`,
     productNotes,
@@ -1701,7 +1703,7 @@ export async function callAdVisualImage(args: {
       : "",
     `Brand palette: primary ${args.tokens.palette.primary}, secondary ${args.tokens.palette.secondary}, accent ${args.tokens.palette.accent}, light ${args.tokens.palette.neutralLight}, dark ${args.tokens.palette.neutralDark}.`,
     `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
-    "Do not include readable text, logos, watermarks, UI, packaging labels, or typography in the image. Leave clean areas for overlaid ad copy. Make it polished, commercial, and specific to the brief.",
+    "Do not create readable text, logos, watermarks, UI, or typography in the image. If a product reference includes packaging, preserve broad product shape, color, material, finish, and label-placement cues without inventing legible text. Leave clean areas for overlaid ad copy. Make it polished, commercial, and specific to the brief.",
   ]
     .filter(Boolean)
     .join("\n");
