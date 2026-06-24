@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { z } from "zod";
 import { config } from "./config";
 import {
@@ -63,6 +63,7 @@ import {
   type FinalReport,
   type ChatMessage,
   type ClientProfile,
+  type ProductImageRef,
   type Conclusion,
   type Cohort,
   type Persona,
@@ -181,6 +182,12 @@ const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
 const FINANCIALS_COMPLETION_BUDGET = 6000;
 const PRODUCT_IMAGE_TIMEOUT_MS = 25_000;
 const DESIGN_IMAGE_TIMEOUT_MS = 120_000;
+
+export type ProductImageInput = {
+  ref: ProductImageRef;
+  dataUrl?: string;
+  buffer?: Buffer;
+};
 
 function baseParams(
   model: string = config.model
@@ -1621,7 +1628,8 @@ export async function callSiteGenerator(
   profile: ClientProfile,
   tokens: DesignTokens,
   brandKit: BrandKit | null,
-  brief: string
+  brief: string,
+  productImages: ProductImageInput[] = []
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
     return SiteGenOutputSchema.parse({
@@ -1640,7 +1648,19 @@ export async function callSiteGenerator(
     projectId,
     feature: "design.site",
     system: SITE_GEN_SYSTEM,
-    user: siteGenUser(profile, tokens, brandKit, brief),
+    user: siteGenUser(
+      profile,
+      tokens,
+      brandKit,
+      brief,
+      productImages.map((image, index) => ({
+        placeholder: `PRODUCT_IMAGE_${index + 1}`,
+        name: image.ref.name,
+        visualSummary: image.ref.visualSummary ?? "",
+        tags: image.ref.tags ?? [],
+        availableForInlineEmbed: Boolean(image.dataUrl),
+      }))
+    ),
     schema: SiteGenOutputSchema,
     maxCompletionTokens: 12000,
     requestTimeoutMs: DESIGN_SITE_TIMEOUT_MS,
@@ -1656,12 +1676,26 @@ export async function callAdVisualImage(args: {
   brandKit: BrandKit | null;
   visualBrief: string;
   copy: CollateralContent;
+  productImages?: ProductImageInput[];
 }): Promise<{ dataUrl: string; prompt: string }> {
+  const usableRefs = (args.productImages ?? [])
+    .filter((image) => image.buffer)
+    .slice(0, 3);
+  const productNotes = (args.productImages ?? [])
+    .map((image, index) => {
+      const tags = image.ref.tags?.length ? ` Tags: ${image.ref.tags.join(", ")}.` : "";
+      const summary = image.ref.visualSummary
+        ? ` Summary: ${image.ref.visualSummary}`
+        : "";
+      return `Product reference ${index + 1}: ${image.ref.name}.${summary}${tags}`;
+    })
+    .join("\n");
   const prompt = [
     `Create the main advertising visual for a ${args.type} social ad.`,
     `Founder visual brief: ${args.visualBrief}`,
     `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
     `Category: ${args.profile.category || "unknown"}.`,
+    productNotes,
     args.brandKit?.brandIdentity?.positioning
       ? `Positioning: ${args.brandKit.brandIdentity.positioning}.`
       : "",
@@ -1672,17 +1706,34 @@ export async function callAdVisualImage(args: {
     .filter(Boolean)
     .join("\n");
 
-  const response = await client().images.generate(
-    {
-      model: process.env.IMAGE_MODEL ?? "gpt-image-1",
-      prompt,
-      n: 1,
-      size: args.type === "flyer" ? "1024x1536" : "1024x1024",
-      quality: "medium",
-      output_format: "png",
-    },
-    { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
-  );
+  const imageParams = {
+    model: process.env.IMAGE_MODEL ?? "gpt-image-1",
+    prompt,
+    n: 1,
+    size: args.type === "flyer" ? "1024x1536" : "1024x1024",
+    quality: "medium" as const,
+    output_format: "png" as const,
+  };
+  const response = usableRefs.length
+    ? await client().images.edit(
+        {
+          ...imageParams,
+          image: await Promise.all(
+            usableRefs.map((image, index) =>
+              toFile(
+                image.buffer!,
+                image.ref.name || `product-reference-${index + 1}.png`,
+                { type: image.ref.mimeType }
+              )
+            )
+          ),
+        },
+        { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
+      )
+    : await client().images.generate(imageParams, {
+        timeout: DESIGN_IMAGE_TIMEOUT_MS,
+        maxRetries: 0,
+      });
 
   if (response.usage) {
     await recordProjectOnlyUsage(

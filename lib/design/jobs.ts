@@ -6,6 +6,7 @@ import {
   callCollateralCopy,
   callDesignTokens,
   callLogoMarks,
+  type ProductImageInput,
   callSiteGenerator,
 } from "../llm";
 import {
@@ -24,6 +25,8 @@ import {
   saveSiteAsset,
 } from "../store";
 import { looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
+import { readProductImageFile } from "../productImages";
+import type { ProductImageRef } from "../schema";
 
 const BasePayloadSchema = z.object({
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
@@ -40,6 +43,7 @@ const LogoPayloadSchema = BasePayloadSchema.extend({
 const CollateralPayloadSchema = BasePayloadSchema.extend({
   type: CollateralTypeSchema,
   brief: z.string().trim().max(2000).default(""),
+  visualMode: z.enum(["layout", "ai", "product"]).default("layout"),
   visualBrief: z.string().trim().max(2000).default(""),
   content: CollateralContentSchema.optional(),
 });
@@ -64,6 +68,37 @@ async function projectOrThrow(projectId: string) {
   return project;
 }
 
+async function loadProductImageInputs(
+  projectId: string,
+  images: ProductImageRef[] | undefined
+): Promise<ProductImageInput[]> {
+  const refs = (images ?? []).slice(0, 4);
+  return Promise.all(
+    refs.map(async (ref) => {
+      try {
+        const buffer = await readProductImageFile(projectId, ref);
+        return {
+          ref,
+          buffer,
+          dataUrl: `data:${ref.mimeType};base64,${buffer.toString("base64")}`,
+        };
+      } catch {
+        return { ref };
+      }
+    })
+  );
+}
+
+function replaceProductImagePlaceholders(
+  html: string,
+  productImages: ProductImageInput[]
+): string {
+  return productImages.reduce((out, image, index) => {
+    if (!image.dataUrl) return out;
+    return out.replaceAll(`PRODUCT_IMAGE_${index + 1}`, image.dataUrl);
+  }, html);
+}
+
 export async function runDesignStudioJob(args: {
   type: "design_tokens" | "design_logo" | "design_collateral" | "design_site";
   projectId: string;
@@ -73,6 +108,10 @@ export async function runDesignStudioJob(args: {
   const profile = project.ventureProfile;
   if (!profile) throw new Error("Finish the venture intake first.");
   const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
+  const productImages = await loadProductImageInputs(
+    args.projectId,
+    profile.productImages
+  );
 
   if (args.type === "design_tokens") {
     const payload = TokensPayloadSchema.parse(args.payload ?? {});
@@ -145,16 +184,25 @@ export async function runDesignStudioJob(args: {
         brandKit,
         payload.brief
       ));
+    const shouldGenerateVisual =
+      payload.type !== "business-card" && payload.visualMode !== "layout";
+    const visualBrief =
+      payload.visualBrief ||
+      (payload.visualMode === "product"
+        ? "Use the uploaded product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
+        : "");
     const visual =
-      payload.visualBrief && payload.type !== "business-card"
+      shouldGenerateVisual
         ? await callAdVisualImage({
             projectId: args.projectId,
             type: payload.type,
             profile,
             tokens,
             brandKit,
-            visualBrief: payload.visualBrief,
+            visualBrief,
             copy: content,
+            productImages:
+              payload.visualMode === "product" ? productImages : undefined,
           })
         : null;
     const { svg, width, height } = await renderCollateral(payload.type, tokens, content, {
@@ -169,7 +217,7 @@ export async function runDesignStudioJob(args: {
       width,
       height,
       content,
-      ...(payload.visualBrief ? { visualBrief: payload.visualBrief } : {}),
+      ...(visualBrief ? { visualBrief } : {}),
       createdAt: new Date().toISOString(),
     });
     const studio = await saveDesignAsset(args.projectId, asset);
@@ -183,9 +231,12 @@ export async function runDesignStudioJob(args: {
     profile,
     tokens,
     brandKit,
-    payload.brief
+    payload.brief,
+    productImages
   );
-  const html = sanitizeSiteHtml(out.html);
+  const html = sanitizeSiteHtml(
+    replaceProductImagePlaceholders(out.html, productImages)
+  );
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");
   const site = SiteAssetSchema.parse({
     id: `site-${Date.now().toString(36)}`,

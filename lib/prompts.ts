@@ -1547,8 +1547,10 @@ Hard requirements:
 - ALL styling in one inline <style> block. NO external CSS, NO frameworks, NO
   build step. You MAY include ONE Google Fonts <link> for the token fonts.
 - NO JavaScript at all: no <script>, no inline on* handlers, no trackers, no
-  external images (use CSS color/gradient/shape backgrounds, emoji, or inline
-  SVG only). Self-contained so it can be deployed as a static index.html.
+  external images. If productImages are provided, you MAY use their exact
+  placeholders as <img src="PRODUCT_IMAGE_1">, etc.; otherwise use CSS
+  color/shape backgrounds or inline SVG only. Self-contained so it can be
+  deployed as a static index.html.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
@@ -1569,7 +1571,14 @@ export function siteGenUser(
   profile: ClientProfile,
   tokensJson: unknown,
   brandKit: BrandKit | null,
-  brief: string
+  brief: string,
+  productImages: Array<{
+    placeholder: string;
+    name: string;
+    visualSummary: string;
+    tags: string[];
+    availableForInlineEmbed: boolean;
+  }> = []
 ): string {
   return JSON.stringify(
     {
@@ -1578,6 +1587,7 @@ export function siteGenUser(
       brandVoice: brandKit?.brandIdentity?.voice ?? null,
       positioning: brandKit?.brandIdentity?.positioning ?? null,
       contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
+      productImages,
       brief: brief || null,
       task: "Design and write the one-page landing site as specified.",
     },
