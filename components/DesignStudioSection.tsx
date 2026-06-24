@@ -241,6 +241,12 @@ function downloadHtml(site: SiteAsset) {
   downloadBlob(new Blob([site.html], { type: "text/html" }), "index.html");
 }
 
+function openHtmlPreview(site: SiteAsset) {
+  const url = URL.createObjectURL(new Blob([site.html], { type: "text/html" }));
+  window.open(url, "_blank", "noopener,noreferrer");
+  window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 function SiteCard({
   site,
   deployEnabled,
@@ -254,15 +260,36 @@ function SiteCard({
   onDeploy: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const [loaded, setLoaded] = useState(false);
+  const hasHtml = site.html.trim().length > 0;
+
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-      {/* Live preview of the self-contained, script-free page. */}
-      <iframe
-        title={site.title}
-        srcDoc={site.html}
-        sandbox=""
-        className="h-72 w-full border-0 bg-white"
-      />
+      <div className="relative h-72 bg-neutral-50">
+        {hasHtml ? (
+          <>
+            {/* Live preview of the self-contained, script-free page. */}
+            <iframe
+              key={`${site.id}-${site.createdAt}`}
+              title={site.title}
+              srcDoc={site.html}
+              sandbox="allow-forms allow-popups"
+              onLoad={() => setLoaded(true)}
+              className="block h-72 w-full border-0 bg-white"
+            />
+            {!loaded ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white text-[11px] text-neutral-400">
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Loading preview…
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <div className="flex h-full items-center justify-center text-[12px] text-neutral-400">
+            Preview HTML is empty.
+          </div>
+        )}
+      </div>
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
         <p className="truncate text-[11px] text-neutral-500">{site.title}</p>
         <div className="flex shrink-0 items-center gap-1">
@@ -283,6 +310,14 @@ function SiteCard({
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
+          </button>
+          <button
+            onClick={() => openHtmlPreview(site)}
+            disabled={!hasHtml}
+            title="Open preview in a new tab"
+            className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
           </button>
           {deployEnabled ? (
             <button
