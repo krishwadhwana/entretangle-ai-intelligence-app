@@ -51,6 +51,7 @@ import type {
   AssetLibraryStatus,
   ChatMessage,
   ClientProfile,
+  DashboardProjectOrganizer,
   DesignAsset,
   GenerationCount,
   InterviewTranscript,
@@ -147,6 +148,7 @@ type ProjectData = {
       logos?: LogoAsset[];
       sites?: SiteAsset[];
     };
+    dashboardOrganizer?: DashboardProjectOrganizer;
     moduleRegistry?: {
       intents?: Record<string, ProjectModuleIntent>;
       updatedAt?: string | null;
@@ -195,6 +197,46 @@ type DashboardProjectStatus =
 type DashboardProjectRow = ProjectData & {
   hasPreview: boolean;
 };
+type DashboardFolderSummary = {
+  id: string;
+  name: string;
+  color: string;
+  note: string;
+  projectIds: string[];
+  updatedAt: string | null;
+};
+type DashboardFolderFilter = "all" | "unfiled" | string;
+type DashboardNoteTarget =
+  | {
+      type: "project";
+      id: string;
+      title: string;
+      note: string;
+    }
+  | {
+      type: "folder";
+      id: string;
+      title: string;
+      note: string;
+    };
+
+const EMPTY_DASHBOARD_ORGANIZER_CLIENT: DashboardProjectOrganizer = {
+  folderId: null,
+  folderName: "",
+  folderColor: "neutral",
+  folderNote: "",
+  projectNote: "",
+  updatedAt: null,
+};
+
+const DASHBOARD_FOLDER_COLORS = [
+  "indigo",
+  "emerald",
+  "amber",
+  "rose",
+  "sky",
+  "violet",
+];
 
 type DocSummary = {
   id: string;
@@ -589,6 +631,89 @@ function hostForUrl(url?: string | null): string {
   } catch {
     return url;
   }
+}
+
+function dashboardOrganizerFor(
+  project: Pick<ProjectData, "ownerDashboard">,
+): DashboardProjectOrganizer {
+  return (
+    project.ownerDashboard?.dashboardOrganizer ??
+    EMPTY_DASHBOARD_ORGANIZER_CLIENT
+  );
+}
+
+function projectInitials(name: string): string {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  if (parts.length === 0) return "ET";
+  return parts.map((part) => part.charAt(0).toUpperCase()).join("");
+}
+
+function projectLogoSrc(project: ProjectData): string | null {
+  const logoSvg =
+    project.ownerDashboard?.designStudio?.logos?.[0]?.variants?.find(
+      (variant) => variant.kind === "icon",
+    )?.svg ??
+    project.ownerDashboard?.designStudio?.logos?.[0]?.variants?.[0]?.svg;
+  if (logoSvg?.trim()) {
+    return `data:image/svg+xml;utf8,${encodeURIComponent(logoSvg)}`;
+  }
+  const host = hostForUrl(project.websiteAnalysis?.url);
+  if (!host) return null;
+  return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(
+    host,
+  )}`;
+}
+
+function dashboardFolderTone(color: string) {
+  if (color === "emerald") {
+    return "border-emerald-200 bg-emerald-50 text-emerald-700";
+  }
+  if (color === "amber") return "border-amber-200 bg-amber-50 text-amber-700";
+  if (color === "rose") return "border-rose-200 bg-rose-50 text-rose-700";
+  if (color === "sky") return "border-sky-200 bg-sky-50 text-sky-700";
+  if (color === "violet") {
+    return "border-violet-200 bg-violet-50 text-violet-700";
+  }
+  if (color === "indigo") {
+    return "border-indigo-200 bg-indigo-50 text-indigo-700";
+  }
+  return "border-neutral-200 bg-neutral-100 text-neutral-600";
+}
+
+function ProjectMark({
+  project,
+  size = "md",
+}: {
+  project: ProjectData;
+  size?: "sm" | "md";
+}) {
+  const [imageFailed, setImageFailed] = useState(false);
+  const src = projectLogoSrc(project);
+  const initials = projectInitials(project.name);
+  const className =
+    size === "sm"
+      ? "h-8 w-8 rounded-lg text-[11px]"
+      : "h-10 w-10 rounded-xl text-xs";
+  return (
+    <span
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden border border-neutral-200 bg-white font-semibold text-neutral-700 shadow-sm ${className}`}
+    >
+      {src && !imageFailed ? (
+        <img
+          src={src}
+          alt=""
+          onError={() => setImageFailed(true)}
+          className="h-full w-full object-contain p-1"
+        />
+      ) : (
+        initials
+      )}
+    </span>
+  );
 }
 
 function priceRangeText(
@@ -2662,6 +2787,17 @@ function IntakePageInner() {
     useState<DashboardSort>("updated-desc");
   const [dashboardStatusFilter, setDashboardStatusFilter] =
     useState<DashboardStatusFilter>("all");
+  const [dashboardFolderFilter, setDashboardFolderFilter] =
+    useState<DashboardFolderFilter>("all");
+  const [folderCreateOpen, setFolderCreateOpen] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
+  const [newFolderNote, setNewFolderNote] = useState("");
+  const [noteTarget, setNoteTarget] = useState<DashboardNoteTarget | null>(
+    null,
+  );
+  const [noteDraft, setNoteDraft] = useState("");
+  const [savingDashboardOrganizer, setSavingDashboardOrganizer] =
+    useState(false);
   const [createOpen, setCreateOpen] = useState(false);
   const [newProjectName, setNewProjectName] = useState("");
   const [creatingProject, setCreatingProject] = useState(false);
@@ -3143,6 +3279,196 @@ function IntakePageInner() {
       else next.add(id);
       return next;
     });
+  }
+
+  function updateDashboardOrganizerInState(
+    id: string,
+    organizer: DashboardProjectOrganizer,
+  ) {
+    setProjectPreviews((prev) =>
+      prev.map((p) => {
+        if (p.id !== id) return p;
+        const ownerDashboard = p.ownerDashboard ?? {};
+        return {
+          ...p,
+          ownerDashboard: {
+            ...ownerDashboard,
+            dashboardOrganizer: organizer,
+          },
+        };
+      }),
+    );
+  }
+
+  async function saveDashboardOrganizerForProject(
+    id: string,
+    patch: Partial<
+      Pick<
+        DashboardProjectOrganizer,
+        | "folderId"
+        | "folderName"
+        | "folderColor"
+        | "folderNote"
+        | "projectNote"
+      >
+    >,
+  ) {
+    const res = await fetch(`/api/projects/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ dashboardOrganizer: patch }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.dashboardOrganizer) {
+      throw new Error(`Dashboard organizer save failed (${res.status})`);
+    }
+    const organizer = data.dashboardOrganizer as DashboardProjectOrganizer;
+    updateDashboardOrganizerInState(id, organizer);
+    return organizer;
+  }
+
+  function openProjectNote(project: ProjectData) {
+    const organizer = dashboardOrganizerFor(project);
+    setNoteTarget({
+      type: "project",
+      id: project.id,
+      title: project.name,
+      note: organizer.projectNote,
+    });
+    setNoteDraft(organizer.projectNote);
+  }
+
+  function openFolderNote(folder: DashboardFolderSummary) {
+    setNoteTarget({
+      type: "folder",
+      id: folder.id,
+      title: folder.name,
+      note: folder.note,
+    });
+    setNoteDraft(folder.note);
+  }
+
+  async function createDashboardFolder(e?: React.FormEvent) {
+    e?.preventDefault();
+    const selectedIds = Array.from(compareIds);
+    if (selectedIds.length === 0) {
+      setError("Select one or more projects before creating a folder.");
+      return;
+    }
+    const name = newFolderName.trim();
+    if (!name) {
+      setError("Name the folder before saving it.");
+      return;
+    }
+    const folderId =
+      typeof window !== "undefined" && window.crypto?.randomUUID
+        ? window.crypto.randomUUID()
+        : `folder-${Date.now()}`;
+    const color =
+      DASHBOARD_FOLDER_COLORS[
+        Math.abs(selectedIds.length + dashboardFolders.length) %
+          DASHBOARD_FOLDER_COLORS.length
+      ];
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      await Promise.all(
+        selectedIds.map((id) =>
+          saveDashboardOrganizerForProject(id, {
+            folderId,
+            folderName: name,
+            folderColor: color,
+            folderNote: newFolderNote.trim(),
+          }),
+        ),
+      );
+      setDashboardFolderFilter(folderId);
+      setFolderCreateOpen(false);
+      setNewFolderName("");
+      setNewFolderNote("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Folder save failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function moveSelectedProjectsToFolder(folder: DashboardFolderSummary) {
+    const selectedIds = Array.from(compareIds);
+    if (selectedIds.length === 0) {
+      setError("Select projects first, then choose a folder.");
+      return;
+    }
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      await Promise.all(
+        selectedIds.map((id) =>
+          saveDashboardOrganizerForProject(id, {
+            folderId: folder.id,
+            folderName: folder.name,
+            folderColor: folder.color,
+            folderNote: folder.note,
+          }),
+        ),
+      );
+      setDashboardFolderFilter(folder.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Folder move failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function removeSelectedProjectsFromFolders() {
+    const selectedIds = Array.from(compareIds);
+    if (selectedIds.length === 0) {
+      setError("Select projects first, then remove them from folders.");
+      return;
+    }
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      await Promise.all(
+        selectedIds.map((id) =>
+          saveDashboardOrganizerForProject(id, { folderId: null }),
+        ),
+      );
+      setDashboardFolderFilter("all");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Folder update failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function saveDashboardNote() {
+    if (!noteTarget) return;
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      if (noteTarget.type === "project") {
+        await saveDashboardOrganizerForProject(noteTarget.id, {
+          projectNote: noteDraft.trim(),
+        });
+      } else {
+        const folder = dashboardFolders.find((item) => item.id === noteTarget.id);
+        if (!folder) throw new Error("Folder not found");
+        await Promise.all(
+          folder.projectIds.map((id) =>
+            saveDashboardOrganizerForProject(id, {
+              folderNote: noteDraft.trim(),
+            }),
+          ),
+        );
+      }
+      setNoteTarget(null);
+      setNoteDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Note save failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
   }
 
   async function saveModuleIntent(module: BusinessModule, intent: string) {
@@ -4423,11 +4749,54 @@ function IntakePageInner() {
       hasPreview: false,
     };
   });
+  const dashboardFolders = dashboardSourceProjects.reduce<
+    DashboardFolderSummary[]
+  >((folders, project) => {
+    const organizer = dashboardOrganizerFor(project);
+    if (!organizer.folderId) return folders;
+    const existing = folders.find((folder) => folder.id === organizer.folderId);
+    if (existing) {
+      existing.projectIds.push(project.id);
+      const currentUpdated = existing.updatedAt
+        ? new Date(existing.updatedAt).getTime()
+        : 0;
+      const nextUpdated = organizer.updatedAt
+        ? new Date(organizer.updatedAt).getTime()
+        : 0;
+      if (nextUpdated >= currentUpdated) {
+        existing.name = organizer.folderName || existing.name;
+        existing.color = organizer.folderColor || existing.color;
+        existing.note = organizer.folderNote;
+        existing.updatedAt = organizer.updatedAt;
+      }
+      return folders;
+    }
+    folders.push({
+      id: organizer.folderId,
+      name: organizer.folderName || "Untitled folder",
+      color: organizer.folderColor || "neutral",
+      note: organizer.folderNote,
+      projectIds: [project.id],
+      updatedAt: organizer.updatedAt,
+    });
+    return folders;
+  }, []);
+  dashboardFolders.sort((a, b) => a.name.localeCompare(b.name));
+  const unfiledProjectCount = dashboardSourceProjects.filter(
+    (project) => !dashboardOrganizerFor(project).folderId,
+  ).length;
   const dashboardDetailsReady =
     projects.length === 0 || projectPreviews.length >= projects.length;
   const dashboardProjects = dashboardSourceProjects
     .filter((p) => {
       const q = projectQuery.trim().toLowerCase();
+      const organizer = dashboardOrganizerFor(p);
+      const folderMatch =
+        dashboardFolderFilter === "all" ||
+        (dashboardFolderFilter === "unfiled"
+          ? !organizer.folderId
+          : organizer.folderId === dashboardFolderFilter);
+      if (!folderMatch) return false;
       const status = dashboardProjectStatus(p, p.hasPreview, loadingPreviews);
       const statusMatch =
         dashboardStatusFilter === "all" ||
@@ -4440,6 +4809,9 @@ function IntakePageInner() {
         p.hasPreview ? p.ventureProfile?.category : null,
         p.hasPreview ? p.ventureProfile?.targetAudience : null,
         p.hasPreview ? p.interviewTranscript.brief : null,
+        organizer.folderName,
+        organizer.folderNote,
+        organizer.projectNote,
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(q));
@@ -4534,29 +4906,157 @@ function IntakePageInner() {
       </form>
     </div>
   ) : null;
+  const folderCreateDialog = folderCreateOpen ? (
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
+      <form
+        onSubmit={(e) => void createDashboardFolder(e)}
+        className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-5 shadow-xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              Dashboard folder
+            </p>
+            <h2 className="mt-1 text-lg font-semibold text-neutral-950">
+              Group selected projects
+            </h2>
+            <p className="mt-1 text-xs text-neutral-500">
+              {compareIds.size} selected project
+              {compareIds.size === 1 ? "" : "s"} will move here.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFolderCreateOpen(false)}
+            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <input
+          value={newFolderName}
+          onChange={(e) => setNewFolderName(e.target.value)}
+          placeholder="Folder name"
+          autoFocus
+          className="mt-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+        />
+        <textarea
+          value={newFolderNote}
+          onChange={(e) => setNewFolderNote(e.target.value)}
+          placeholder="Optional folder note"
+          rows={4}
+          className="mt-3 w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+        />
+        <div className="mt-4 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => setFolderCreateOpen(false)}
+            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={savingDashboardOrganizer || compareIds.size === 0}
+            className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            {savingDashboardOrganizer ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FolderOpen className="h-3.5 w-3.5" />
+            )}
+            Create folder
+          </button>
+        </div>
+      </form>
+    </div>
+  ) : null;
+  const dashboardNoteDialog = noteTarget ? (
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
+      <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+              {noteTarget.type === "folder" ? "Folder note" : "Project note"}
+            </p>
+            <h2 className="mt-1 truncate text-lg font-semibold text-neutral-950">
+              {noteTarget.title}
+            </h2>
+          </div>
+          <button
+            type="button"
+            onClick={() => setNoteTarget(null)}
+            className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            title="Close"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <textarea
+          value={noteDraft}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          placeholder="Add a quick note"
+          rows={7}
+          className="mt-4 w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm leading-6 outline-none focus:border-indigo-500"
+        />
+        <div className="mt-4 flex items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={() => setNoteDraft("")}
+            className="rounded-lg px-3 py-2 text-xs font-medium text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
+          >
+            Clear
+          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setNoteTarget(null)}
+              className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveDashboardNote()}
+              disabled={savingDashboardOrganizer}
+              className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+            >
+              {savingDashboardOrganizer ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Save note
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
 
   if (view === "dashboard" || !projectId) {
     return (
-      <main className="min-h-full bg-neutral-50 text-neutral-900">
-        <section className="mx-auto flex w-full max-w-7xl flex-col gap-6 px-5 py-6">
-          <header className="flex flex-col gap-4 border-b border-neutral-200 pb-5 lg:flex-row lg:items-end lg:justify-between">
+      <main className="min-h-full bg-[#f6f7f9] text-neutral-900">
+        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6">
+          <header className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:flex lg:items-center lg:justify-between">
             <div className="max-w-3xl">
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
                 Command center
               </p>
-              <h1 className="mt-1 text-3xl font-semibold tracking-tight text-neutral-950">
+              <h1 className="mt-1 text-2xl font-semibold tracking-tight text-neutral-950">
                 Project dashboard
               </h1>
-              <p className="mt-2 text-sm leading-6 text-neutral-500">
-                Create, open, compare, and manage project workspaces with
-                modules, folders, campaigns, assets, and operational planning.
+              <p className="mt-1 max-w-2xl text-sm leading-6 text-neutral-500">
+                A cleaner workspace for opening projects, grouping related
+                ventures, keeping quick notes, and comparing progress.
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap gap-2 lg:mt-0">
               <button
                 type="button"
                 onClick={openCreateProjectModal}
-                className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3.5 py-2 text-sm font-medium text-white hover:bg-neutral-700"
+                className="flex items-center gap-1.5 rounded-lg bg-neutral-950 px-3.5 py-2 text-sm font-medium text-white shadow-sm hover:bg-neutral-800"
               >
                 <Plus className="h-4 w-4" />
                 New project
@@ -4565,7 +5065,7 @@ function IntakePageInner() {
                 type="button"
                 onClick={() => setCompareNotice(true)}
                 disabled={compareIds.size < 2}
-                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-45"
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45"
               >
                 <BarChart3 className="h-4 w-4" />
                 Compare {compareIds.size > 0 ? `(${compareIds.size})` : ""}
@@ -4573,34 +5073,56 @@ function IntakePageInner() {
             </div>
           </header>
 
-          <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-            <div className="rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-xs font-medium text-neutral-500">Projects</p>
-              <p className="mt-2 text-2xl font-semibold">{projects.length}</p>
+          <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+            <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700">
+                <FolderOpen className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-neutral-500">
+                  Projects
+                </p>
+                <p className="text-xl font-semibold">{projects.length}</p>
+              </div>
             </div>
-            <div className="rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-xs font-medium text-neutral-500">
-                Profiles complete
-              </p>
-              <p className="mt-2 text-2xl font-semibold">
-                {dashboardDetailsReady ? setupCompleteCount : "-"}
-              </p>
+            <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                <CheckCircle2 className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-neutral-500">
+                  Profiles complete
+                </p>
+                <p className="text-xl font-semibold">
+                  {dashboardDetailsReady ? setupCompleteCount : "-"}
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-xs font-medium text-neutral-500">
-                Simulation runs
-              </p>
-              <p className="mt-2 text-2xl font-semibold">
-                {dashboardDetailsReady ? totalRuns : "-"}
-              </p>
+            <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+                <BarChart3 className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-neutral-500">
+                  Runs
+                </p>
+                <p className="text-xl font-semibold">
+                  {dashboardDetailsReady ? totalRuns : "-"}
+                </p>
+              </div>
             </div>
-            <div className="rounded-lg border border-neutral-200 bg-white p-4">
-              <p className="text-xs font-medium text-neutral-500">
-                Completed runs
-              </p>
-              <p className="mt-2 text-2xl font-semibold">
-                {dashboardDetailsReady ? completeRunCount : "-"}
-              </p>
+            <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
+              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div>
+                <p className="text-[11px] font-medium text-neutral-500">
+                  Folders
+                </p>
+                <p className="text-xl font-semibold">
+                  {dashboardFolders.length}
+                </p>
+              </div>
             </div>
           </section>
 
@@ -4613,20 +5135,25 @@ function IntakePageInner() {
           ) : null}
 
           {error ? (
-            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
+            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600 shadow-sm">
               {error}
             </p>
           ) : null}
 
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
             <section className="min-w-0 space-y-3">
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+              <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
                   <div>
-                    <h2 className="text-sm font-semibold">Projects</h2>
+                    <h2 className="text-sm font-semibold">
+                      Projects{" "}
+                      <span className="font-normal text-neutral-400">
+                        ({dashboardProjects.length})
+                      </span>
+                    </h2>
                     <p className="mt-1 text-xs text-neutral-500">
-                      Open a workspace, rename it, delete it, or mark it for a
-                      future comparison.
+                      Select projects to compare, file into folders, or attach
+                      quick notes.
                     </p>
                     {loadingPreviews ? (
                       <p className="mt-1 flex items-center gap-1.5 text-[11px] text-neutral-400">
@@ -4668,14 +5195,14 @@ function IntakePageInner() {
                       value={projectQuery}
                       onChange={(e) => setProjectQuery(e.target.value)}
                       placeholder="Search projects"
-                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500 lg:w-56"
+                      className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-neutral-500 lg:w-56"
                     />
                     <select
                       value={dashboardSort}
                       onChange={(e) =>
                         setDashboardSort(e.target.value as DashboardSort)
                       }
-                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-indigo-500"
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-neutral-500"
                     >
                       <option value="updated-desc">Newest updated</option>
                       <option value="updated-asc">Oldest updated</option>
@@ -4691,7 +5218,7 @@ function IntakePageInner() {
                           e.target.value as DashboardStatusFilter,
                         )
                       }
-                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-indigo-500"
+                      className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm text-neutral-700 outline-none focus:border-neutral-500"
                     >
                       <option value="all">All statuses</option>
                       <option value="setup">Setup</option>
@@ -4701,20 +5228,115 @@ function IntakePageInner() {
                     </select>
                   </div>
                 </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-neutral-100 pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setDashboardFolderFilter("all")}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
+                      dashboardFolderFilter === "all"
+                        ? "border-neutral-900 bg-neutral-950 text-white"
+                        : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    All {dashboardSourceProjects.length}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDashboardFolderFilter("unfiled")}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
+                      dashboardFolderFilter === "unfiled"
+                        ? "border-neutral-900 bg-neutral-950 text-white"
+                        : "border-neutral-200 bg-white text-neutral-600 hover:bg-neutral-50"
+                    }`}
+                  >
+                    Unfiled {unfiledProjectCount}
+                  </button>
+                  {dashboardFolders.map((folder) => {
+                    const active = dashboardFolderFilter === folder.id;
+                    return (
+                      <span
+                        key={folder.id}
+                        className={`inline-flex items-center overflow-hidden rounded-full border text-xs ${dashboardFolderTone(
+                          folder.color,
+                        )} ${active ? "ring-2 ring-neutral-900/10" : ""}`}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setDashboardFolderFilter(folder.id)}
+                          className="flex h-8 max-w-[220px] items-center gap-1.5 px-2.5 font-medium"
+                          title={folder.name}
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{folder.name}</span>
+                          <span className="rounded-full bg-white/70 px-1.5 py-0.5 text-[10px]">
+                            {folder.projectIds.length}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openFolderNote(folder)}
+                          title="Folder note"
+                          className="flex h-8 w-8 items-center justify-center border-l border-current/10 hover:bg-white/55"
+                        >
+                          <FileText
+                            className={`h-3.5 w-3.5 ${
+                              folder.note ? "fill-current/10" : ""
+                            }`}
+                          />
+                        </button>
+                        {compareIds.size > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() =>
+                              void moveSelectedProjectsToFolder(folder)
+                            }
+                            disabled={savingDashboardOrganizer}
+                            title="Move selected here"
+                            className="flex h-8 w-8 items-center justify-center border-l border-current/10 hover:bg-white/55 disabled:opacity-45"
+                          >
+                            <ArrowRight className="h-3.5 w-3.5" />
+                          </button>
+                        ) : null}
+                      </span>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    onClick={() => setFolderCreateOpen(true)}
+                    disabled={compareIds.size === 0}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Folder selected
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void removeSelectedProjectsFromFolders()}
+                    disabled={compareIds.size === 0 || savingDashboardOrganizer}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-500 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                    Unfile
+                  </button>
+                </div>
               </div>
 
               {dashboardProjects.length > 0 ? (
                 dashboardViewMode === "list" ? (
-                  <div className="overflow-hidden rounded-lg border border-neutral-200 bg-white">
-                    <div className="max-h-[620px] overflow-auto">
-                      <table className="min-w-[860px] w-full divide-y divide-neutral-200 text-left text-xs">
+                  <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white shadow-sm">
+                    <div className="max-h-[680px] overflow-auto">
+                      <table className="w-full min-w-[980px] divide-y divide-neutral-200 text-left text-xs">
                         <thead className="sticky top-0 z-10 bg-neutral-50 text-[11px] uppercase tracking-wide text-neutral-400">
                           <tr>
                             <th className="w-12 px-3 py-2 font-semibold">
-                              Compare
+                              Pick
                             </th>
                             <th className="px-3 py-2 font-semibold">
                               Project
+                            </th>
+                            <th className="px-3 py-2 font-semibold">
+                              Folder
                             </th>
                             <th className="px-3 py-2 font-semibold">
                               Status
@@ -4741,34 +5363,65 @@ function IntakePageInner() {
                               : null;
                             return (
                               <tr key={p.id} className="hover:bg-neutral-50">
-                                <td className="px-3 py-3">
+                                <td className="px-3 py-2">
                                   <input
                                     type="checkbox"
                                     checked={compareIds.has(p.id)}
                                     onChange={() => toggleCompareProject(p.id)}
-                                    title="Select for comparison"
+                                    title="Select project"
                                     className="h-4 w-4 rounded accent-indigo-600"
                                   />
                                 </td>
-                                <td className="max-w-[320px] px-3 py-3">
-                                  <button
-                                    type="button"
-                                    onClick={() => switchProject(p.id)}
-                                    className="block max-w-full text-left"
-                                  >
-                                    <span className="block truncate font-semibold text-neutral-950">
-                                      {p.name}
-                                    </span>
-                                    <span className="mt-0.5 block truncate text-neutral-400">
-                                      {dashboardProjectSummary(
-                                        p,
-                                        p.hasPreview,
-                                        loadingPreviews,
-                                      )}
-                                    </span>
-                                  </button>
+                                <td className="max-w-[360px] px-3 py-2">
+                                  <div className="flex min-w-0 items-center gap-2">
+                                    <ProjectMark project={p} size="sm" />
+                                    <button
+                                      type="button"
+                                      onClick={() => switchProject(p.id)}
+                                      className="min-w-0 text-left"
+                                    >
+                                      <span className="block truncate font-semibold text-neutral-950">
+                                        {p.name}
+                                      </span>
+                                      <span className="mt-0.5 block truncate text-neutral-400">
+                                        {dashboardProjectSummary(
+                                          p,
+                                          p.hasPreview,
+                                          loadingPreviews,
+                                        )}
+                                      </span>
+                                    </button>
+                                  </div>
                                 </td>
-                                <td className="px-3 py-3">
+                                <td className="px-3 py-2">
+                                  {(() => {
+                                    const organizer = dashboardOrganizerFor(p);
+                                    return organizer.folderId ? (
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          setDashboardFolderFilter(
+                                            organizer.folderId ?? "all",
+                                          )
+                                        }
+                                        className={`inline-flex max-w-[170px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
+                                          organizer.folderColor,
+                                        )}`}
+                                      >
+                                        <FolderOpen className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">
+                                          {organizer.folderName ||
+                                            "Untitled folder"}
+                                        </span>
+                                      </button>
+                                    ) : (
+                                      <span className="text-neutral-300">
+                                        Unfiled
+                                      </span>
+                                    );
+                                  })()}
+                                </td>
+                                <td className="px-3 py-2">
                                   <span
                                     className={`rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
                                       status,
@@ -4777,7 +5430,7 @@ function IntakePageInner() {
                                     {status}
                                   </span>
                                 </td>
-                                <td className="px-3 py-3 text-neutral-600">
+                                <td className="px-3 py-2 text-neutral-600">
                                   {p.hasPreview
                                     ? `${projectCompletedRunCount(p)} / ${
                                         p.simulationRuns.length
@@ -4789,14 +5442,26 @@ function IntakePageInner() {
                                     </span>
                                   ) : null}
                                 </td>
-                                <td className="px-3 py-3 font-semibold text-neutral-800">
+                                <td className="px-3 py-2 font-semibold text-neutral-800">
                                   {p.hasPreview ? projectAssetTotal(p) : "-"}
                                 </td>
-                                <td className="px-3 py-3 text-neutral-500">
+                                <td className="px-3 py-2 text-neutral-500">
                                   {new Date(p.updatedAt).toLocaleDateString()}
                                 </td>
-                                <td className="px-3 py-3">
+                                <td className="px-3 py-2">
                                   <div className="flex items-center justify-end gap-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => openProjectNote(p)}
+                                      title="Project note"
+                                      className={`rounded-md p-1.5 ${
+                                        dashboardOrganizerFor(p).projectNote
+                                          ? "bg-amber-50 text-amber-700"
+                                          : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                                      }`}
+                                    >
+                                      <FileText className="h-3.5 w-3.5" />
+                                    </button>
                                     <button
                                       type="button"
                                       onClick={() => switchProject(p.id)}
@@ -4831,7 +5496,7 @@ function IntakePageInner() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-3 lg:grid-cols-2">
+                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {dashboardProjects.map((p) => {
                       const completed = p.hasPreview
                         ? projectCompletedRunCount(p)
@@ -4847,30 +5512,73 @@ function IntakePageInner() {
                         p.hasPreview,
                         loadingPreviews,
                       );
+                      const organizer = dashboardOrganizerFor(p);
+                      const runCount = p.hasPreview
+                        ? p.simulationRuns.length
+                        : "-";
+                      const assetCountForProject = p.hasPreview
+                        ? projectAssetTotal(p)
+                        : "-";
                       return (
                         <article
                           key={p.id}
-                          className="rounded-lg border border-neutral-200 bg-white p-4 transition hover:border-indigo-300 hover:shadow-sm"
+                          className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm transition hover:border-neutral-300 hover:shadow-md"
                         >
-                          <div className="flex items-start justify-between gap-3">
-                            <div className="min-w-0">
-                              <span
-                                className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
-                                  status,
-                                )}`}
-                              >
-                                {status}
-                              </span>
-                              <h3 className="mt-2 truncate text-base font-semibold text-neutral-950">
-                                {p.name}
-                              </h3>
-                              <p className="mt-1 line-clamp-2 min-h-10 text-sm leading-5 text-neutral-500">
+                          <div className="flex items-start gap-3">
+                            <ProjectMark project={p} />
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-1.5">
+                                <h3 className="truncate text-sm font-semibold text-neutral-950">
+                                  {p.name}
+                                </h3>
+                                <button
+                                  type="button"
+                                  onClick={() => openProjectNote(p)}
+                                  title="Project note"
+                                  className={`shrink-0 rounded-md p-1 ${
+                                    organizer.projectNote
+                                      ? "bg-amber-50 text-amber-700"
+                                      : "text-neutral-300 hover:bg-neutral-100 hover:text-neutral-700"
+                                  }`}
+                                >
+                                  <FileText className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <p className="mt-0.5 line-clamp-1 text-xs leading-5 text-neutral-500">
                                 {summary}
                               </p>
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                <span
+                                  className={`inline-flex rounded-full px-2 py-0.5 text-[11px] font-medium ${dashboardStatusTone(
+                                    status,
+                                  )}`}
+                                >
+                                  {status}
+                                </span>
+                                {organizer.folderId ? (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      setDashboardFolderFilter(
+                                        organizer.folderId ?? "all",
+                                      )
+                                    }
+                                    className={`inline-flex max-w-[150px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
+                                      organizer.folderColor,
+                                    )}`}
+                                  >
+                                    <FolderOpen className="h-3 w-3 shrink-0" />
+                                    <span className="truncate">
+                                      {organizer.folderName ||
+                                        "Untitled folder"}
+                                    </span>
+                                  </button>
+                                ) : null}
+                              </div>
                             </div>
                             <label
-                              className="flex shrink-0 items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[11px] font-medium text-neutral-500"
-                              title="Select for future project comparison"
+                              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500"
+                              title="Select project"
                             >
                               <input
                                 type="checkbox"
@@ -4878,32 +5586,22 @@ function IntakePageInner() {
                                 onChange={() => toggleCompareProject(p.id)}
                                 className="h-3.5 w-3.5 accent-indigo-600"
                               />
-                              Compare
                             </label>
                           </div>
 
-                          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
-                            <div className="rounded-md bg-neutral-50 px-2 py-2">
-                              <p className="text-neutral-400">Runs</p>
-                              <p className="mt-1 font-semibold text-neutral-800">
-                                {p.hasPreview ? p.simulationRuns.length : "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-md bg-neutral-50 px-2 py-2">
-                              <p className="text-neutral-400">Complete</p>
-                              <p className="mt-1 font-semibold text-neutral-800">
-                                {p.hasPreview ? completed : "-"}
-                              </p>
-                            </div>
-                            <div className="rounded-md bg-neutral-50 px-2 py-2">
-                              <p className="text-neutral-400">Updated</p>
-                              <p className="mt-1 truncate font-semibold text-neutral-800">
-                                {new Date(p.updatedAt).toLocaleDateString()}
-                              </p>
-                            </div>
+                          <div className="mt-3 flex items-center gap-1.5 text-[11px] text-neutral-500">
+                            <span className="rounded-md bg-neutral-50 px-2 py-1">
+                              {runCount} runs
+                            </span>
+                            <span className="rounded-md bg-neutral-50 px-2 py-1">
+                              {p.hasPreview ? completed : "-"} complete
+                            </span>
+                            <span className="rounded-md bg-neutral-50 px-2 py-1">
+                              {assetCountForProject} assets
+                            </span>
                           </div>
 
-                          <p className="mt-3 truncate text-[11px] text-neutral-400">
+                          <p className="mt-2 truncate text-[11px] text-neutral-400">
                             {p.hasPreview
                               ? latest
                                 ? `Latest: ${simulationRunTitle(latest)}`
@@ -4913,13 +5611,13 @@ function IntakePageInner() {
                                 : "Open workspace to load details."}
                           </p>
 
-                          <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 pt-3">
+                          <div className="mt-3 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
                             <button
                               type="button"
                               onClick={() => switchProject(p.id)}
-                              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500"
+                              className="flex items-center gap-1.5 rounded-lg bg-neutral-950 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
                             >
-                              Open workspace
+                              Open
                               <ArrowRight className="h-3.5 w-3.5" />
                             </button>
                             <div className="flex items-center gap-1">
@@ -4970,11 +5668,71 @@ function IntakePageInner() {
                     </button>
                   ) : null}
                 </div>
-              )}
+                  )}
             </section>
 
-            <aside className="space-y-4">
-              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+            <aside className="space-y-3">
+              <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
+                <div className="flex items-center justify-between gap-2">
+                  <div>
+                    <h2 className="text-sm font-semibold">Organizer</h2>
+                    <p className="mt-0.5 text-xs text-neutral-500">
+                      {compareIds.size} selected
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFolderCreateOpen(true)}
+                    disabled={compareIds.size === 0}
+                    className="flex items-center gap-1 rounded-lg bg-neutral-950 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Folder
+                  </button>
+                </div>
+                {dashboardFolders.length > 0 ? (
+                  <div className="mt-3 space-y-1.5">
+                    {dashboardFolders.slice(0, 6).map((folder) => (
+                      <div
+                        key={folder.id}
+                        className="flex items-center gap-2 rounded-lg border border-neutral-100 px-2.5 py-2"
+                      >
+                        <button
+                          type="button"
+                          onClick={() => setDashboardFolderFilter(folder.id)}
+                          className="min-w-0 flex-1 text-left"
+                        >
+                          <span className="block truncate text-xs font-semibold text-neutral-800">
+                            {folder.name}
+                          </span>
+                          <span className="mt-0.5 block text-[11px] text-neutral-400">
+                            {folder.projectIds.length} project
+                            {folder.projectIds.length === 1 ? "" : "s"}
+                          </span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => openFolderNote(folder)}
+                          title="Folder note"
+                          className={`rounded-md p-1.5 ${
+                            folder.note
+                              ? "bg-amber-50 text-amber-700"
+                              : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                          }`}
+                        >
+                          <FileText className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 rounded-lg border border-dashed border-neutral-200 bg-neutral-50 px-3 py-3 text-xs leading-5 text-neutral-500">
+                    No dashboard folders yet.
+                  </p>
+                )}
+              </section>
+
+              <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center gap-2">
                   <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
                     <BarChart3 className="h-4 w-4" />
@@ -4998,7 +5756,7 @@ function IntakePageInner() {
                 </button>
               </section>
 
-              <section className="rounded-lg border border-neutral-200 bg-white p-4">
+              <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
                 <h2 className="text-sm font-semibold">Recent activity</h2>
                 {recentProjects.length > 0 ? (
                   <ul className="mt-3 space-y-2">
@@ -5007,10 +5765,11 @@ function IntakePageInner() {
                         key={p.id}
                         className="flex items-center justify-between gap-3 rounded-lg border border-neutral-100 px-3 py-2"
                       >
+                        <ProjectMark project={p} size="sm" />
                         <button
                           type="button"
                           onClick={() => switchProject(p.id)}
-                          className="min-w-0 text-left"
+                          className="min-w-0 flex-1 text-left"
                         >
                           <span className="block truncate text-xs font-medium text-neutral-800">
                             {p.name}
@@ -5034,6 +5793,8 @@ function IntakePageInner() {
         </section>
 
         {createProjectDialog}
+        {folderCreateDialog}
+        {dashboardNoteDialog}
       </main>
     );
   }

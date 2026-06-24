@@ -1,4 +1,4 @@
-import type { ClientProfile } from "../schema";
+import type { ClientProfile, LaunchModelBenchmarkInputs } from "../schema";
 import comtradeImports from "../../data/benchmarks/collected/comtrade-imports.json";
 import {
   VERIFIED_GROSS_MARGIN_PCT,
@@ -294,6 +294,7 @@ export type BenchmarkPriors = {
   peakMonths: string[];
   /** Sourced India import value for the category (USD mn, UN Comtrade), if mapped. */
   marketImportsUsdMn: { value: number; year: string; desc: string } | null;
+  modelInputs?: LaunchModelBenchmarkInputs;
   confidence: number; // 0–1
   sources: string[];
   notes: string[];
@@ -484,7 +485,7 @@ const CATEGORY_KEYWORDS: [CategoryKey, RegExp][] = [
   ["home_decor", /\b(home decor|home décor|decor|décor|furnishing|cushion|rug|carpet|curtain|lamp|tableware|crockery|planter|candle)\b/i],
   ["electronics", /\b(electronic|electronics|gadget|device|appliance|wearable|headphone|earbud|smart\s?\w+|charger|speaker)\b/i],
   ["apparel", /\b(apparel|fashion|clothing|clothes|garment|wear|shirt|t-?shirt|trouser|pant|pants|jeans|denim|dress|jacket|coat|suit|saree|kurta|ethnicwear|streetwear|lingerie|activewear|innerwear)\b/i],
-  ["services", /\b(service|services|agency|consult|consulting|clinic|salon|studio|course|training|subscription|saas|software|platform|app)\b/i],
+  ["services", /\b(service|services|rental|rentals|leasing|hire|agency|consult|consulting|clinic|salon|studio|course|training|subscription|saas|software|platform|app)\b/i],
 ];
 
 /** Best-effort category key from a venture profile (category + product text). */
@@ -508,6 +509,12 @@ export function categoryKeyFromBusinessModel(model: string): CategoryKey {
       return "food_beverage";
     case "saas":
     case "services":
+    case "rental":
+    case "subscription":
+    case "booking":
+    case "usage_based":
+    case "lead_gen":
+    case "project_services":
       return "services";
     default:
       return "general";

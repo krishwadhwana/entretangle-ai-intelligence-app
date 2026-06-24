@@ -20,14 +20,6 @@ import { SEGMENT_COLORS } from "./segments";
 import type { Block } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 
-/** A clicked node, reduced to what the Know-How resolver needs. */
-export type KnowHowNodeClick = {
-  id: string;
-  domain?: Block["domain"] | null;
-  isWorldModel?: boolean;
-  label: string;
-};
-
 const nodeTypes = {
   agentBlock: AgentBlockNode,
   worldModel: WorldModelNode,
@@ -48,10 +40,6 @@ type Props = {
   onQuery: (q: string) => Promise<string>;
   onForkParam: (blockId: string, key: string, value: number | string) => void;
   onSelectCohort: (cohortId: string) => void;
-  // Know-How mode: clicking a node opens its interactive module instead of
-  // expanding the desk inline.
-  knowHow?: boolean;
-  onOpenKnowHow?: (node: KnowHowNodeClick) => void;
 };
 
 /** Estimated bounding box for a node, used by the overlap resolver. */
@@ -128,8 +116,6 @@ export default function NetworkView({
   onQuery,
   onForkParam,
   onSelectCohort,
-  knowHow = false,
-  onOpenKnowHow,
 }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   // User-dragged positions, keyed by node id; survive layout recomputes.
@@ -335,29 +321,6 @@ export default function NetworkView({
 
   const onNodeClick = useCallback<NodeMouseHandler>(
     (_, node) => {
-      // Know-How mode: every node opens its interactive module.
-      if (knowHow && onOpenKnowHow) {
-        if (node.type === "worldModel") {
-          onOpenKnowHow({ id: node.id, isWorldModel: true, label: "World model" });
-          return;
-        }
-        if (node.type === "agentBlock") {
-          const block = (node.data as AgentBlockNodeData).block;
-          onOpenKnowHow({
-            id: node.id,
-            domain: block.domain,
-            label: block.name,
-          });
-          return;
-        }
-        if (node.id.startsWith("loc:") || node.id.startsWith("plat:")) {
-          onOpenKnowHow({
-            id: node.id,
-            label: String((node.data as { label?: string })?.label ?? node.id),
-          });
-          return;
-        }
-      }
       if (node.id.startsWith("loc:")) {
         const locality = node.id.slice(4);
         const cohort = Object.values(state.cohorts).find(
@@ -375,7 +338,7 @@ export default function NetworkView({
         });
       }
     },
-    [state.cohorts, onSelectCohort, knowHow, onOpenKnowHow]
+    [state.cohorts, onSelectCohort]
   );
 
   // Click on empty canvas collapses every expanded node.

@@ -202,6 +202,78 @@ const BUSINESS_PRESETS: Record<
       channel("paid_social", "Paid social", "paid", 0.2, 300, 0, 3, 0.15, 0.35, 0.3, 0.85, 0.6, 0.8),
     ],
   },
+  rental: {
+    repeatMult: 1.1,
+    refundMult: 0.35,
+    decisionMult: 0.85,
+    abandonMult: 0.65,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.4, 450, 0, 2, 0.42, 0.72, 0.5, 1.3, 0.45, 1),
+      channel("local_social", "Local social", "paid", 0.35, 280, 0, 3, 0.18, 0.4, 0.35, 0.95, 0.55, 1.05),
+      channel("referral_whatsapp", "Referral / WhatsApp", "owned", 0.25, 200, 0, 1.5, 0.5, 0.8, 0.6, 1.6, 0.35, 1.2),
+    ],
+  },
+  subscription: {
+    repeatMult: 2.5,
+    refundMult: 0.45,
+    decisionMult: 0.9,
+    abandonMult: 0.85,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.4, 420, 0, 2, 0.35, 0.68, 0.48, 1.25, 0.5, 2.2),
+      channel("content", "Content / organic", "organic", 0.25, 220, 0, 1.5, 0.32, 0.65, 0.42, 1.2, 0.45, 2.6),
+      channel("paid_social", "Paid social", "paid", 0.35, 280, 0, 3, 0.16, 0.38, 0.34, 0.95, 0.65, 1.8),
+    ],
+  },
+  booking: {
+    repeatMult: 0.9,
+    refundMult: 0.55,
+    decisionMult: 0.9,
+    abandonMult: 0.7,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.45, 380, 0, 2, 0.42, 0.72, 0.5, 1.25, 0.5, 0.9),
+      channel("local_social", "Local social", "paid", 0.3, 260, 0, 3, 0.2, 0.42, 0.36, 0.95, 0.65, 1),
+      channel("referral_whatsapp", "Referral / WhatsApp", "owned", 0.25, 180, 0, 1.5, 0.52, 0.78, 0.58, 1.55, 0.4, 1.2),
+    ],
+  },
+  usage_based: {
+    repeatMult: 2.4,
+    refundMult: 0.5,
+    decisionMult: 1,
+    abandonMult: 0.85,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("paid_social", "Paid social", "paid", 0.45, 260, 0, 3, 0.18, 0.4, 0.42, 1, 0.6, 2),
+      channel("search", "Search", "paid", 0.35, 380, 0, 2, 0.34, 0.62, 0.52, 1.2, 0.5, 2.2),
+      channel("owned", "Owned audience", "owned", 0.2, 180, 0, 1.5, 0.4, 0.66, 0.62, 1.3, 0.45, 2.6),
+    ],
+  },
+  lead_gen: {
+    repeatMult: 0.25,
+    refundMult: 0.2,
+    decisionMult: 0.75,
+    abandonMult: 0.9,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search intent", "paid", 0.55, 500, 0, 2, 0.38, 0.76, 0.5, 1.25, 0.3, 0.4),
+      channel("content", "Content / SEO", "organic", 0.2, 220, 0, 1.5, 0.3, 0.7, 0.42, 1.15, 0.25, 0.6),
+      channel("partner", "Partner / referral", "owned", 0.25, 260, 0, 1.5, 0.45, 0.78, 0.55, 1.45, 0.2, 0.8),
+    ],
+  },
+  project_services: {
+    repeatMult: 0.35,
+    refundMult: 0.25,
+    decisionMult: 0.35,
+    abandonMult: 0.55,
+    inventoryBuffer: 0,
+    defaultChannels: [
+      channel("search", "Search", "paid", 0.35, 600, 0, 2, 0.32, 0.68, 0.32, 1.25, 0.25, 0.4),
+      channel("content", "Authority content", "organic", 0.25, 300, 0, 1.5, 0.28, 0.7, 0.3, 1.2, 0.25, 0.5),
+      channel("referral_network", "Referral / network", "owned", 0.4, 250, 0, 1.5, 0.5, 0.78, 0.45, 1.55, 0.2, 0.8),
+    ],
+  },
   marketplace: {
     repeatMult: 1.1,
     refundMult: 1.1,
@@ -250,6 +322,17 @@ function channel(
 
 const REFUND_OBJECTION_RE =
   /damage|deliver|return|see and touch|touch it|quality|fake|warranty|fragile|broke/i;
+
+function usesFounderFixedCost(model: LaunchBusinessModel): boolean {
+  return [
+    "rental",
+    "subscription",
+    "booking",
+    "usage_based",
+    "lead_gen",
+    "project_services",
+  ].includes(model);
+}
 
 function ageBand(age: number): string {
   if (age < 25) return "Under 25";
@@ -316,10 +399,10 @@ export function resolveLaunchInputs(
       stepsPerMonth,
       repeatRateMult: resolvedRepeatRateMult,
     });
-  const fixedCostsPerMonth = Math.max(
-    i.fixedCostsPerMonth,
-    ctx.fixedCostsPerMonthFloor ?? 0
-  );
+  const fixedCostsPerMonth =
+    usesFounderFixedCost(i.businessModel) && i.fixedCostsPerMonth > 0
+      ? i.fixedCostsPerMonth
+      : Math.max(i.fixedCostsPerMonth, ctx.fixedCostsPerMonthFloor ?? 0);
 
   // Initial inventory: cover ~1.5× the expected first-month demand if the
   // founder didn't pin a MOQ. Size it from first-month checkout-level demand,
@@ -350,7 +433,11 @@ export function resolveLaunchInputs(
     // inventory sizing on the same binding constraints as the loop, otherwise a
     // cheap-CPM scenario can pre-buy stock for demand the budget cannot acquire.
     const cac =
-      ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
+      i.paidCac && i.paidCac > 0
+        ? i.paidCac
+        : ctx.blendedCac && ctx.blendedCac > 0
+          ? ctx.blendedCac
+          : null;
     if (cac && i.adSpendPerMonth > 0) {
       const cacCappedMonthlyOrders = i.adSpendPerMonth / cac;
       estMonthlyOrders = Math.min(estMonthlyOrders, cacCappedMonthlyOrders);
@@ -502,6 +589,48 @@ function channelFunnelRate(ch: LaunchChannelInput): number {
     clamp(ch.visitRate, 0, 1) *
     clamp(ch.checkoutRate, 0, 1)
   );
+}
+
+function rentalCapacityPerStep(inputs: LaunchSimInputs, stepsPerMonth: number): number {
+  if (inputs.businessModel !== "rental") return Infinity;
+  if (inputs.rentalAssetCount <= 0) return 0;
+  const monthsPerStep = 1 / stepsPerMonth;
+  const rentableAssetDays =
+    inputs.rentalAssetCount *
+    inputs.rentalRentableDaysPerMonth *
+    monthsPerStep;
+  return rentableAssetDays / Math.max(inputs.rentalAvgDurationDays, 1 / 30);
+}
+
+function nonInventoryCapacityPerStep(
+  inputs: LaunchSimInputs,
+  stepsPerMonth: number
+): number {
+  if (inputs.businessModel === "rental") {
+    return rentalCapacityPerStep(inputs, stepsPerMonth);
+  }
+  if (inputs.businessModel === "booking") {
+    return inputs.bookingCapacityPerMonth / stepsPerMonth;
+  }
+  if (inputs.businessModel === "project_services") {
+    return inputs.projectCapacityPerMonth / stepsPerMonth;
+  }
+  return Infinity;
+}
+
+function rentalVariableCostPerOrder(inputs: LaunchSimInputs): number {
+  if (inputs.businessModel !== "rental") return 0;
+  const uncoveredAssetValue = Math.max(
+    0,
+    inputs.rentalAssetCost - inputs.rentalDepositAmount
+  );
+  const expectedDamageLoss =
+    uncoveredAssetValue * clamp(inputs.rentalDamageLossPct / 100, 0, 1);
+  return inputs.rentalMaintenancePerOrder + expectedDamageLoss;
+}
+
+function stepChurnFromMonthly(pct: number, stepsPerMonth: number): number {
+  return 1 - Math.pow(1 - clamp(pct / 100, 0, 1), 1 / stepsPerMonth);
 }
 
 function weightedMeanChannelMetric(
@@ -776,7 +905,11 @@ export function simulateLaunch(
   const decisionSpeed =
     inputs.decisionSpeed ?? (inputs.granularity === "day" ? 0.1 : 0.5);
   const blendedCac =
-    ctx.blendedCac && ctx.blendedCac > 0 ? ctx.blendedCac : null;
+    inputs.paidCac && inputs.paidCac > 0
+      ? inputs.paidCac
+      : ctx.blendedCac && ctx.blendedCac > 0
+        ? ctx.blendedCac
+        : null;
   // Demand tilts: benchmark seasonality (normalised around its own mean, so the
   // average month is 1.0) keyed by the launch start month, and a bounded
   // attention/hype momentum tilt. Both default to neutral (no effect).
@@ -891,11 +1024,24 @@ export function simulateLaunch(
   const refundArrivals = new Array(inputs.horizon + returnWindowSteps + 2).fill(0);
   const inventoryArrivals = new Array(inputs.horizon + reorderLeadSteps + 2).fill(0);
 
-  // Service / SaaS models carry no physical stock: fulfilment is never capped by
-  // inventory, nothing is pre-bought or reordered, and there is no deadstock.
+  // Service/SaaS/rental/recurring/service-capacity models carry no sellable
+  // stock: nothing is pre-bought or reordered, and there is no deadstock.
+  // Rental/booking/project still get a separate capacity cap.
+  const isRental = inputs.businessModel === "rental";
+  const isSubscription = inputs.businessModel === "subscription";
+  const isUsageBased = inputs.businessModel === "usage_based";
   const inventoryless =
     (BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic)
       .inventoryBuffer === 0;
+  const subscriptionChurnStep = isSubscription
+    ? stepChurnFromMonthly(inputs.subscriptionMonthlyChurnPct, stepsPerMonth)
+    : 0;
+  const usageChurnStep = isUsageBased
+    ? stepChurnFromMonthly(inputs.usageMonthlyChurnPct, stepsPerMonth)
+    : 0;
+  const usageEventsPerStep = isUsageBased
+    ? inputs.usageEventsPerCustomerPerMonth / stepsPerMonth
+    : 0;
   let inventory = inputs.initialInventoryUnits ?? 0;
   let onOrder = 0;
   // Total units the founder has PAID for (opening batch + every reorder placed) —
@@ -934,10 +1080,13 @@ export function simulateLaunch(
   const timeline: LaunchSimStep[] = [];
   let cumulativeReachedRaw = 0;
   let cumulativeNetProfit = 0;
+  const rentalAssetInvestment = isRental
+    ? inputs.rentalAssetCount * inputs.rentalAssetCost
+    : 0;
   const launchInvestment = Math.max(
     0,
     inputs.launchInvestmentReserve ?? ctx.launchInvestmentFloor ?? 0
-  );
+  ) + rentalAssetInvestment;
   let cumulativeCash =
     -(inputs.initialInventoryUnits ?? 0) * inputs.costPrice - launchInvestment;
   let minCash = cumulativeCash;
@@ -1137,14 +1286,23 @@ export function simulateLaunch(
       const firstBuyers = considering[k] * decideRate;
       const abandon = considering[k] * inputs.abandonRate;
       considering[k] = Math.max(0, considering[k] - firstBuyers - abandon);
-      const oldActive = active[k];
+      const oldActive =
+        isSubscription
+          ? active[k] * (1 - subscriptionChurnStep)
+          : isUsageBased
+            ? active[k] * (1 - usageChurnStep)
+            : active[k];
       // Repeat orders come from PREVIOUSLY-acquired customers only (the prior,
       // already cap-corrected active pool). Customers acquired this step do not
       // reorder in the same step — and crucially this keeps repeat off the
       // uncapped same-step acquisition spike (which is trimmed by the CAC cap
       // below), so repeat can't balloon past realistic new-customer volume.
       const repeatBuyers =
-        oldActive * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
+        isSubscription
+          ? oldActive / stepsPerMonth
+          : isUsageBased
+            ? oldActive * usageEventsPerStep
+            : oldActive * clamp(repeatHazard * activeRepeatMult[k] * jitter, 0, 1);
 
       const mi = scaleFactor;
       const first = firstBuyers * mi;
@@ -1235,10 +1393,17 @@ export function simulateLaunch(
       }
     }
 
-    // Fulfilment capped by inventory — except service/SaaS models, which have
-    // no stock to run out of (fillRate is always 1).
-    const fillRate =
+    // Fulfilment is capped by sellable inventory for product models and by
+    // reusable asset/slot capacity for rental, booking and project-service
+    // models. Pure service/SaaS/subscription/lead-gen stays uncapped.
+    const capacity = nonInventoryCapacityPerStep(inputs, stepsPerMonth);
+    const capacityFillRate =
+      demand > 0 && Number.isFinite(capacity)
+        ? Math.min(1, capacity / demand)
+        : 1;
+    const inventoryFillRate =
       demand > 0 ? (inventoryless ? 1 : Math.min(1, inventory / demand)) : 0;
+    const fillRate = demand > 0 ? Math.min(inventoryFillRate, capacityFillRate) : 0;
     const unitsFulfilled = demand * fillRate;
     const unitsStockedOut = demand - unitsFulfilled;
     if (!inventoryless) inventory -= unitsFulfilled;
@@ -1325,7 +1490,9 @@ export function simulateLaunch(
 
     // Step P&L (accrual).
     const revenue = unitsFulfilled * inputs.salePrice;
-    const cogs = unitsFulfilled * inputs.costPrice;
+    const cogs =
+      unitsFulfilled *
+      (inputs.costPrice + rentalVariableCostPerOrder(inputs));
     const shippingCost = unitsFulfilled * inputs.shippingPerOrder;
     const paymentFees = revenue * inputs.paymentFeePct;
     const fixedCosts =
@@ -1551,8 +1718,19 @@ function buildDiagnostics(
     risks.push(`Fixed costs and launch spend do not pay back within this horizon; peak cash need is ${fmtMoney(summary.peakCapitalNeeded)}.`);
   }
   if (summary.stockoutUnits > summary.unitsSold * 0.1) {
-    risks.push(`${fmtCount(summary.stockoutUnits)} units of demand are lost to stockouts, so inventory is constraining upside.`);
-    nextMoves.push("Raise opening inventory or shorten reorder lead time, then rerun.");
+    if (inputs.businessModel === "rental") {
+      risks.push(`${fmtCount(summary.stockoutUnits)} bookings are lost to rental capacity, so asset availability is constraining upside.`);
+      nextMoves.push("Add assets, raise utilisation, shorten rental duration, or shift demand into off-peak slots, then rerun.");
+    } else if (inputs.businessModel === "booking") {
+      risks.push(`${fmtCount(summary.stockoutUnits)} bookings are lost to slot capacity, so availability is constraining upside.`);
+      nextMoves.push("Add slots, staff, rooms, or booking windows, then rerun.");
+    } else if (inputs.businessModel === "project_services") {
+      risks.push(`${fmtCount(summary.stockoutUnits)} projects are lost to delivery capacity, so team bandwidth is constraining upside.`);
+      nextMoves.push("Increase project capacity, raise project fee, or narrow acquisition to higher-value leads, then rerun.");
+    } else {
+      risks.push(`${fmtCount(summary.stockoutUnits)} units of demand are lost to stockouts, so inventory is constraining upside.`);
+      nextMoves.push("Raise opening inventory or shorten reorder lead time, then rerun.");
+    }
   }
   if (summary.deadstockValue > summary.grossRevenue * 0.2 && summary.deadstockUnits > 0) {
     risks.push(`${fmtMoney(summary.deadstockValue)} remains tied up in deadstock, which is high relative to sales.`);
@@ -1603,6 +1781,12 @@ function buildAssumptions(
   const launchReserveWasFounderEntered = inputs.launchInvestmentReserve != null;
   const launchReserve =
     inputs.launchInvestmentReserve ?? ctx.launchInvestmentFloor ?? 0;
+  const effectiveBlendedCac =
+    inputs.paidCac && inputs.paidCac > 0
+      ? inputs.paidCac
+      : ctx.blendedCac && ctx.blendedCac > 0
+        ? ctx.blendedCac
+        : 0;
   const assumptions: LaunchAssumption[] = [];
   const add = (assumption: LaunchAssumption) => assumptions.push(assumption);
   const pct = (value: number) => round(value * 100, 2);
@@ -1809,11 +1993,15 @@ function buildAssumptions(
   add({
     key: "blendedCac",
     label: "CAC bound",
-    value: ctx.blendedCac ?? 0,
+    value: effectiveBlendedCac,
     unit: inputs.currency,
-    source: ctx.blendedCac ? "financial_model" : "computed",
-    confidence: ctx.blendedCac ? 0.55 : 0.25,
-    basis: ctx.blendedCac
+    source: inputs.paidCac
+      ? "founder_entered"
+      : ctx.blendedCac
+        ? "financial_model"
+        : "computed",
+    confidence: inputs.paidCac ? 0.8 : ctx.blendedCac ? 0.55 : 0.25,
+    basis: effectiveBlendedCac
       ? "Paid first-time acquisition is capped by ad spend divided by blended CAC, then scaled by the net monthly demand trajectory."
       : "No CAC bound was available, so acquisition is driven by channel funnel assumptions only.",
   });
@@ -1857,6 +2045,154 @@ function buildAssumptions(
       ? "Founder-entered launch/setup cash reserve that cash payback must recover."
       : "Computed launch setup, operating runway, creative/sampling and launch-management reserve that cash payback must recover.",
   });
+  if (inputs.businessModel === "rental") {
+    const rentalMonthlyCapacity =
+      inputs.rentalAssetCount *
+      inputs.rentalRentableDaysPerMonth /
+      Math.max(inputs.rentalAvgDurationDays, 1 / 30);
+    const uncoveredAssetValue = Math.max(
+      0,
+      inputs.rentalAssetCost - inputs.rentalDepositAmount
+    );
+    const expectedDamageLoss =
+      uncoveredAssetValue * clamp(inputs.rentalDamageLossPct / 100, 0, 1);
+    add({
+      key: "rentalAssetCount",
+      label: "Rental assets",
+      value: inputs.rentalAssetCount,
+      unit: "assets",
+      source: "founder_entered",
+      confidence: 0.85,
+      basis: "Reusable assets available for rental; bookings are capped by asset-days, not sellable stock.",
+    });
+    add({
+      key: "rentalAssetCost",
+      label: "Asset cost",
+      value: inputs.rentalAssetCost,
+      unit: `${inputs.currency}/asset`,
+      source: "founder_entered",
+      confidence: 0.8,
+      basis: "Up-front purchase value per rental asset; counted in cash payback when entered.",
+    });
+    add({
+      key: "rentalCapacityPerMonth",
+      label: "Rental capacity",
+      value: round(rentalMonthlyCapacity, 2),
+      unit: "bookings/month",
+      source: "computed",
+      confidence: 0.8,
+      basis: "Computed as assets × rentable days per month ÷ average rental duration.",
+    });
+    add({
+      key: "rentalAvgDurationDays",
+      label: "Avg rental duration",
+      value: inputs.rentalAvgDurationDays,
+      unit: "days/booking",
+      source: "founder_entered",
+      confidence: 0.75,
+      basis: "Average time one booking keeps an asset unavailable for another customer.",
+    });
+    add({
+      key: "rentalMaintenancePerOrder",
+      label: "Maintenance",
+      value: inputs.rentalMaintenancePerOrder,
+      unit: `${inputs.currency}/booking`,
+      source: "founder_entered",
+      confidence: 0.7,
+      basis: "Variable cleaning, controller wear, setup, testing, packaging, or service cost per rental booking.",
+    });
+    add({
+      key: "rentalDamageLossPct",
+      label: "Damage/loss risk",
+      value: inputs.rentalDamageLossPct,
+      unit: "%",
+      source: "founder_entered",
+      confidence: 0.55,
+      basis: "Expected per-booking damage/loss rate applied to asset value not covered by the deposit.",
+    });
+    add({
+      key: "rentalDepositAmount",
+      label: "Deposit cover",
+      value: inputs.rentalDepositAmount,
+      unit: inputs.currency,
+      source: "founder_entered",
+      confidence: 0.7,
+      basis: `Refundable deposit offsets expected damage/loss; current uncovered value is ${fmtMoney(uncoveredAssetValue)} per asset.`,
+    });
+    add({
+      key: "rentalVariableCost",
+      label: "Rental variable cost",
+      value: round(inputs.rentalMaintenancePerOrder + expectedDamageLoss, 2),
+      unit: `${inputs.currency}/booking`,
+      source: "computed",
+      confidence: 0.65,
+      basis: "Maintenance plus expected uncovered damage/loss per booking; added to COGS for rental scenarios.",
+    });
+  }
+  if (inputs.businessModel === "subscription") {
+    add({
+      key: "subscriptionMonthlyChurnPct",
+      label: "Monthly churn",
+      value: inputs.subscriptionMonthlyChurnPct,
+      unit: "%",
+      source: "founder_entered",
+      confidence: 0.7,
+      basis: "Active subscribers churn at this monthly rate; retained subscribers generate recurring invoices.",
+    });
+  }
+  if (inputs.businessModel === "booking") {
+    add({
+      key: "bookingCapacityPerMonth",
+      label: "Booking capacity",
+      value: inputs.bookingCapacityPerMonth,
+      unit: "bookings/month",
+      source: "founder_entered",
+      confidence: 0.8,
+      basis: "Maximum service slots available per month; demand above this capacity is reported as missed bookings.",
+    });
+  }
+  if (inputs.businessModel === "usage_based") {
+    add({
+      key: "usageEventsPerCustomerPerMonth",
+      label: "Usage frequency",
+      value: inputs.usageEventsPerCustomerPerMonth,
+      unit: "events/customer/month",
+      source: "founder_entered",
+      confidence: 0.7,
+      basis: "Previously acquired customers generate repeat paid usage events at this monthly rate.",
+    });
+    add({
+      key: "usageMonthlyChurnPct",
+      label: "Usage churn",
+      value: inputs.usageMonthlyChurnPct,
+      unit: "%",
+      source: "founder_entered",
+      confidence: 0.65,
+      basis: "Active usage customers churn at this monthly rate before creating future usage events.",
+    });
+  }
+  if (inputs.businessModel === "lead_gen") {
+    add({
+      key: "leadGenUnit",
+      label: "Monetized unit",
+      value: "Qualified lead / commission event",
+      unit: "",
+      source: "preset",
+      confidence: 0.65,
+      basis: "Orders represent qualified monetizable leads or commission-triggering actions, not product shipments.",
+    });
+  }
+  if (inputs.businessModel === "project_services") {
+    add({
+      key: "projectCapacityPerMonth",
+      label: "Project capacity",
+      value: inputs.projectCapacityPerMonth,
+      unit: "projects/month",
+      source: "founder_entered",
+      confidence: 0.8,
+      basis: "Maximum projects the team can sell and deliver per month; extra demand is reported as missed projects.",
+    });
+  }
   add({
     key: "returnWindowDays",
     label: "Return window",
@@ -1906,12 +2242,15 @@ function buildAssumptions(
   });
   add({
     key: "initialInventoryUnits",
-    label: "Opening inventory",
+    label: inputs.businessModel === "rental" ? "Sellable inventory" : "Opening inventory",
     value: inputs.initialInventoryUnits ?? 0,
     unit: "units",
     source: "computed",
     confidence: 0.55,
-    basis: "Starting sellable stock, auto-sized from first-month checkout/CAC-capped demand when not set explicitly.",
+    basis:
+      inputs.businessModel === "rental"
+        ? "Rental scenarios use reusable asset capacity instead of sellable stock."
+        : "Starting sellable stock, auto-sized from first-month checkout/CAC-capped demand when not set explicitly.",
   });
   add({
     key: "reorderEnabled",

@@ -64,6 +64,12 @@ const BUSINESS_REPEAT_MULT: Record<LaunchBusinessModel, number> = {
   consumable: 2.2,
   saas: 3,
   services: 0.9,
+  rental: 1.1,
+  subscription: 2.5,
+  booking: 0.9,
+  usage_based: 2.4,
+  lead_gen: 0.25,
+  project_services: 0.35,
   marketplace: 1.1,
 };
 
@@ -176,12 +182,14 @@ export async function GET(
   const suggestedSalePrice = modelMatchesTarget
     ? baseTier?.price.value ?? profileSalePrice ?? priors.aovInr.mid
     : priors.aovInr.mid;
-  const suggestedCostPrice = modelMatchesTarget
+  const categorySuggestedCostPrice = modelMatchesTarget
     ? model!.costStructure.reduce((s, c) => s + c.amount.value, 0)
     : Math.max(
         0,
         Math.round(suggestedSalePrice * (1 - priors.grossMarginPct.mid / 100))
       );
+  const suggestedCostPrice =
+    suggestedBusinessModel === "rental" ? 0 : categorySuggestedCostPrice;
   const blendedCac = modelMatchesTarget
     ? model?.unitEconomics.blendedCac.value ?? null
     : priors.cacInr.mid;
@@ -257,6 +265,7 @@ export async function GET(
       confidence: priors.confidence,
       sources: priors.sources,
     },
+    modelBenchmarks: priors.modelInputs ?? {},
   };
 
   const scenarios: LaunchSimRecord[] = storedRows.map(({ row: r, storedInputs }) => {
@@ -572,11 +581,28 @@ function reconcileLaunchCurrency(
     costPrice: convertMoneyRequired(inputs.costPrice, from, to, fx),
     salePrice: convertMoneyRequired(inputs.salePrice, from, to, fx),
     adSpendPerMonth: convertMoneyRequired(inputs.adSpendPerMonth, from, to, fx),
+    paidCac:
+      inputs.paidCac == null
+        ? null
+        : convertMoneyRequired(inputs.paidCac, from, to, fx),
     fixedCostsPerMonth: convertMoneyRequired(inputs.fixedCostsPerMonth, from, to, fx),
     launchInvestmentReserve:
       inputs.launchInvestmentReserve == null
         ? null
         : convertMoneyRequired(inputs.launchInvestmentReserve, from, to, fx),
+    rentalAssetCost: convertMoneyRequired(inputs.rentalAssetCost, from, to, fx),
+    rentalMaintenancePerOrder: convertMoneyRequired(
+      inputs.rentalMaintenancePerOrder,
+      from,
+      to,
+      fx
+    ),
+    rentalDepositAmount: convertMoneyRequired(
+      inputs.rentalDepositAmount,
+      from,
+      to,
+      fx
+    ),
   };
 
   if (from === "INR" && to === "USD") {
@@ -670,6 +696,8 @@ function applyMarketDatum(p: BenchmarkPriors, d: MarketDatum): BenchmarkPriors {
     next.cpmInr = d.cpmMeta;
     next.cpmByChannelInr = { ...p.cpmByChannelInr, meta: d.cpmMeta };
   }
+  if (d.modelInputs?.paidCac) next.cacInr = d.modelInputs.paidCac;
+  next.modelInputs = d.modelInputs ?? {};
   next.sources = [...p.sources, ...(d.sources ?? [])];
   next.notes = [
     ...p.notes,
@@ -737,6 +765,7 @@ function launchOperatingCostFloorPerMonth(
   businessModel: LaunchBusinessModel,
   adSpendPerMonth: number | null
 ): number {
+  if (usesFounderCostFloor(businessModel)) return 0;
   const cur = normalizeCurrency(currency);
   const base = cur === "INR" ? 100_000 : 2_500;
   const modelMultiplier =
@@ -752,6 +781,7 @@ function launchInvestmentFloor(
   adSpendPerMonth: number,
   fixedCostsPerMonth: number
 ): number {
+  if (usesFounderCostFloor(businessModel)) return 0;
   const runwayMonths =
     businessModel === "saas" || businessModel === "services" ? 4 : 6;
   const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
@@ -759,6 +789,17 @@ function launchInvestmentFloor(
     Math.max(0, fixedCostsPerMonth * runwayMonths) +
       Math.max(0, adSpendPerMonth) * launchMediaMonths
   );
+}
+
+function usesFounderCostFloor(businessModel: LaunchBusinessModel): boolean {
+  return [
+    "rental",
+    "subscription",
+    "booking",
+    "usage_based",
+    "lead_gen",
+    "project_services",
+  ].includes(businessModel);
 }
 
 function resolveLaunchInvestmentReserve(
@@ -888,8 +929,26 @@ function inferLaunchBusinessModel(run: {
   if (hasAny(text, ["marketplace", "two-sided", "two sided", "sellers", "buyers and sellers", "aggregator"])) {
     return "marketplace";
   }
+  if (hasAny(text, ["rent", "rental", "rentals", "lease", "leasing", "hire", "hiring", "borrow", "asset utilisation", "asset utilization"])) {
+    return "rental";
+  }
   if (hasAny(text, ["saas", "software", "app", "subscription platform", "b2b platform", "ai tool", "dashboard", "crm"])) {
     return "saas";
+  }
+  if (hasAny(text, ["subscription", "membership", "member plan", "monthly plan", "recurring", "subscribe", "subscription box"])) {
+    return "subscription";
+  }
+  if (hasAny(text, ["booking", "appointment", "appointments", "slot", "slots", "class booking", "salon", "clinic", "studio booking", "reservation"])) {
+    return "booking";
+  }
+  if (hasAny(text, ["usage-based", "usage based", "pay per use", "pay-per-use", "credits", "credit pack", "per use", "api call", "metered", "hourly"])) {
+    return "usage_based";
+  }
+  if (hasAny(text, ["lead gen", "lead-gen", "lead generation", "qualified lead", "referral fee", "commission", "affiliate", "brokerage"])) {
+    return "lead_gen";
+  }
+  if (hasAny(text, ["project service", "project-based", "project based", "agency", "consulting", "consultancy", "retainer", "b2b service", "client project"])) {
+    return "project_services";
   }
   if (hasAny(text, ["service", "agency", "consulting", "consultancy", "clinic", "salon", "studio", "training", "course"])) {
     return "services";

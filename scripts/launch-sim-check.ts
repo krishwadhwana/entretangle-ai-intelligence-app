@@ -149,6 +149,144 @@ assert(
   "break-even cash payback includes the launch investment reserve"
 );
 
+const rentalInputs = LaunchSimInputsSchema.parse({
+  ...baseInputs,
+  businessModel: "rental",
+  costPrice: 0,
+  salePrice: 650,
+  adSpendPerMonth: 300000,
+  fixedCostsPerMonth: 35000,
+  launchInvestmentReserve: 0,
+  paymentFeePct: 0,
+  shippingPerOrder: 0,
+  targetRefundRatePct: 0,
+  granularity: "month",
+  horizon: 1,
+  reachablePool: 100000,
+  cpm: 100,
+  rentalAssetCount: 3,
+  rentalAssetCost: 0,
+  rentalRentableDaysPerMonth: 24,
+  rentalAvgDurationDays: 1,
+});
+const rentalLaunch = simulateLaunch(personas, rentalInputs, {
+  fixedCostsPerMonthFloor: 80000,
+  blendedCac: 1,
+});
+assert(
+  rentalLaunch.resolvedInputs.fixedCostsPerMonth === 35000,
+  "rental scenarios preserve founder-entered fixed costs instead of applying the generic service floor"
+);
+assert(
+  rentalLaunch.summary.totalFixedCosts === 35000,
+  "rental fixed costs reconcile to the founder-entered monthly overhead"
+);
+assert(
+  rentalLaunch.summary.totalOrders <= 72 + 1,
+  "rental bookings are capped by reusable asset capacity"
+);
+assert(
+  rentalLaunch.summary.stockoutUnits > 0,
+  "rental scenarios report unserved demand when asset capacity is exhausted"
+);
+
+const subscriptionLaunch = simulateLaunch(
+  personas,
+  LaunchSimInputsSchema.parse({
+    ...baseInputs,
+    businessModel: "subscription",
+    costPrice: 50,
+    salePrice: 500,
+    adSpendPerMonth: 200000,
+    paidCac: 100,
+    fixedCostsPerMonth: 25000,
+    launchInvestmentReserve: 0,
+    granularity: "month",
+    horizon: 6,
+    reachablePool: 100000,
+    subscriptionMonthlyChurnPct: 4,
+  }),
+  { fixedCostsPerMonthFloor: 90000, blendedCac: 5000 }
+);
+assert(
+  subscriptionLaunch.resolvedInputs.fixedCostsPerMonth === 25000,
+  "subscription scenarios preserve founder-entered fixed costs"
+);
+assert(
+  subscriptionLaunch.summary.repeatOrders > 0,
+  "subscription scenarios generate recurring invoices from active subscribers"
+);
+
+const bookingLaunch = simulateLaunch(
+  personas,
+  LaunchSimInputsSchema.parse({
+    ...baseInputs,
+    businessModel: "booking",
+    costPrice: 100,
+    salePrice: 1500,
+    adSpendPerMonth: 300000,
+    paidCac: 100,
+    fixedCostsPerMonth: 10000,
+    launchInvestmentReserve: 0,
+    granularity: "month",
+    horizon: 1,
+    reachablePool: 100000,
+    bookingCapacityPerMonth: 20,
+  }),
+  { fixedCostsPerMonthFloor: 90000, blendedCac: 5000 }
+);
+assert(
+  bookingLaunch.summary.totalOrders <= 21,
+  "booking scenarios are capped by monthly slot capacity"
+);
+
+const usageLaunch = simulateLaunch(
+  personas,
+  LaunchSimInputsSchema.parse({
+    ...baseInputs,
+    businessModel: "usage_based",
+    costPrice: 20,
+    salePrice: 100,
+    adSpendPerMonth: 200000,
+    paidCac: 100,
+    fixedCostsPerMonth: 5000,
+    launchInvestmentReserve: 0,
+    granularity: "month",
+    horizon: 6,
+    reachablePool: 100000,
+    usageEventsPerCustomerPerMonth: 6,
+    usageMonthlyChurnPct: 5,
+  }),
+  { blendedCac: 5000 }
+);
+assert(
+  usageLaunch.summary.repeatOrders > usageLaunch.summary.newOrders,
+  "usage-based scenarios generate repeat usage events from active customers"
+);
+
+const projectLaunch = simulateLaunch(
+  personas,
+  LaunchSimInputsSchema.parse({
+    ...baseInputs,
+    businessModel: "project_services",
+    costPrice: 20000,
+    salePrice: 100000,
+    adSpendPerMonth: 300000,
+    paidCac: 100,
+    fixedCostsPerMonth: 30000,
+    launchInvestmentReserve: 0,
+    granularity: "month",
+    horizon: 1,
+    reachablePool: 100000,
+    projectCapacityPerMonth: 2,
+  }),
+  { blendedCac: 5000 }
+);
+assert(
+  projectLaunch.summary.totalOrders <= 3,
+  "project-service scenarios are capped by delivery capacity"
+);
+
 // Price sensitivity: a higher sale price should not increase orders.
 const pricier = simulateLaunch(
   personas,

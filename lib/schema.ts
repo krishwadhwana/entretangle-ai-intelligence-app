@@ -316,6 +316,27 @@ const MarketRangeSchema = z.object({
   high: z.number(),
 });
 
+// Optional live-sourced priors that map directly to LaunchSimInputs. These are
+// business-model-specific launch assumptions, not generic category economics.
+export const LaunchModelBenchmarkInputsSchema = z
+  .object({
+    paidCac: MarketRangeSchema.nullable().optional(),
+    rentalRentableDaysPerMonth: MarketRangeSchema.nullable().optional(),
+    rentalAvgDurationDays: MarketRangeSchema.nullable().optional(),
+    rentalMaintenancePerOrder: MarketRangeSchema.nullable().optional(),
+    rentalDamageLossPct: MarketRangeSchema.nullable().optional(),
+    rentalDepositAmount: MarketRangeSchema.nullable().optional(),
+    subscriptionMonthlyChurnPct: MarketRangeSchema.nullable().optional(),
+    bookingCapacityPerMonth: MarketRangeSchema.nullable().optional(),
+    usageEventsPerCustomerPerMonth: MarketRangeSchema.nullable().optional(),
+    usageMonthlyChurnPct: MarketRangeSchema.nullable().optional(),
+    projectCapacityPerMonth: MarketRangeSchema.nullable().optional(),
+  })
+  .default({});
+export type LaunchModelBenchmarkInputs = z.infer<
+  typeof LaunchModelBenchmarkInputsSchema
+>;
+
 // What the web-grounded pass returns for one market × category. All monetary
 // fields are in the market's currency (USD for the US). Any field may be null
 // when the search couldn't find a credible figure (the curated prior is kept).
@@ -328,6 +349,9 @@ export const MarketDataOutputSchema = z.object({
   returnRatePct: MarketRangeSchema.nullable().default(null),
   cac: MarketRangeSchema.nullable().default(null),
   cpmMeta: MarketRangeSchema.nullable().default(null),
+  modelInputs: LaunchModelBenchmarkInputsSchema.nullable()
+    .default({})
+    .transform((v) => v ?? {}),
   notes: z.string().default(""),
   sources: z.array(z.string()).default([]),
 });
@@ -1164,6 +1188,33 @@ export const FollowUpTurnSchema = z.object({
 });
 export type FollowUpTurn = z.infer<typeof FollowUpTurnSchema>;
 
+export const KnowHowModuleProgressSchema = z.object({
+  completedTaskIds: z.array(z.string()).default([]),
+  notes: z.string().max(8000).default(""),
+  askHistory: z.array(FollowUpTurnSchema).default([]),
+  updatedAt: z.string().nullable().default(null),
+});
+export type KnowHowModuleProgress = z.infer<
+  typeof KnowHowModuleProgressSchema
+>;
+
+export const KnowHowRunProgressSchema = z.object({
+  selectedModuleKey: z.string().default("strategy"),
+  completedTaskIds: z.record(z.array(z.string())).default({}),
+  notesByModule: z.record(z.string().max(8000)).default({}),
+  askHistoryByModule: z.record(z.array(FollowUpTurnSchema)).default({}),
+  updatedAt: z.string().nullable().default(null),
+});
+export type KnowHowRunProgress = z.infer<typeof KnowHowRunProgressSchema>;
+
+const EMPTY_KNOW_HOW_RUN_PROGRESS = {
+  selectedModuleKey: "strategy",
+  completedTaskIds: {},
+  notesByModule: {},
+  askHistoryByModule: {},
+  updatedAt: null,
+};
+
 export const FinancialsSectionSchema = z.object({
   model: FinancialModelSchema.nullable().default(null),
   inputs: FinancialInputsSchema.nullable().default(null),
@@ -1699,6 +1750,27 @@ const EMPTY_DESIGN_STUDIO = {
   sourceRunId: null,
 };
 
+export const DashboardProjectOrganizerSchema = z.object({
+  folderId: z.string().nullable().default(null),
+  folderName: z.string().max(120).default(""),
+  folderColor: z.string().max(40).default("neutral"),
+  folderNote: z.string().max(4000).default(""),
+  projectNote: z.string().max(4000).default(""),
+  updatedAt: z.string().nullable().default(null),
+});
+export type DashboardProjectOrganizer = z.infer<
+  typeof DashboardProjectOrganizerSchema
+>;
+
+const EMPTY_DASHBOARD_PROJECT_ORGANIZER = {
+  folderId: null,
+  folderName: "",
+  folderColor: "neutral",
+  folderNote: "",
+  projectNote: "",
+  updatedAt: null,
+};
+
 export const UsageFeatureSchema = z.object({
   key: z.string(),
   label: z.string(),
@@ -1918,6 +1990,9 @@ export const OwnerDashboardSchema = z.object({
   financialsByRun: z.record(FinancialsSectionSchema).default({}),
   inspiration: InspirationSectionSchema.default(EMPTY_INSPIRATION),
   inspirationByRun: z.record(InspirationSectionSchema).default({}),
+  // Run-specific founder operating workbench progress: checklist ticks, notes,
+  // ask history and the last-opened Know-How module.
+  knowHowByRun: z.record(KnowHowRunProgressSchema).default({}),
   // LLM-generated playbooks, keyed by runId (regenerable per run).
   playbooks: z.record(GeneratedPlaybookSchema).default({}),
   // Project-level investor readiness, execution roadmap and fundraise kits.
@@ -1925,6 +2000,11 @@ export const OwnerDashboardSchema = z.object({
   // Project-level brand design tokens (palette, type, logo direction) that the
   // design generators (collateral, logos, website) all consume.
   designStudio: DesignStudioSectionSchema.default(EMPTY_DESIGN_STUDIO),
+  // Project-level dashboard grouping and quick notes. This is deliberately
+  // light-weight: folders are inferred by shared folderId across projects.
+  dashboardOrganizer: DashboardProjectOrganizerSchema.default(
+    EMPTY_DASHBOARD_PROJECT_ORGANIZER,
+  ),
   // Project-level business option registry. A saved intent explains how a
   // module that does not obviously fit the project should be used anyway.
   moduleRegistry: ProjectModuleRegistrySchema.default(EMPTY_MODULE_REGISTRY),
@@ -2120,6 +2200,12 @@ export const LaunchBusinessModelSchema = z.enum([
   "consumable",
   "saas",
   "services",
+  "rental",
+  "subscription",
+  "booking",
+  "usage_based",
+  "lead_gen",
+  "project_services",
   "marketplace",
 ]);
 export type LaunchBusinessModel = z.infer<typeof LaunchBusinessModelSchema>;
@@ -2171,6 +2257,7 @@ export const LaunchSimInputsSchema = z.object({
   costPrice: z.number().nonnegative(), // landed COGS per unit
   salePrice: z.number().nonnegative(), // retail price per unit
   adSpendPerMonth: z.number().nonnegative(), // monthly paid-media budget
+  paidCac: z.number().positive().nullable().default(null), // optional founder-entered paid CAC cap
 
   // --- audience scope ---
   // Restrict the launch to one region (GoI zone, e.g. "West"). null → the whole
@@ -2212,6 +2299,24 @@ export const LaunchSimInputsSchema = z.object({
   // Up-front launch/setup cash reserve. null → computed by the route from fixed
   // costs + media runway; 0 → explicitly no reserve.
   launchInvestmentReserve: z.number().nonnegative().nullable().default(null),
+
+  // --- rental / asset-utilisation model ---
+  // Rental models sell booking slots from reusable assets (PS5s, cameras, tools,
+  // furniture, vehicles), so demand is capped by asset-days rather than stock.
+  rentalAssetCount: z.number().int().nonnegative().default(3),
+  rentalAssetCost: z.number().nonnegative().default(0),
+  rentalRentableDaysPerMonth: z.number().positive().max(31).default(24),
+  rentalAvgDurationDays: z.number().positive().max(365).default(1),
+  rentalMaintenancePerOrder: z.number().nonnegative().default(0),
+  rentalDamageLossPct: z.number().min(0).max(100).default(0),
+  rentalDepositAmount: z.number().nonnegative().default(0),
+
+  // --- recurring / capacity / services models ---
+  subscriptionMonthlyChurnPct: z.number().min(0).max(100).default(5),
+  bookingCapacityPerMonth: z.number().nonnegative().default(120),
+  usageEventsPerCustomerPerMonth: z.number().nonnegative().default(4),
+  usageMonthlyChurnPct: z.number().min(0).max(100).default(8),
+  projectCapacityPerMonth: z.number().nonnegative().default(4),
 
   // --- refunds / returns ---
   returnWindowDays: z.number().int().min(0).max(180).default(30),

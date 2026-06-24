@@ -5,6 +5,7 @@ import {
   deleteProject,
   getProjectLean,
   renameProject,
+  saveDashboardOrganizer,
   saveInterviewTranscript,
   saveOwnerChecks,
   saveProjectCampaign,
@@ -18,6 +19,7 @@ import {
 } from "@/lib/store";
 import {
   ClientProfileSchema,
+  DashboardProjectOrganizerSchema,
   GenerationCountSchema,
   InterviewTranscriptSchema,
   MetaPixelStatusSchema,
@@ -75,6 +77,15 @@ const PatchSchema = z.object({
       name: z.string().min(1).max(120),
       description: z.string().max(2000).optional(),
     })
+    .optional(),
+  dashboardOrganizer: DashboardProjectOrganizerSchema.pick({
+    folderId: true,
+    folderName: true,
+    folderColor: true,
+    folderNote: true,
+    projectNote: true,
+  })
+    .partial()
     .optional(),
   projectCampaign: z
     .object({
@@ -138,6 +149,7 @@ export async function PATCH(
   let moduleIntent = null;
   let assetRating = null;
   let folder = null;
+  let dashboardOrganizer = null;
   let campaign = null;
   let generationPreference = null;
   let printSpec = null;
@@ -175,6 +187,12 @@ export async function PATCH(
     if (body.data.projectFolder !== undefined) {
       folder = await saveProjectFolder(params.id, body.data.projectFolder);
     }
+    if (body.data.dashboardOrganizer !== undefined) {
+      dashboardOrganizer = await saveDashboardOrganizer(
+        params.id,
+        body.data.dashboardOrganizer,
+      );
+    }
     if (body.data.projectCampaign !== undefined) {
       campaign = await saveProjectCampaign(
         params.id,
@@ -207,6 +225,7 @@ export async function PATCH(
     moduleIntent,
     assetRating,
     folder,
+    dashboardOrganizer,
     campaign,
     generationPreference,
     printSpec,

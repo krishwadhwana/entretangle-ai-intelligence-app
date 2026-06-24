@@ -1,49 +1,125 @@
 import type { Domain } from "@/lib/schema";
 
-// ---------------------------------------------------------------------------
-// Know-How hub: the network graph becomes a navigable index of "every aspect
-// of the business". Clicking a node opens an interactive module — a calculator
-// you can edit and recompute, plus a grounded Q&A you can follow up on, plus
-// saved what-if scenarios you can come back to and compare.
-//
-// This file is the catalog. It owns (a) the list of modules and (b) the rule
-// that resolves a clicked graph node to the module that should open. Adding a
-// new business aspect is a single entry here — the drawer renders it by its
-// `calculator` kind.
-// ---------------------------------------------------------------------------
+export type KnowHowModuleKey =
+  | "strategy"
+  | "financials"
+  | "launch"
+  | "audience"
+  | "market"
+  | "supply-ops"
+  | "channel"
+  | "product-regulation";
 
-// Which interactive surface backs a module. "financials" is the fully
-// interactive calculator (edit inputs → deterministic recompute → save
-// scenario). The others are grounded-Q&A modules today: you can ask, follow
-// up, and have the model propose justified changes — the dedicated calculators
-// land incrementally and slot in by switching this kind.
-export type KnowHowCalculator =
-  | "financials" // unit economics, pricing, break-even, runway, TAM/SAM/SOM
-  | "launchSim" // launch trajectory: orders, cash, inventory over time
-  | "audience" // demand: who buys, willingness-to-pay, reachable prospects
-  | "qa"; // grounded question-and-answer over the converged world model
+export type KnowHowTool =
+  | "financials"
+  | "launch"
+  | "audience"
+  | "playbook"
+  | "qa";
+
+export type KnowHowTask = {
+  id: string;
+  title: string;
+  detail: string;
+};
 
 export type KnowHowModule = {
-  key: string;
+  key: KnowHowModuleKey;
   title: string;
   blurb: string;
-  calculator: KnowHowCalculator;
-  // Subject phrasing used by the grounded-Q&A prompt ("ask about <subject>").
+  decision: string;
+  needToKnow: string[];
+  tasks: KnowHowTask[];
+  tool: KnowHowTool;
   askSubject: string;
-  // World-model domains this module reasons over. Drives the Q&A domain filter
-  // and how a node's domain maps onto a module.
   domains: Domain[];
 };
 
-// The catalog, in a sensible reading order. `key` is stable — it's what the
-// drawer, scenarios and analytics reference.
+export const ALL_KNOW_HOW_DOMAINS: Domain[] = [
+  "market",
+  "competitor",
+  "product",
+  "supply",
+  "operations",
+  "channel",
+  "regulation",
+  "pricing",
+  "finance",
+  "social",
+  "audience",
+  "synthesis",
+];
+
 export const KNOW_HOW_MODULES: KnowHowModule[] = [
+  {
+    key: "strategy",
+    title: "Strategy control room",
+    blurb:
+      "Turn the run into the operating thesis: what to do first, what must be proven, and what could break the business.",
+    decision:
+      "Which path should the founder act on next, and what evidence would change that path?",
+    needToKnow: [
+      "The strongest buying trigger and the biggest adoption blocker.",
+      "The first market, segment, and channel to test before scaling.",
+      "The riskiest assumption that needs a real-world proof point.",
+    ],
+    tasks: [
+      {
+        id: "write-one-page-operating-thesis",
+        title: "Write the one-page operating thesis",
+        detail:
+          "Summarise target buyer, offer, channel, price logic, and the next proof needed.",
+      },
+      {
+        id: "pick-first-validation-metric",
+        title: "Pick the first validation metric",
+        detail:
+          "Choose one metric that decides whether the next two weeks worked: leads, orders, CAC, margin, or repeat intent.",
+      },
+      {
+        id: "list-top-three-kill-risks",
+        title: "List the top three kill risks",
+        detail:
+          "Write the three assumptions that could make the venture fail even if the product looks promising.",
+      },
+    ],
+    tool: "playbook",
+    askSubject: "this venture's overall strategy and world model",
+    domains: ALL_KNOW_HOW_DOMAINS,
+  },
   {
     key: "financials",
     title: "Unit economics & financials",
     blurb:
-      "Price tiers, landed cost, margins, CAC/LTV, break-even, runway and TAM/SAM/SOM — edit any assumption and recompute against your simulated buyers.",
-    calculator: "financials",
+      "Work through price, landed cost, margin, CAC/LTV, break-even, runway, and cash pressure.",
+    decision:
+      "Can this business make money at the intended price and scale, and which number needs fixing first?",
+    needToKnow: [
+      "Gross margin by realistic price tier.",
+      "Break-even units per month and runway at current fixed costs.",
+      "CAC and refund sensitivity before ad spend is increased.",
+    ],
+    tasks: [
+      {
+        id: "build-financial-model",
+        title: "Build the financial model",
+        detail:
+          "Generate the run-specific model, then check base price, margin, break-even, and runway.",
+      },
+      {
+        id: "test-price-floor",
+        title: "Test the price floor",
+        detail:
+          "Lower price until margin becomes unacceptable; note the minimum viable price.",
+      },
+      {
+        id: "record-cash-risk",
+        title: "Record the cash risk",
+        detail:
+          "Write the biggest working-capital or inventory cash constraint in the notes.",
+      },
+    ],
+    tool: "financials",
     askSubject: "this business's financial model",
     domains: ["finance", "pricing"],
   },
@@ -51,8 +127,35 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
     key: "launch",
     title: "Launch trajectory",
     blurb:
-      "Simulate the first months: ad spend, orders, cash and inventory over time. Try a scenario, see where it breaks, and come back to compare.",
-    calculator: "launchSim",
+      "Convert the research into a first-month launch plan: spend, orders, inventory, fulfilment, and cash movement.",
+    decision:
+      "What launch shape is realistic without running out of cash, stock, or trust?",
+    needToKnow: [
+      "First campaign budget and the expected order range.",
+      "Inventory or fulfilment bottleneck before demand is created.",
+      "The trigger that tells you to scale, pause, or change the offer.",
+    ],
+    tasks: [
+      {
+        id: "open-launch-simulator",
+        title: "Open the launch simulator",
+        detail:
+          "Run one conservative and one aggressive launch scenario against this run.",
+      },
+      {
+        id: "define-scale-stop-rules",
+        title: "Define scale and stop rules",
+        detail:
+          "Write the CAC, conversion, or refund threshold that decides whether spend increases.",
+      },
+      {
+        id: "check-operational-readiness",
+        title: "Check operational readiness",
+        detail:
+          "Confirm stock, packaging, fulfilment, returns, and customer support before pushing traffic.",
+      },
+    ],
+    tool: "launch",
     askSubject: "this launch simulation",
     domains: ["channel", "finance", "operations"],
   },
@@ -60,26 +163,107 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
     key: "audience",
     title: "Audience & demand",
     blurb:
-      "Who actually buys, what they'll pay, and how many you can reach — drawn from the simulated audience behind the graph.",
-    calculator: "audience",
+      "Translate simulated buyers into who to sell to, what they care about, and what they will not tolerate.",
+    decision:
+      "Which audience segment is worth targeting first, and what exact promise will move them?",
+    needToKnow: [
+      "Highest-intent segment and locality or platform signal.",
+      "Willingness-to-pay tension and the top objection.",
+      "Language, proof, and offer details that reduce hesitation.",
+    ],
+    tasks: [
+      {
+        id: "choose-first-segment",
+        title: "Choose the first segment",
+        detail:
+          "Pick the audience group with the best mix of intent, reach, and ability to pay.",
+      },
+      {
+        id: "write-objection-replies",
+        title: "Write objection replies",
+        detail:
+          "Turn the top three buyer objections into founder-ready response lines.",
+      },
+      {
+        id: "save-audience-proof",
+        title: "Save audience proof",
+        detail:
+          "Copy the strongest buyer quote or finding into notes for ads, website, or pitch use.",
+      },
+    ],
+    tool: "audience",
     askSubject: "this venture's audience and demand",
-    domains: ["audience", "market"],
+    domains: ["audience", "market", "social"],
   },
   {
     key: "market",
     title: "Market & competition",
     blurb:
-      "Market size, segments, and the competitive set the research desks converged on. Ask how a move changes the picture.",
-    calculator: "qa",
+      "Understand the market shape, competitors, price anchors, whitespace, and where differentiation must be sharper.",
+    decision:
+      "Where is the opening in the market, and who must the founder benchmark against?",
+    needToKnow: [
+      "Named competitors and the price or positioning they occupy.",
+      "The market segment that is reachable now, not just theoretically large.",
+      "The gap this venture can credibly own.",
+    ],
+    tasks: [
+      {
+        id: "name-five-competitors",
+        title: "Name five competitors",
+        detail:
+          "List direct, aspirational, and substitute competitors with one reason each.",
+      },
+      {
+        id: "write-positioning-gap",
+        title: "Write the positioning gap",
+        detail:
+          "State the specific market gap in one sentence using buyer language.",
+      },
+      {
+        id: "collect-price-anchors",
+        title: "Collect price anchors",
+        detail:
+          "Record low, middle, and premium competitor prices for the same buyer use case.",
+      },
+    ],
+    tool: "playbook",
     askSubject: "this venture's market and competitive landscape",
-    domains: ["market", "competitor"],
+    domains: ["market", "competitor", "pricing"],
   },
   {
     key: "supply-ops",
     title: "Supply & operations",
     blurb:
-      "Sourcing, MOQ, fulfilment and the operating constraints that shape what's actually buildable at what cost.",
-    calculator: "qa",
+      "Work through sourcing, MOQ, sampling, packaging, fulfilment, returns, quality control, and operating constraints.",
+    decision:
+      "Can the business reliably deliver the promised product at the needed cost and quality?",
+    needToKnow: [
+      "Supplier, MOQ, sampling, and lead-time constraints.",
+      "Fulfilment, returns, quality, and support risks.",
+      "Which operating step must be solved before paid growth.",
+    ],
+    tasks: [
+      {
+        id: "map-supply-path",
+        title: "Map the supply path",
+        detail:
+          "Write each step from sourcing to delivery, including who owns it and where delay can happen.",
+      },
+      {
+        id: "confirm-moq-and-lead-time",
+        title: "Confirm MOQ and lead time",
+        detail:
+          "Record the minimum order, sampling time, production time, and cash locked in stock.",
+      },
+      {
+        id: "define-quality-check",
+        title: "Define the quality check",
+        detail:
+          "Write the inspection or acceptance standard before products ship.",
+      },
+    ],
+    tool: "qa",
     askSubject: "this venture's supply chain and operations",
     domains: ["supply", "operations"],
   },
@@ -87,78 +271,84 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
     key: "channel",
     title: "Channels & growth",
     blurb:
-      "Where customers come from, what acquisition costs, and how the social/organic mix compounds. Test a channel-mix shift.",
-    calculator: "qa",
+      "Decide how customers will discover, trust, and buy: social, ads, retail, partnerships, referrals, or marketplaces.",
+    decision:
+      "Which channel should be tested first, and what proof must that channel carry?",
+    needToKnow: [
+      "Where the audience already pays attention.",
+      "Which channel has the lowest trust barrier for this product.",
+      "Creative, creator, or retail proof needed before conversion.",
+    ],
+    tasks: [
+      {
+        id: "pick-one-primary-channel",
+        title: "Pick one primary channel",
+        detail:
+          "Choose the first acquisition channel and write why it is better than the alternatives.",
+      },
+      {
+        id: "draft-three-test-creatives",
+        title: "Draft three test creatives",
+        detail:
+          "Write three ad, post, or outreach concepts tied to buyer objections.",
+      },
+      {
+        id: "define-channel-budget",
+        title: "Define the channel budget",
+        detail:
+          "Set the small test budget and the result needed before increasing spend.",
+      },
+    ],
+    tool: "qa",
     askSubject: "this venture's acquisition channels and growth",
-    domains: ["channel", "social"],
+    domains: ["channel", "social", "audience"],
   },
   {
     key: "product-regulation",
     title: "Product & compliance",
     blurb:
-      "Product positioning, must-have features, and the regulatory or compliance gates that apply to this category and geography.",
-    calculator: "qa",
+      "Clarify the product standard, claim boundaries, packaging, certifications, duties, labels, and compliance gates.",
+    decision:
+      "What product or compliance requirement could block trust, sale, export, or scale?",
+    needToKnow: [
+      "Product attributes buyers treat as non-negotiable.",
+      "Claims, labels, duties, certifications, or rules that apply.",
+      "Packaging and proof needed for trust or retail readiness.",
+    ],
+    tasks: [
+      {
+        id: "write-product-standard",
+        title: "Write the product standard",
+        detail:
+          "Define must-have specs, unacceptable defects, and proof points buyers need to see.",
+      },
+      {
+        id: "list-compliance-gates",
+        title: "List compliance gates",
+        detail:
+          "Record labels, certifications, duties, or claims that need verification.",
+      },
+      {
+        id: "prepare-proof-assets",
+        title: "Prepare proof assets",
+        detail:
+          "List photos, test results, certifications, or guarantees needed to reduce buyer risk.",
+      },
+    ],
+    tool: "playbook",
     askSubject: "this venture's product and regulatory requirements",
-    domains: ["product", "regulation"],
-  },
-  {
-    key: "strategy",
-    title: "Whole-business strategy",
-    blurb:
-      "The converged world model across every desk. Ask anything end-to-end; answers cite the conclusions they rely on.",
-    calculator: "qa",
-    askSubject: "this venture's overall strategy and world model",
-    domains: ["synthesis"],
+    domains: ["product", "regulation", "supply"],
   },
 ];
 
-const MODULE_BY_KEY = new Map(KNOW_HOW_MODULES.map((m) => [m.key, m]));
-
-// Each world-model domain points at the module that should own it when a desk
-// node of that domain is clicked.
-const MODULE_BY_DOMAIN: Record<Domain, string> = {
-  finance: "financials",
-  pricing: "financials",
-  market: "market",
-  competitor: "market",
-  audience: "audience",
-  supply: "supply-ops",
-  operations: "supply-ops",
-  channel: "channel",
-  social: "channel",
-  product: "product-regulation",
-  regulation: "product-regulation",
-  synthesis: "strategy",
-};
+const MODULE_BY_KEY = new Map<string, KnowHowModule>(
+  KNOW_HOW_MODULES.map((m) => [m.key, m]),
+);
 
 export function moduleByKey(key: string): KnowHowModule | undefined {
   return MODULE_BY_KEY.get(key);
 }
 
-// A graph node, reduced to what the resolver needs. NetworkView nodes are
-// either research desks (with a `domain`), audience locality/platform nodes
-// (id-prefixed), or the world-model terminal.
-export type KnowHowNodeRef = {
-  id: string;
-  /** Research desks carry their world-model domain. */
-  domain?: Domain | null;
-  /** True for the world-model terminal node. */
-  isWorldModel?: boolean;
-};
-
-// Resolve a clicked node to the module that should open. Audience locality /
-// platform nodes open the audience module; the world model opens strategy;
-// research desks open whichever module owns their domain. Falls back to
-// strategy so every node is always actionable.
-export function moduleForNode(node: KnowHowNodeRef): KnowHowModule {
-  if (node.isWorldModel) return MODULE_BY_KEY.get("strategy")!;
-  if (node.id.startsWith("loc:") || node.id.startsWith("plat:")) {
-    return MODULE_BY_KEY.get("audience")!;
-  }
-  if (node.domain) {
-    const key = MODULE_BY_DOMAIN[node.domain];
-    const mod = key ? MODULE_BY_KEY.get(key) : undefined;
-    if (mod) return mod;
-  }
+export function defaultKnowHowModule(): KnowHowModule {
   return MODULE_BY_KEY.get("strategy")!;
 }

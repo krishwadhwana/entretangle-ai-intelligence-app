@@ -48,6 +48,7 @@ import {
 } from "./pdf";
 import type {
   AssumptionUpdate,
+  LaunchModelBenchmarkInputs,
   LaunchSimInputs,
   LaunchSimRecord,
 } from "@/lib/schema";
@@ -83,6 +84,7 @@ type Defaults = {
     confidence: number;
     sources: string[];
   } | null;
+  modelBenchmarks?: LaunchModelBenchmarkInputs | null;
 };
 
 // Turn an API error payload into a readable string. A 400 returns Zod issues as
@@ -114,6 +116,7 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   costPrice: 0,
   salePrice: 0,
   adSpendPerMonth: 0,
+  paidCac: null,
   region: null, // null → whole audience; or a GoI zone to scope the launch
   granularity: "day",
   horizon: 90,
@@ -133,6 +136,18 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   paymentFeePct: 0.02,
   fixedCostsPerMonth: 0,
   launchInvestmentReserve: null,
+  rentalAssetCount: 3,
+  rentalAssetCost: 0,
+  rentalRentableDaysPerMonth: 24,
+  rentalAvgDurationDays: 1,
+  rentalMaintenancePerOrder: 0,
+  rentalDamageLossPct: 0,
+  rentalDepositAmount: 0,
+  subscriptionMonthlyChurnPct: 5,
+  bookingCapacityPerMonth: 120,
+  usageEventsPerCustomerPerMonth: 4,
+  usageMonthlyChurnPct: 8,
+  projectCapacityPerMonth: 4,
   returnWindowDays: 30,
   refundRateMult: 1,
   targetRefundRatePct: null, // null → server anchors to the benchmark returns rate
@@ -157,8 +172,164 @@ const BUSINESS_MODEL_OPTIONS: {
   { value: "consumable", label: "Consumable" },
   { value: "saas", label: "SaaS" },
   { value: "services", label: "Services" },
+  { value: "rental", label: "Rental / asset" },
+  { value: "subscription", label: "Subscription" },
+  { value: "booking", label: "Booking / capacity" },
+  { value: "usage_based", label: "Usage-based" },
+  { value: "lead_gen", label: "Lead-gen / commission" },
+  { value: "project_services", label: "Project services" },
   { value: "marketplace", label: "Marketplace" },
 ];
+
+function benchmarkMid(
+  range: { mid: number } | null | undefined
+): number | null {
+  return range && Number.isFinite(range.mid) ? range.mid : null;
+}
+
+function applyNumberBenchmark<K extends keyof LaunchSimInputs & keyof LaunchModelBenchmarkInputs>(
+  inputs: LaunchSimInputs,
+  key: K,
+  defaultValue: number,
+  benchmarks: LaunchModelBenchmarkInputs | null | undefined,
+  transform: (n: number) => number = (n) => n
+): LaunchSimInputs {
+  const mid = benchmarkMid(benchmarks?.[key]);
+  const current = inputs[key];
+  if (mid == null || typeof current !== "number" || current !== defaultValue) {
+    return inputs;
+  }
+  return { ...inputs, [key]: transform(mid) } as LaunchSimInputs;
+}
+
+function applyModelDefaults(
+  inputs: LaunchSimInputs,
+  previousModel: LaunchSimInputs["businessModel"],
+  defaults: Defaults | null
+): LaunchSimInputs {
+  const modelChanged = previousModel !== inputs.businessModel;
+  const benchmarks = defaults?.modelBenchmarks ?? null;
+  let next: LaunchSimInputs = { ...inputs };
+
+  if (inventorylessModel(next.businessModel)) {
+    next = {
+      ...next,
+      initialInventoryUnits: null,
+      minOrderQtyUnits: null,
+    };
+  }
+
+  if (next.businessModel === "rental") {
+    if (
+      modelChanged ||
+      next.costPrice === DEFAULT_INPUTS.costPrice ||
+      next.costPrice === defaults?.suggestedCostPrice
+    ) {
+      next = { ...next, costPrice: 0 };
+    }
+    next = applyNumberBenchmark(
+      next,
+      "rentalRentableDaysPerMonth",
+      DEFAULT_INPUTS.rentalRentableDaysPerMonth,
+      benchmarks,
+      (n) => Math.max(1, Math.min(31, Math.round(n)))
+    );
+    next = applyNumberBenchmark(
+      next,
+      "rentalAvgDurationDays",
+      DEFAULT_INPUTS.rentalAvgDurationDays,
+      benchmarks,
+      (n) => Math.max(0.25, n)
+    );
+    next = applyNumberBenchmark(
+      next,
+      "rentalMaintenancePerOrder",
+      DEFAULT_INPUTS.rentalMaintenancePerOrder,
+      benchmarks,
+      (n) => Math.max(0, Math.round(n))
+    );
+    next = applyNumberBenchmark(
+      next,
+      "rentalDamageLossPct",
+      DEFAULT_INPUTS.rentalDamageLossPct,
+      benchmarks,
+      (n) => Math.max(0, Math.min(100, n))
+    );
+    next = applyNumberBenchmark(
+      next,
+      "rentalDepositAmount",
+      DEFAULT_INPUTS.rentalDepositAmount,
+      benchmarks,
+      (n) => Math.max(0, Math.round(n))
+    );
+  } else if (modelChanged && next.costPrice === 0 && defaults?.suggestedCostPrice) {
+    next = { ...next, costPrice: defaults.suggestedCostPrice };
+  }
+
+  if (next.paidCac == null) {
+    const paidCac = benchmarkMid(benchmarks?.paidCac);
+    if (paidCac != null && paidCac > 0) next = { ...next, paidCac: paidCac };
+  }
+
+  if (next.businessModel === "subscription") {
+    next = applyNumberBenchmark(
+      next,
+      "subscriptionMonthlyChurnPct",
+      DEFAULT_INPUTS.subscriptionMonthlyChurnPct,
+      benchmarks,
+      (n) => Math.max(0, Math.min(100, n))
+    );
+  }
+  if (next.businessModel === "booking") {
+    next = applyNumberBenchmark(
+      next,
+      "bookingCapacityPerMonth",
+      DEFAULT_INPUTS.bookingCapacityPerMonth,
+      benchmarks,
+      (n) => Math.max(0, Math.round(n))
+    );
+  }
+  if (next.businessModel === "usage_based") {
+    next = applyNumberBenchmark(
+      next,
+      "usageEventsPerCustomerPerMonth",
+      DEFAULT_INPUTS.usageEventsPerCustomerPerMonth,
+      benchmarks,
+      (n) => Math.max(0, n)
+    );
+    next = applyNumberBenchmark(
+      next,
+      "usageMonthlyChurnPct",
+      DEFAULT_INPUTS.usageMonthlyChurnPct,
+      benchmarks,
+      (n) => Math.max(0, Math.min(100, n))
+    );
+  }
+  if (next.businessModel === "project_services") {
+    next = applyNumberBenchmark(
+      next,
+      "projectCapacityPerMonth",
+      DEFAULT_INPUTS.projectCapacityPerMonth,
+      benchmarks,
+      (n) => Math.max(0, n)
+    );
+  }
+
+  return next;
+}
+
+function inventorylessModel(businessModel: LaunchSimInputs["businessModel"]): boolean {
+  return [
+    "services",
+    "saas",
+    "rental",
+    "subscription",
+    "booking",
+    "usage_based",
+    "lead_gen",
+    "project_services",
+  ].includes(businessModel);
+}
 
 export default function LaunchSimulation({
   runId,
@@ -184,10 +355,14 @@ export default function LaunchSimulation({
   const [sourced, setSourced] = useState<string | null>(null);
 
   const engineCurrency = inputs.currency || defaults?.currency || "INR";
-  // Service / SaaS launches hold no sellable stock — the inventory knobs don't
-  // apply and the engine treats fulfilment as unconstrained.
-  const inventoryless =
-    inputs.businessModel === "services" || inputs.businessModel === "saas";
+  // Service / SaaS launches hold no sellable stock. Rental also holds no
+  // disposable inventory, but it is capped by reusable asset-days.
+  const rentalModel = inputs.businessModel === "rental";
+  const subscriptionModel = inputs.businessModel === "subscription";
+  const bookingModel = inputs.businessModel === "booking";
+  const usageModel = inputs.businessModel === "usage_based";
+  const projectModel = inputs.businessModel === "project_services";
+  const inventoryless = inventorylessModel(inputs.businessModel);
   const displayCurrency = defaults?.displayCurrency || engineCurrency;
   const displayFxRate = defaults?.displayFxRate ?? 1;
 
@@ -199,7 +374,7 @@ export default function LaunchSimulation({
       const res = await fetch(`/api/projects/${projectId}/market-data`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ businessModel: inputs.businessModel }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok)
@@ -215,11 +390,17 @@ export default function LaunchSimulation({
     } finally {
       setSourcing(false);
     }
-  }, [projectId, sourcing]);
+  }, [inputs.businessModel, projectId, sourcing]);
   const fmt = useMemo(
     () => makeFormatters(displayCurrency, displayFxRate, engineCurrency),
     [displayCurrency, displayFxRate, engineCurrency]
   );
+  const unitLabel = unitLabelFor(inputs.businessModel);
+  const salePriceLabel = salePriceLabelFor(inputs.businessModel);
+  const costPriceLabel = costPriceLabelFor(inputs.businessModel);
+  const businessModelLabel =
+    BUSINESS_MODEL_OPTIONS.find((opt) => opt.value === inputs.businessModel)?.label ??
+    "This model";
 
   // Load defaults + saved scenarios once.
   useEffect(() => {
@@ -242,39 +423,43 @@ export default function LaunchSimulation({
         if (!alive) return;
         setScenarios(data.scenarios);
         setDefaults(data.defaults);
-        setInputs((cur) => ({
-          ...cur,
-          currency: data.defaults.currency ?? cur.currency,
-          businessModel:
+        setInputs((cur) => {
+          const businessModel =
             cur.businessModel === "generic"
               ? data.defaults.suggestedBusinessModel
-              : cur.businessModel,
-          costPrice: cur.costPrice || data.defaults.suggestedCostPrice || 0,
-          salePrice: cur.salePrice || data.defaults.suggestedSalePrice || 0,
-          adSpendPerMonth:
-            cur.adSpendPerMonth || data.defaults.suggestedAdSpendPerMonth || 0,
-          fixedCostsPerMonth:
-            cur.fixedCostsPerMonth || data.defaults.fixedCostsPerMonth || 0,
-          // Prefill CPM / shipping with category × geo benchmark numbers, but
-          // only while they're still at the universal defaults (don't clobber
-          // a value the founder has already changed).
-          cpm:
-            cur.cpm === DEFAULT_INPUTS.cpm && data.defaults.benchmarks
-              ? data.defaults.benchmarks.suggestedCpm
-              : cur.cpm,
-          shippingPerOrder:
-            cur.shippingPerOrder === DEFAULT_INPUTS.shippingPerOrder &&
-            data.defaults.benchmarks
-              ? data.defaults.benchmarks.suggestedShippingPerOrder
-              : cur.shippingPerOrder,
-          // Prefill the refund rate from the category benchmark so the field
-          // shows a real number (e.g. ~10% for hygiene) instead of an empty
-          // target the server silently fills. Founder edits it directly.
-          targetRefundRatePct:
-            cur.targetRefundRatePct == null && data.defaults.benchmarks
-              ? data.defaults.benchmarks.returnRatePct
-              : cur.targetRefundRatePct,
-        }));
+              : cur.businessModel;
+          const next = {
+            ...cur,
+            currency: data.defaults.currency ?? cur.currency,
+            businessModel,
+            costPrice: cur.costPrice || data.defaults.suggestedCostPrice || 0,
+            salePrice: cur.salePrice || data.defaults.suggestedSalePrice || 0,
+            adSpendPerMonth:
+              cur.adSpendPerMonth || data.defaults.suggestedAdSpendPerMonth || 0,
+            fixedCostsPerMonth:
+              cur.fixedCostsPerMonth || data.defaults.fixedCostsPerMonth || 0,
+            // Prefill CPM / shipping with category × geo benchmark numbers, but
+            // only while they're still at the universal defaults (don't clobber
+            // a value the founder has already changed).
+            cpm:
+              cur.cpm === DEFAULT_INPUTS.cpm && data.defaults.benchmarks
+                ? data.defaults.benchmarks.suggestedCpm
+                : cur.cpm,
+            shippingPerOrder:
+              cur.shippingPerOrder === DEFAULT_INPUTS.shippingPerOrder &&
+              data.defaults.benchmarks
+                ? data.defaults.benchmarks.suggestedShippingPerOrder
+                : cur.shippingPerOrder,
+            // Prefill the refund rate from the category benchmark so the field
+            // shows a real number (e.g. ~10% for hygiene) instead of an empty
+            // target the server silently fills. Founder edits it directly.
+            targetRefundRatePct:
+              cur.targetRefundRatePct == null && data.defaults.benchmarks
+                ? data.defaults.benchmarks.returnRatePct
+                : cur.targetRefundRatePct,
+          };
+          return applyModelDefaults(next, cur.businessModel, data.defaults);
+        });
         if (data.scenarios[0]) {
           setActive(data.scenarios[0]);
           setInputs(data.scenarios[0].inputs);
@@ -523,14 +708,14 @@ export default function LaunchSimulation({
         <section className="rounded-xl border border-neutral-200 bg-white p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <NumField
-              label="Cost price"
-              unit={`${engineCurrency}/unit`}
+              label={costPriceLabel}
+              unit={`${engineCurrency}/${unitLabel}`}
               value={inputs.costPrice}
               onChange={(v) => set("costPrice", v)}
             />
             <NumField
-              label="Sale price"
-              unit={`${engineCurrency}/unit`}
+              label={salePriceLabel}
+              unit={`${engineCurrency}/${unitLabel}`}
               value={inputs.salePrice}
               onChange={(v) => set("salePrice", v)}
             />
@@ -550,8 +735,16 @@ export default function LaunchSimulation({
               <select
                 value={inputs.businessModel}
                 onChange={(e) => {
-                  set("businessModel", e.target.value as LaunchSimInputs["businessModel"]);
-                  set("channels", []);
+                  const businessModel = e.target
+                    .value as LaunchSimInputs["businessModel"];
+                  setActive(null);
+                  setInputs((cur) =>
+                    applyModelDefaults(
+                      { ...cur, businessModel, channels: [] },
+                      cur.businessModel,
+                      defaults
+                    )
+                  );
                 }}
                 className="h-[31px] rounded-lg border border-neutral-300 bg-white px-2.5 text-xs outline-none focus:border-indigo-500"
               >
@@ -654,6 +847,14 @@ export default function LaunchSimulation({
                   help={`Cost per 1,000 paid impressions. Cheap reach: ${engineCurrency}100-250; premium/niche: ${engineCurrency}500-1,500+.`}
                   value={inputs.cpm}
                   onChange={(v) => set("cpm", v)}
+                  small
+                />
+                <NullableNumField
+                  label="Paid CAC"
+                  unit={engineCurrency}
+                  help="Optional cap for paid first-time customers. Blank = use benchmark/model CAC; enter your real local CAC if you know it."
+                  value={inputs.paidCac}
+                  onChange={(v) => set("paidCac", v && v > 0 ? v : null)}
                   small
                 />
                 <NumField
@@ -764,12 +965,135 @@ export default function LaunchSimulation({
                   onChange={(v) => set("launchInvestmentReserve", v)}
                   small
                 />
+                {rentalModel && (
+                  <>
+                    <NumField
+                      label="Rental assets"
+                      unit="assets"
+                      help="Reusable assets available to rent, e.g. PS5 consoles, cameras, tools, or vehicles."
+                      value={inputs.rentalAssetCount}
+                      onChange={(v) => set("rentalAssetCount", Math.round(v))}
+                      small
+                    />
+                    <NumField
+                      label="Asset cost"
+                      unit={`${engineCurrency}/asset`}
+                      help="Purchase value per asset. If you already included this in fixed costs, keep this at 0 to avoid double-counting cash payback."
+                      value={inputs.rentalAssetCost}
+                      onChange={(v) => set("rentalAssetCost", v)}
+                      small
+                    />
+                    <NumField
+                      label="Rentable days"
+                      unit="days/mo"
+                      help="How many days per month each asset can realistically be rented after downtime, pickup, testing, and rest days."
+                      value={inputs.rentalRentableDaysPerMonth}
+                      onChange={(v) =>
+                        set("rentalRentableDaysPerMonth", Math.max(1, Math.min(31, v)))
+                      }
+                      small
+                    />
+                    <NumField
+                      label="Avg duration"
+                      unit="days"
+                      help="Average booking length. A 2-day weekend rental consumes twice the asset capacity of a 1-day rental."
+                      value={inputs.rentalAvgDurationDays}
+                      onChange={(v) => set("rentalAvgDurationDays", Math.max(0.25, v))}
+                      step={0.25}
+                      small
+                    />
+                    <NumField
+                      label="Maintenance"
+                      unit={`${engineCurrency}/booking`}
+                      help="Variable checking, cleaning, controller wear, packaging, setup, or repair provision per booking."
+                      value={inputs.rentalMaintenancePerOrder}
+                      onChange={(v) => set("rentalMaintenancePerOrder", v)}
+                      small
+                    />
+                    <NumField
+                      label="Damage/loss"
+                      unit="%"
+                      help="Expected per-booking damage/loss rate, applied only to asset value not covered by deposit."
+                      value={inputs.rentalDamageLossPct}
+                      onChange={(v) => set("rentalDamageLossPct", Math.max(0, Math.min(100, v)))}
+                      step={0.1}
+                      small
+                    />
+                    <NumField
+                      label="Deposit"
+                      unit={engineCurrency}
+                      help="Refundable customer deposit. It is not counted as revenue, but offsets expected damage/loss exposure."
+                      value={inputs.rentalDepositAmount}
+                      onChange={(v) => set("rentalDepositAmount", v)}
+                      small
+                    />
+                  </>
+                )}
+                {subscriptionModel && (
+                  <NumField
+                    label="Monthly churn"
+                    unit="%"
+                    help="Percent of active subscribers who cancel each month. Lower churn increases recurring revenue and payback."
+                    value={inputs.subscriptionMonthlyChurnPct}
+                    onChange={(v) =>
+                      set("subscriptionMonthlyChurnPct", Math.max(0, Math.min(100, v)))
+                    }
+                    step={0.5}
+                    small
+                  />
+                )}
+                {bookingModel && (
+                  <NumField
+                    label="Booking capacity"
+                    unit="bookings/mo"
+                    help="Maximum service slots you can fulfill each month with your current staff, rooms, equipment, or calendar."
+                    value={inputs.bookingCapacityPerMonth}
+                    onChange={(v) => set("bookingCapacityPerMonth", Math.max(0, v))}
+                    small
+                  />
+                )}
+                {usageModel && (
+                  <>
+                    <NumField
+                      label="Usage frequency"
+                      unit="uses/customer/mo"
+                      help="Paid uses each active customer generates per month after acquisition."
+                      value={inputs.usageEventsPerCustomerPerMonth}
+                      onChange={(v) =>
+                        set("usageEventsPerCustomerPerMonth", Math.max(0, v))
+                      }
+                      step={0.5}
+                      small
+                    />
+                    <NumField
+                      label="Usage churn"
+                      unit="%"
+                      help="Percent of active usage customers who stop using each month."
+                      value={inputs.usageMonthlyChurnPct}
+                      onChange={(v) =>
+                        set("usageMonthlyChurnPct", Math.max(0, Math.min(100, v)))
+                      }
+                      step={0.5}
+                      small
+                    />
+                  </>
+                )}
+                {projectModel && (
+                  <NumField
+                    label="Project capacity"
+                    unit="projects/mo"
+                    help="Maximum client projects the team can sell and deliver per month."
+                    value={inputs.projectCapacityPerMonth}
+                    onChange={(v) => set("projectCapacityPerMonth", Math.max(0, v))}
+                    step={0.5}
+                    small
+                  />
+                )}
                 {inventoryless ? (
                   <p className="col-span-full text-xs text-neutral-500">
-                    Inventory, reorder lead and minimum order quantity don&apos;t
-                    apply to a {inputs.businessModel === "saas" ? "SaaS" : "service"}{" "}
-                    launch — fulfilment is treated as unconstrained, with no stock,
-                    reorders or deadstock.
+                    {rentalModel
+                      ? "Rental bookings are capped by reusable asset-days, not sellable inventory; normal stock, reorder lead and MOQ do not apply."
+                      : `${businessModelLabel} scenarios do not use sellable inventory; normal stock, reorder lead and MOQ do not apply.`}
                   </p>
                 ) : (
                   <>
@@ -1154,6 +1478,15 @@ function Results({
 }) {
   const { result } = record;
   const { summary: s, timeline, breakdowns: b } = result;
+  const isRental =
+    record.inputs.businessModel === "rental" ||
+    result.resolvedInputs.businessModel === "rental";
+  const isCapacityModel =
+    isRental ||
+    record.inputs.businessModel === "booking" ||
+    result.resolvedInputs.businessModel === "booking" ||
+    record.inputs.businessModel === "project_services" ||
+    result.resolvedInputs.businessModel === "project_services";
   const convertedDisplay =
     fmt.sourceCurrency !== fmt.displayCurrency && fmt.moneyRate !== 1;
   const growthAssumption = result.assumptions.find(
@@ -1192,7 +1525,7 @@ function Results({
         )}`
       : null,
     openingInventoryAssumption
-      ? `Opening inventory: ${formatAssumptionValue(
+      ? `${isRental ? "Rental stock mode" : "Opening inventory"}: ${formatAssumptionValue(
           openingInventoryAssumption.value,
           openingInventoryAssumption.unit,
           fmt
@@ -1407,15 +1740,15 @@ function Results({
         sub: `${fmt.money(s.adSpendPerConversion)} ad spend / conversion`,
       },
       {
-        label: "Deadstock",
+        label: isRental ? "Unused stock" : "Deadstock",
         value: fmt.num(s.deadstockUnits),
         sub: `${fmt.money(s.deadstockValue)} tied up`,
         tone: s.deadstockValue > s.grossRevenue * 0.2 ? "bad" : "neutral",
       },
       {
-        label: "Stockouts",
+        label: isCapacityModel ? "Capacity misses" : "Stockouts",
         value: fmt.num(s.stockoutUnits),
-        sub: "lost sales units",
+        sub: isCapacityModel ? "unserved demand" : "lost sales units",
         tone: s.stockoutUnits > s.unitsSold * 0.1 ? "bad" : "neutral",
       },
     ];
@@ -2064,16 +2397,16 @@ function Results({
           title={paybackTooltip}
         />
         <Stat
-          label="Deadstock"
+          label={isRental ? "Unused stock" : "Deadstock"}
           value={fmt.num(s.deadstockUnits)}
           tone={s.deadstockValue > s.grossRevenue * 0.2 ? "bad" : "neutral"}
           sub={`${fmt.money(s.deadstockValue)} tied up`}
         />
         <Stat
-          label="Stockouts"
+          label={isCapacityModel ? "Capacity misses" : "Stockouts"}
           value={fmt.num(s.stockoutUnits)}
           tone={s.stockoutUnits > s.unitsSold * 0.1 ? "bad" : "neutral"}
-          sub="lost sales (units)"
+          sub={isCapacityModel ? "unserved demand" : "lost sales (units)"}
         />
       </div>
 
@@ -2490,6 +2823,7 @@ function launchBaseFixedCost(
   currency: string,
   businessModel: LaunchSimInputs["businessModel"]
 ): number {
+  if (usesFounderCostFloor(businessModel)) return 0;
   const base = currency.trim().toUpperCase() === "INR" ? 100_000 : 2_500;
   const modelMultiplier =
     businessModel === "saas" || businessModel === "services" ? 0.8 : 1;
@@ -2501,6 +2835,7 @@ function launchReserveFor(
   adSpendPerMonth: number,
   fixedCostsPerMonth: number
 ): number {
+  if (usesFounderCostFloor(businessModel)) return 0;
   const runwayMonths =
     businessModel === "saas" || businessModel === "services" ? 4 : 6;
   const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
@@ -2508,6 +2843,74 @@ function launchReserveFor(
     Math.max(0, fixedCostsPerMonth) * runwayMonths +
       Math.max(0, adSpendPerMonth) * launchMediaMonths
   );
+}
+
+function usesFounderCostFloor(businessModel: LaunchSimInputs["businessModel"]): boolean {
+  return [
+    "rental",
+    "subscription",
+    "booking",
+    "usage_based",
+    "lead_gen",
+    "project_services",
+  ].includes(businessModel);
+}
+
+function unitLabelFor(businessModel: LaunchSimInputs["businessModel"]): string {
+  switch (businessModel) {
+    case "subscription":
+      return "subscriber/mo";
+    case "booking":
+      return "booking";
+    case "usage_based":
+      return "use";
+    case "lead_gen":
+      return "lead";
+    case "project_services":
+      return "project";
+    case "rental":
+      return "booking";
+    default:
+      return "unit";
+  }
+}
+
+function salePriceLabelFor(businessModel: LaunchSimInputs["businessModel"]): string {
+  switch (businessModel) {
+    case "subscription":
+      return "Monthly price";
+    case "booking":
+      return "Booking price";
+    case "usage_based":
+      return "Price/use";
+    case "lead_gen":
+      return "Revenue/lead";
+    case "project_services":
+      return "Project fee";
+    case "rental":
+      return "Rental price";
+    default:
+      return "Sale price";
+  }
+}
+
+function costPriceLabelFor(businessModel: LaunchSimInputs["businessModel"]): string {
+  switch (businessModel) {
+    case "subscription":
+      return "Service cost";
+    case "booking":
+      return "Cost/booking";
+    case "usage_based":
+      return "Cost/use";
+    case "lead_gen":
+      return "Cost/lead";
+    case "project_services":
+      return "Delivery cost";
+    case "rental":
+      return "Cost/booking";
+    default:
+      return "Cost price";
+  }
 }
 
 function assumptionNumber(
@@ -3697,10 +4100,60 @@ function buildAdvancedSettingsBullets(
           })
           .join("; ")
       : "None";
+  const rentalLines =
+    used.businessModel === "rental"
+      ? [
+          `Rental - Assets: ${fmt.num(used.rentalAssetCount)} reusable assets`,
+          `Rental - Asset cost: ${moneyPer(used.rentalAssetCost, "asset")}`,
+          `Rental - Rentable days: ${smartNumber(used.rentalRentableDaysPerMonth)} days/asset/month`,
+          `Rental - Avg duration: ${smartNumber(used.rentalAvgDurationDays)} days/booking`,
+          `Rental - Capacity: ${fmt.num(
+            (used.rentalAssetCount * used.rentalRentableDaysPerMonth) /
+              Math.max(used.rentalAvgDurationDays, 1 / 30)
+          )} bookings/month`,
+          `Rental - Maintenance: ${moneyPer(used.rentalMaintenancePerOrder, "booking")}`,
+          `Rental - Damage/loss risk: ${smartNumber(used.rentalDamageLossPct)}%`,
+          `Rental - Deposit cover: ${fmt.money(used.rentalDepositAmount)}`,
+        ]
+      : [];
+  const modelLines =
+    used.businessModel === "subscription"
+      ? [
+          `Subscription - Monthly churn: ${smartNumber(
+            used.subscriptionMonthlyChurnPct
+          )}%`,
+        ]
+      : used.businessModel === "booking"
+        ? [
+            `Booking - Capacity: ${fmt.num(
+              used.bookingCapacityPerMonth
+            )} bookings/month`,
+          ]
+        : used.businessModel === "usage_based"
+          ? [
+              `Usage - Frequency: ${smartNumber(
+                used.usageEventsPerCustomerPerMonth
+              )} uses/customer/month`,
+              `Usage - Monthly churn: ${smartNumber(used.usageMonthlyChurnPct)}%`,
+            ]
+          : used.businessModel === "lead_gen"
+            ? [
+                "Lead-gen - Monetized unit: qualified lead / commission event",
+              ]
+            : used.businessModel === "project_services"
+              ? [
+                  `Project services - Capacity: ${smartNumber(
+                    used.projectCapacityPerMonth
+                  )} projects/month`,
+                ]
+              : [];
 
   return [
     `Acquisition - Reachable pool: ${fmt.num(used.reachablePool ?? 0)} people${auto(raw.reachablePool == null, "auto-sized")}`,
     `Acquisition - CPM: ${moneyPer(used.cpm, "1k impressions")}`,
+    `Acquisition - Paid CAC: ${
+      used.paidCac == null ? "Benchmark/model cap" : fmt.money(used.paidCac)
+    }${auto(raw.paidCac == null, "benchmark/model")}`,
     `Acquisition - Frequency cap: ${smartNumber(used.frequencyCap)} impressions/person`,
     `Acquisition - Organic reach: ${fmt.num(used.organicReachPerStep)} people/${stepUnit}`,
     `Acquisition - Paid platforms: ${used.adPlatforms.join(", ") || "None"}`,
@@ -3724,6 +4177,8 @@ function buildAdvancedSettingsBullets(
     `Operations & costs - Reordering: ${used.reorderEnabled ? "On" : "Off"}`,
     `Operations & costs - Reorder lead: ${fmt.num(used.reorderLeadTimeDays)} days`,
     `Operations & costs - Minimum order quantity: ${fmt.num(used.minOrderQtyUnits ?? 0)} units/batch${auto(raw.minOrderQtyUnits == null, "auto-sized")}`,
+    ...rentalLines,
+    ...modelLines,
     `Returns & retention - Return window: ${fmt.num(used.returnWindowDays)} days`,
     `Returns & retention - Target refund rate: ${
       used.targetRefundRatePct == null

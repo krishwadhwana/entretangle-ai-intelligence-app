@@ -9,12 +9,14 @@ import {
   AssetLibraryRatingSchema,
   BrandSocialSectionSchema,
   ClientProfileSchema,
+  DashboardProjectOrganizerSchema,
   FinancialsSectionSchema,
   FounderStorySectionSchema,
   DesignStudioSectionSchema,
   InspirationSectionSchema,
   InterviewTranscriptSchema,
   InvestorOSSectionSchema,
+  KnowHowRunProgressSchema,
   ProjectModuleIntentSchema,
   ProjectModuleRegistrySchema,
   ProjectAssetLibrarySchema,
@@ -38,11 +40,13 @@ import {
   type MarketDatum,
   type BrandKit,
   type ClientProfile,
+  type DashboardProjectOrganizer,
   type FinancialModel,
   type FinancialsSection,
   type InspirationKit,
   type InspirationSection,
   type InterviewTranscript,
+  type KnowHowRunProgress,
   type EvidenceItem,
   type InvestorKit,
   type InvestorKitEdits,
@@ -135,7 +139,16 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
   financialsByRun: {},
   inspiration: { kit: null, generatedAt: null, sourceRunId: null },
   inspirationByRun: {},
+  knowHowByRun: {},
   playbooks: {},
+  dashboardOrganizer: {
+    folderId: null,
+    folderName: "",
+    folderColor: "neutral",
+    folderNote: "",
+    projectNote: "",
+    updatedAt: null,
+  },
   investorOS: {
     manualEvidence: [],
     roadmap: [],
@@ -218,7 +231,13 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     .record(InspirationSectionSchema)
     .safeParse(obj.inspirationByRun);
   const founderStory = FounderStorySectionSchema.safeParse(obj.founderStory);
+  const knowHowByRun = z
+    .record(KnowHowRunProgressSchema)
+    .safeParse(obj.knowHowByRun);
   const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
+  const dashboardOrganizer = DashboardProjectOrganizerSchema.safeParse(
+    obj.dashboardOrganizer,
+  );
   const investorOS = InvestorOSSectionSchema.safeParse(obj.investorOS);
   const designStudio = DesignStudioSectionSchema.safeParse(obj.designStudio);
   const moduleRegistry = ProjectModuleRegistrySchema.safeParse(
@@ -269,7 +288,11 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
       ? insp.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.inspiration),
     inspirationByRun,
+    knowHowByRun: knowHowByRun.success ? knowHowByRun.data : {},
     playbooks: pb.success ? pb.data : {},
+    dashboardOrganizer: dashboardOrganizer.success
+      ? dashboardOrganizer.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.dashboardOrganizer),
     investorOS: investorOS.success
       ? investorOS.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.investorOS),
@@ -686,6 +709,85 @@ export async function getPlaybook(
 ): Promise<GeneratedPlaybook | null> {
   const owner = await readOwnerDashboard(projectId);
   return owner.playbooks[runId] ?? null;
+}
+
+export async function getKnowHowProgress(
+  projectId: string,
+  runId: string,
+): Promise<KnowHowRunProgress> {
+  const owner = await readOwnerDashboard(projectId);
+  return owner.knowHowByRun[runId] ?? KnowHowRunProgressSchema.parse({});
+}
+
+export async function saveKnowHowProgress(
+  projectId: string,
+  runId: string,
+  patch: Partial<
+    Pick<
+      KnowHowRunProgress,
+      | "selectedModuleKey"
+      | "completedTaskIds"
+      | "notesByModule"
+      | "askHistoryByModule"
+    >
+  >,
+): Promise<KnowHowRunProgress> {
+  const owner = await readOwnerDashboard(projectId);
+  const current =
+    owner.knowHowByRun[runId] ?? KnowHowRunProgressSchema.parse({});
+  const next = KnowHowRunProgressSchema.parse({
+    ...current,
+    selectedModuleKey: patch.selectedModuleKey ?? current.selectedModuleKey,
+    completedTaskIds: {
+      ...current.completedTaskIds,
+      ...(patch.completedTaskIds ?? {}),
+    },
+    notesByModule: {
+      ...current.notesByModule,
+      ...(patch.notesByModule ?? {}),
+    },
+    askHistoryByModule: {
+      ...current.askHistoryByModule,
+      ...(patch.askHistoryByModule ?? {}),
+    },
+    updatedAt: new Date().toISOString(),
+  });
+  owner.knowHowByRun = { ...owner.knowHowByRun, [runId]: next };
+  await writeOwnerDashboard(projectId, owner);
+  return next;
+}
+
+export async function saveDashboardOrganizer(
+  id: string,
+  input: Partial<
+    Pick<
+      DashboardProjectOrganizer,
+      | "folderId"
+      | "folderName"
+      | "folderColor"
+      | "folderNote"
+      | "projectNote"
+    >
+  >,
+): Promise<DashboardProjectOrganizer> {
+  const owner = await readOwnerDashboard(id);
+  const now = new Date().toISOString();
+  const clearingFolder = input.folderId === null;
+  const organizer = DashboardProjectOrganizerSchema.parse({
+    ...owner.dashboardOrganizer,
+    ...input,
+    ...(clearingFolder
+      ? {
+          folderName: "",
+          folderColor: "neutral",
+          folderNote: "",
+        }
+      : {}),
+    updatedAt: now,
+  });
+  owner.dashboardOrganizer = organizer;
+  await writeOwnerDashboard(id, owner);
+  return organizer;
 }
 
 export async function saveProjectModuleIntent(

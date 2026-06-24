@@ -1854,7 +1854,8 @@ export async function callAssumptionUpdate(
 export async function callMarketData(
   projectId: string | null,
   country: string,
-  category: string
+  category: string,
+  businessModel?: string
 ): Promise<MarketDataOutput> {
   if (config.mockMode) {
     return MarketDataOutputSchema.parse({
@@ -1871,7 +1872,7 @@ export async function callMarketData(
       tools: [{ type: "web_search" } as never],
       input: [
         { role: "system", content: MARKET_DATA_SYSTEM },
-        { role: "user", content: marketDataUser(country, category) },
+        { role: "user", content: marketDataUser(country, category, businessModel) },
       ],
       max_output_tokens: 4000,
       reasoning: { effort: "low" },

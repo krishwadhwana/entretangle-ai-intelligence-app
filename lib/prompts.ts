@@ -1233,16 +1233,28 @@ Fields (all ranges {low,mid,high} or null):
 - returnRatePct: product return rate %
 - cac: blended new-customer acquisition cost
 - cpmMeta: Meta (Instagram/Facebook) CPM
+- modelInputs: business-model-specific launch assumptions. Include only fields relevant to the requested business model and only when sourced:
+  - paidCac: paid acquisition CAC for this business model
+  - rentalRentableDaysPerMonth, rentalAvgDurationDays, rentalMaintenancePerOrder, rentalDamageLossPct, rentalDepositAmount
+  - subscriptionMonthlyChurnPct
+  - bookingCapacityPerMonth
+  - usageEventsPerCustomerPerMonth, usageMonthlyChurnPct
+  - projectCapacityPerMonth
 List the source URLs you used in "sources" and a one-line "notes" on data quality/recency.
 
 Output JSON only:
-{"currency":"USD","aov":{"low":0,"mid":0,"high":0},"grossMarginPct":null,"landingCvrPct":null,"repeatRatePct":null,"returnRatePct":null,"cac":null,"cpmMeta":null,"notes":"...","sources":["https://..."]}`;
+{"currency":"USD","aov":{"low":0,"mid":0,"high":0},"grossMarginPct":null,"landingCvrPct":null,"repeatRatePct":null,"returnRatePct":null,"cac":null,"cpmMeta":null,"modelInputs":{"paidCac":{"low":0,"mid":0,"high":0}},"notes":"...","sources":["https://..."]}`;
 
-export function marketDataUser(country: string, category: string): string {
+export function marketDataUser(
+  country: string,
+  category: string,
+  businessModel?: string
+): string {
   return `Country/market: ${country}
 Category: ${category}
+Business model: ${businessModel || "not specified"}
 
-Search the web for current ${country} benchmarks for this category, then output JSON only.`;
+Search the web for current ${country} benchmarks for this category and business model, then output JSON only.`;
 }
 
 // --- Playbook generation (deepen the world model into a founder action plan) --
