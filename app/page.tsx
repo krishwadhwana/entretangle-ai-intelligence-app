@@ -72,6 +72,7 @@ import type {
   WebsiteAnalysis,
 } from "@/lib/schema";
 import DesignStudioSection from "@/components/DesignStudioSection";
+import ProjectMasterDossierSection from "@/components/ProjectMasterDossierSection";
 import WorkspaceTree, {
   workspaceDescendantIds,
   workspacePathLabel,
@@ -5000,7 +5001,31 @@ function IntakePageInner() {
       icon: ImageIcon,
       count: assetCount,
     },
+    {
+      id: "workspace-cover-letter",
+      label: "Cover letter",
+      icon: FileText,
+    },
   ];
+  const projectMasterDossierPanel = (
+    <ProjectMasterDossierSection
+      projectId={projectId}
+      projectName={projectName}
+      brief={brief}
+      profile={profile}
+      websiteAnalysis={websiteAnalysis}
+      documents={documents}
+      productImages={productImages}
+      moduleSummary={{
+        total: businessModules.length,
+        ready: readyModuleCount,
+        needsContext: needsContextModuleCount,
+      }}
+      assetCount={assetCount}
+      runs={simRuns}
+      savedExportNodes={workspaceExportNodes}
+    />
+  );
 
   function openBusinessModule(module: BusinessModule) {
     setSelectedWorkspaceModuleId(module.id);
@@ -6217,6 +6242,17 @@ function IntakePageInner() {
                 />
               </section>
 
+              <section
+                id="workspace-cover-letter"
+                className={
+                  activeWorkspaceSection === "workspace-cover-letter"
+                    ? ""
+                    : "hidden"
+                }
+              >
+                {projectMasterDossierPanel}
+              </section>
+
               <div className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
                 <div className="mb-4 flex items-start justify-between gap-3">
                   <div>
@@ -7260,6 +7296,16 @@ function IntakePageInner() {
                     </p>
                   )}
                 </div>
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-cover-letter"
+                    ? ""
+                    : "hidden"
+                }
+              >
+                {projectMasterDossierPanel}
               </section>
             </div>
           </div>
