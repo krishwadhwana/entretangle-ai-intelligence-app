@@ -63,6 +63,7 @@ import type {
   SimulationRunRecord,
   WebsiteAnalysis,
 } from "@/lib/schema";
+import DesignStudioSection from "@/components/DesignStudioSection";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
@@ -500,30 +501,54 @@ function relevanceTone(relevance: ModuleRelevance) {
   return "bg-amber-50 text-amber-700";
 }
 
-function ProjectWorkspaceRail({ items }: { items: WorkspaceNavItem[] }) {
+function ProjectWorkspaceRail({
+  items,
+  activeId,
+  onSelect,
+}: {
+  items: WorkspaceNavItem[];
+  activeId: string;
+  onSelect: (id: string) => void;
+}) {
   return (
-    <nav className="space-y-1 rounded-lg border border-neutral-200 bg-white p-2 lg:sticky lg:top-5">
+    <nav className="space-y-1 rounded-lg border border-neutral-200 bg-white p-2">
       <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
         Workspace
       </p>
       {items.map((item) => {
         const Icon = item.icon;
+        const active = item.id === activeId;
         return (
-          <a
+          <button
             key={item.id}
-            href={`#${item.id}`}
-            className="flex items-center justify-between gap-2 rounded-md px-2 py-2 text-xs font-medium text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            type="button"
+            onClick={() => onSelect(item.id)}
+            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs font-medium transition-colors ${
+              active
+                ? "bg-neutral-900 text-white"
+                : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+            }`}
           >
             <span className="flex min-w-0 items-center gap-2">
-              <Icon className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+              <Icon
+                className={`h-3.5 w-3.5 shrink-0 ${
+                  active ? "text-white" : "text-neutral-400"
+                }`}
+              />
               <span className="truncate">{item.label}</span>
             </span>
             {typeof item.count === "number" ? (
-              <span className="rounded-full bg-neutral-100 px-1.5 py-0.5 text-[10px] text-neutral-500">
+              <span
+                className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                  active
+                    ? "bg-white/15 text-white"
+                    : "bg-neutral-100 text-neutral-500"
+                }`}
+              >
                 {item.count}
               </span>
             ) : null}
-          </a>
+          </button>
         );
       })}
     </nav>
@@ -534,10 +559,12 @@ function ModuleRegistryGrid({
   modules,
   savingId,
   onSaveIntent,
+  onOpenModule,
 }: {
   modules: BusinessModule[];
   savingId: string | null;
   onSaveIntent: (module: BusinessModule, intent: string) => Promise<void>;
+  onOpenModule?: (module: BusinessModule) => void;
 }) {
   const [editingId, setEditingId] = useState<BusinessModuleId | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
@@ -651,20 +678,27 @@ function ModuleRegistryGrid({
                 <span className="text-[11px] font-medium text-neutral-400">
                   {module.status}
                 </span>
-                <button
-                  type="button"
-                  disabled={!module.enabled}
-                  onClick={() =>
-                    module.relevance === "needs-context" || module.savedIntent
-                      ? startExplain(module)
-                      : undefined
-                  }
-                  className="rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  {module.relevance === "needs-context" || module.savedIntent
-                    ? "Explain use"
-                    : "Open"}
-                </button>
+                <span className="flex items-center gap-1.5">
+                  {module.relevance === "needs-context" ||
+                  module.savedIntent ? (
+                    <button
+                      type="button"
+                      disabled={!module.enabled}
+                      onClick={() => startExplain(module)}
+                      className="rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-indigo-300 hover:bg-indigo-50 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {module.savedIntent ? "Edit use" : "Explain use"}
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    disabled={!module.enabled || !onOpenModule}
+                    onClick={() => onOpenModule?.(module)}
+                    className="rounded-lg bg-neutral-900 px-2.5 py-1.5 text-[11px] font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    Open
+                  </button>
+                </span>
               </div>
             </div>
           </article>
@@ -1823,6 +1857,8 @@ function IntakePageInner() {
   >(null);
   const [selectedWorkspaceModuleId, setSelectedWorkspaceModuleId] =
     useState<BusinessModuleId>("brand");
+  const [activeWorkspaceSection, setActiveWorkspaceSection] =
+    useState("workspace-overview");
   const [savingWorkspaceKey, setSavingWorkspaceKey] = useState<string | null>(
     null,
   );
@@ -1923,6 +1959,7 @@ function IntakePageInner() {
     setFocusQuestion("");
     setAdditionalContext("");
     setMode("full");
+    setActiveWorkspaceSection("workspace-overview");
     void loadDocuments(proj.id);
   }
 
@@ -1948,6 +1985,7 @@ function IntakePageInner() {
     setFocusQuestion("");
     setAdditionalContext("");
     setMode("full");
+    setActiveWorkspaceSection("workspace-overview");
     setEditingRunId(null);
     setRunDraft("");
   }
@@ -3422,6 +3460,15 @@ function IntakePageInner() {
       count: businessModules.length,
     },
     {
+      id: "workspace-design",
+      label: "Design",
+      icon: Palette,
+      count:
+        (designStudio?.logos?.length ?? 0) +
+        (designStudio?.assets?.length ?? 0) +
+        (designStudio?.sites?.length ?? 0),
+    },
+    {
       id: "workspace-work",
       label: "Folders",
       icon: FolderOpen,
@@ -3461,6 +3508,34 @@ function IntakePageInner() {
       count: assetCount,
     },
   ];
+
+  function openBusinessModule(module: BusinessModule) {
+    setSelectedWorkspaceModuleId(module.id);
+    if (
+      module.id === "brand" ||
+      module.id === "logo" ||
+      module.id === "businessCard" ||
+      module.id === "website"
+    ) {
+      setActiveWorkspaceSection("workspace-design");
+      return;
+    }
+    if (
+      module.id === "social" ||
+      module.id === "adSpend" ||
+      module.id === "exportImport" ||
+      module.id === "manufacturing" ||
+      module.id === "retail"
+    ) {
+      setActiveWorkspaceSection("workspace-ops");
+      return;
+    }
+    if (module.id === "financials") {
+      setActiveWorkspaceSection("workspace-runs");
+      return;
+    }
+    setActiveWorkspaceSection("workspace-work");
+  }
 
   const previewByProject = new Map(projectPreviews.map((p) => [p.id, p]));
   const dashboardSourceProjects = projects.map<ProjectData>((p) => {
@@ -3914,7 +3989,11 @@ function IntakePageInner() {
 
         <section className="min-h-0 overflow-y-auto px-4 py-6">
           <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-            <ProjectWorkspaceRail items={workspaceNavItems} />
+            <ProjectWorkspaceRail
+              items={workspaceNavItems}
+              activeId={activeWorkspaceSection}
+              onSelect={setActiveWorkspaceSection}
+            />
             <div className="space-y-5">
               <section id="workspace-overview" className="space-y-3">
                 <div>
@@ -4159,6 +4238,7 @@ function IntakePageInner() {
                   modules={businessModules}
                   savingId={savingModuleIntentId}
                   onSaveIntent={saveModuleIntent}
+                  onOpenModule={openBusinessModule}
                 />
               </section>
 
@@ -4222,525 +4302,746 @@ function IntakePageInner() {
         onDelete={deleteProject}
       />
 
-      <section className="min-h-0 overflow-y-auto">
-        <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-5 py-5 xl:grid-cols-[220px_minmax(0,1fr)_420px]">
-          <ProjectWorkspaceRail items={workspaceNavItems} />
+      <section className="min-h-0 overflow-hidden">
+        <div className="grid h-full grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="min-h-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-4">
+            <ProjectWorkspaceRail
+              items={workspaceNavItems}
+              activeId={activeWorkspaceSection}
+              onSelect={setActiveWorkspaceSection}
+            />
+          </aside>
 
-          <div className="space-y-5">
-            <header
-              id="workspace-overview"
-              className="border-b border-neutral-200 pb-4"
-            >
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                    Project workspace
-                  </p>
-                  <h2 className="break-words text-2xl font-semibold tracking-tight">
-                    {projectName}
-                  </h2>
-                  <p className="mt-1 max-w-2xl text-sm text-neutral-500">
-                    {profile?.product ??
-                      brief ??
-                      "Set up the venture profile, then run research and audience simulations from this workspace."}
-                  </p>
+          <div className="min-w-0 overflow-y-auto px-5 py-5">
+            <div className="mx-auto max-w-6xl space-y-5">
+              <header
+                id="workspace-overview"
+                className="border-b border-neutral-200 pb-4"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                      Project workspace
+                    </p>
+                    <h2 className="break-words text-2xl font-semibold tracking-tight">
+                      {projectName}
+                    </h2>
+                    <p className="mt-1 max-w-2xl text-sm text-neutral-500">
+                      {profile?.product ??
+                        brief ??
+                        "Set up the venture profile, then run research and audience simulations from this workspace."}
+                    </p>
+                  </div>
+                  {latestRun && (
+                    <a
+                      href={`/runs/${latestRun.runId}`}
+                      className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700"
+                    >
+                      Open latest run <ArrowRight className="h-3.5 w-3.5" />
+                    </a>
+                  )}
                 </div>
-                {latestRun && (
-                  <a
-                    href={`/runs/${latestRun.runId}`}
-                    className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700"
-                  >
-                    Open latest run <ArrowRight className="h-3.5 w-3.5" />
-                  </a>
-                )}
-              </div>
-            </header>
+              </header>
 
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
-                  <ClipboardList className="h-4 w-4" />
-                </div>
-                <p className="text-xs font-medium text-neutral-500">Profile</p>
-                <p className="mt-1 text-lg font-semibold">{setupStep}</p>
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
-                  <BarChart3 className="h-4 w-4" />
-                </div>
-                <p className="text-xs font-medium text-neutral-500">Runs</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {completedRuns} complete / {simRuns.length} total
-                </p>
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
-                  <Database className="h-4 w-4" />
-                </div>
-                <p className="text-xs font-medium text-neutral-500">Data</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {documents.length} uploaded
-                </p>
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
-                  <ImageIcon className="h-4 w-4" />
-                </div>
-                <p className="text-xs font-medium text-neutral-500">Assets</p>
-                <p className="mt-1 text-lg font-semibold">
-                  {assetCount} generated
-                </p>
-              </div>
-            </div>
-
-            <section id="workspace-modules" className="space-y-3">
-              <div className="flex flex-wrap items-end justify-between gap-2">
-                <div>
-                  <h3 className="text-sm font-semibold">Project modules</h3>
-                  <p className="mt-1 text-xs text-neutral-500">
-                    Business options are registered here with relevance prompts
-                    and saved explanations for unusual fits.
-                  </p>
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
-                    {readyModuleCount} ready
-                  </span>
-                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                    {needsContextModuleCount} need context
-                  </span>
-                </div>
-              </div>
-              <ModuleRegistryGrid
-                modules={businessModules}
-                savingId={savingModuleIntentId}
-                onSaveIntent={saveModuleIntent}
-              />
-            </section>
-
-            <section id="workspace-work">
-              <ModuleWorkspaceHub
-                modules={businessModules}
-                selectedModuleId={selectedWorkspaceModuleId}
-                folders={workspaceFolders}
-                campaigns={workspaceCampaigns}
-                savingKey={savingWorkspaceKey}
-                deletingKey={deletingWorkspaceItemId}
-                onSelectModule={setSelectedWorkspaceModuleId}
-                onSaveFolder={saveWorkspaceFolder}
-                onSaveCampaign={saveWorkspaceCampaign}
-                onDeleteWorkspaceItem={deleteWorkspaceItem}
-              />
-            </section>
-
-            <section id="workspace-generations">
-              <GenerationControls
-                modules={businessModules}
-                selectedModuleId={selectedWorkspaceModuleId}
-                preferences={generationPrefs}
-                savingKey={savingWorkspaceKey}
-                onSelectModule={setSelectedWorkspaceModuleId}
-                onSavePreference={saveGenerationPreference}
-              />
-            </section>
-
-            <section id="workspace-print">
-              <PrintSpecPanel
-                printSpec={printSpec}
-                savingKey={savingWorkspaceKey}
-                onSave={savePrintSpec}
-              />
-            </section>
-
-            <section id="workspace-ops">
-              <OperationsPanel
-                modules={businessModules}
-                metaPixel={metaPixel}
-                savingKey={savingWorkspaceKey}
-                onSaveMetaPixel={saveMetaPixel}
-              />
-            </section>
-
-            <section id="workspace-assets" className="space-y-3">
-              <div>
-                <h3 className="text-sm font-semibold">Asset library</h3>
-                <p className="mt-1 text-xs text-neutral-500">
-                  Generated and uploaded project assets can be sorted into Good,
-                  Medium, or Reject. Delete controls route to the source asset.
-                </p>
-              </div>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                  <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
+                    <ClipboardList className="h-4 w-4" />
+                  </div>
                   <p className="text-xs font-medium text-neutral-500">
-                    Collateral
+                    Profile
                   </p>
+                  <p className="mt-1 text-lg font-semibold">{setupStep}</p>
+                </div>
+                <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                  <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-emerald-50 text-emerald-700">
+                    <BarChart3 className="h-4 w-4" />
+                  </div>
+                  <p className="text-xs font-medium text-neutral-500">Runs</p>
                   <p className="mt-1 text-lg font-semibold">
-                    {designStudio?.assets?.length ?? 0}
+                    {completedRuns} complete / {simRuns.length} total
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-500">Logos</p>
+                  <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-amber-50 text-amber-700">
+                    <Database className="h-4 w-4" />
+                  </div>
+                  <p className="text-xs font-medium text-neutral-500">Data</p>
                   <p className="mt-1 text-lg font-semibold">
-                    {designStudio?.logos?.length ?? 0}
+                    {documents.length} uploaded
                   </p>
                 </div>
                 <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-500">Sites</p>
+                  <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-700">
+                    <ImageIcon className="h-4 w-4" />
+                  </div>
+                  <p className="text-xs font-medium text-neutral-500">Assets</p>
                   <p className="mt-1 text-lg font-semibold">
-                    {designStudio?.sites?.length ?? 0}
-                  </p>
-                </div>
-                <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                  <p className="text-xs font-medium text-neutral-500">
-                    Product refs
-                  </p>
-                  <p className="mt-1 text-lg font-semibold">
-                    {productImages.length}
+                    {assetCount} generated
                   </p>
                 </div>
               </div>
-              {assetLibraryItems.length > 0 ? (
-                <AssetLibraryCore
-                  assets={assetLibraryItems}
-                  ratingId={ratingAssetId}
-                  deletingId={deletingAssetId}
-                  onRate={rateAsset}
-                  onDelete={deleteLibraryAsset}
-                />
-              ) : (
-                <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-center text-sm text-neutral-500">
-                  No assets yet. Generate logos, collateral, a website, or add
-                  product images to start building the library.
-                </div>
-              )}
-            </section>
 
-            <section className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">Venture profile</h3>
-                {!done && (
-                  <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
-                    Setup in progress
-                  </span>
-                )}
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-white p-4">
-                {profileChips.length > 0 ? (
-                  <div className="flex flex-wrap gap-1.5 text-xs">
-                    {profileChips.map((chip, i) => (
-                      <span
-                        key={i}
-                        className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-neutral-700"
-                      >
-                        {chip}
-                      </span>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="text-sm text-neutral-500">
-                    Complete the setup steps to turn this into a structured
-                    venture profile.
-                  </p>
-                )}
-                {profile && (
-                  <div className="mt-4 border-t border-neutral-100 pt-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div>
-                        <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                          Product images
-                        </p>
-                        <p className="mt-0.5 text-xs text-neutral-500">
-                          {productImages.length} reference
-                          {productImages.length === 1 ? "" : "s"}
-                        </p>
-                      </div>
-                      <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
-                        {uploadingImages ? (
-                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                        ) : (
-                          <Upload className="h-3.5 w-3.5" />
-                        )}
-                        {uploadingImages ? "Adding" : "Add images"}
-                        <input
-                          type="file"
-                          multiple
-                          accept="image/png,image/jpeg,image/webp,image/gif"
-                          className="hidden"
-                          disabled={uploadingImages}
-                          onChange={(e) => {
-                            void onProductImagesPicked(e.target.files);
-                            e.target.value = "";
-                          }}
-                        />
-                      </label>
-                    </div>
-
-                    {productImages.length > 0 ? (
-                      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                        {productImages.map((image) => (
-                          <div
-                            key={image.id}
-                            className="overflow-hidden rounded-lg border border-neutral-200 bg-white"
-                          >
-                            <div className="relative aspect-[4/3] bg-neutral-100">
-                              <img
-                                src={image.url}
-                                alt={image.visualSummary || image.name}
-                                loading="lazy"
-                                className="h-full w-full object-cover"
-                              />
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  void deleteProductImage(image.id)
-                                }
-                                className="absolute right-1.5 top-1.5 rounded bg-white/90 p-1 text-neutral-500 shadow-sm hover:text-red-500"
-                                title="Remove image"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </div>
-                            <div className="min-h-[76px] p-2">
-                              <p className="truncate text-xs font-medium text-neutral-800">
-                                {image.name}
-                              </p>
-                              {image.visualSummary ? (
-                                <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-neutral-500">
-                                  {image.visualSummary}
-                                </p>
-                              ) : (
-                                <p className="mt-1 text-[11px] text-neutral-400">
-                                  Visual summary pending
-                                </p>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="mt-3 flex min-h-24 items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-50 text-xs text-neutral-400">
-                        <ImageIcon className="mr-2 h-4 w-4" />
-                        No product images yet
-                      </div>
-                    )}
-                  </div>
-                )}
-                {userAnswers.length > 0 && !done && (
-                  <div className="mt-4 border-t border-neutral-100 pt-3">
-                    <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
-                      Captured so far
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-modules"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <div className="flex flex-wrap items-end justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold">Project modules</h3>
+                    <p className="mt-1 text-xs text-neutral-500">
+                      Business options are registered here with relevance
+                      prompts and saved explanations for unusual fits.
                     </p>
-                    <div className="space-y-1.5">
-                      {userAnswers.map((m, i) => (
-                        <p
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-medium text-emerald-700">
+                      {readyModuleCount} ready
+                    </span>
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                      {needsContextModuleCount} need context
+                    </span>
+                  </div>
+                </div>
+                <ModuleRegistryGrid
+                  modules={businessModules}
+                  savingId={savingModuleIntentId}
+                  onSaveIntent={saveModuleIntent}
+                  onOpenModule={openBusinessModule}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-design"
+                    ? "rounded-lg border border-neutral-200 bg-white"
+                    : "hidden"
+                }
+              >
+                <DesignStudioSection
+                  projectId={projectId}
+                  sourceRunId={latestRun?.runId ?? null}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-work" ? "" : "hidden"
+                }
+              >
+                <ModuleWorkspaceHub
+                  modules={businessModules}
+                  selectedModuleId={selectedWorkspaceModuleId}
+                  folders={workspaceFolders}
+                  campaigns={workspaceCampaigns}
+                  savingKey={savingWorkspaceKey}
+                  deletingKey={deletingWorkspaceItemId}
+                  onSelectModule={setSelectedWorkspaceModuleId}
+                  onSaveFolder={saveWorkspaceFolder}
+                  onSaveCampaign={saveWorkspaceCampaign}
+                  onDeleteWorkspaceItem={deleteWorkspaceItem}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-generations"
+                    ? ""
+                    : "hidden"
+                }
+              >
+                <GenerationControls
+                  modules={businessModules}
+                  selectedModuleId={selectedWorkspaceModuleId}
+                  preferences={generationPrefs}
+                  savingKey={savingWorkspaceKey}
+                  onSelectModule={setSelectedWorkspaceModuleId}
+                  onSavePreference={saveGenerationPreference}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-print" ? "" : "hidden"
+                }
+              >
+                <PrintSpecPanel
+                  printSpec={printSpec}
+                  savingKey={savingWorkspaceKey}
+                  onSave={savePrintSpec}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-ops" ? "" : "hidden"
+                }
+              >
+                <OperationsPanel
+                  modules={businessModules}
+                  metaPixel={metaPixel}
+                  savingKey={savingWorkspaceKey}
+                  onSaveMetaPixel={saveMetaPixel}
+                />
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-assets"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <div>
+                  <h3 className="text-sm font-semibold">Asset library</h3>
+                  <p className="mt-1 text-xs text-neutral-500">
+                    Generated and uploaded project assets can be sorted into
+                    Good, Medium, or Reject. Delete controls route to the source
+                    asset.
+                  </p>
+                </div>
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                    <p className="text-xs font-medium text-neutral-500">
+                      Collateral
+                    </p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {designStudio?.assets?.length ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                    <p className="text-xs font-medium text-neutral-500">
+                      Logos
+                    </p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {designStudio?.logos?.length ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                    <p className="text-xs font-medium text-neutral-500">
+                      Sites
+                    </p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {designStudio?.sites?.length ?? 0}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                    <p className="text-xs font-medium text-neutral-500">
+                      Product refs
+                    </p>
+                    <p className="mt-1 text-lg font-semibold">
+                      {productImages.length}
+                    </p>
+                  </div>
+                </div>
+                {assetLibraryItems.length > 0 ? (
+                  <AssetLibraryCore
+                    assets={assetLibraryItems}
+                    ratingId={ratingAssetId}
+                    deletingId={deletingAssetId}
+                    onRate={rateAsset}
+                    onDelete={deleteLibraryAsset}
+                  />
+                ) : (
+                  <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-center text-sm text-neutral-500">
+                    No assets yet. Generate logos, collateral, a website, or add
+                    product images to start building the library.
+                  </div>
+                )}
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-overview"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">Venture profile</h3>
+                  {!done && (
+                    <span className="rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-medium text-amber-700">
+                      Setup in progress
+                    </span>
+                  )}
+                </div>
+                <div className="rounded-lg border border-neutral-200 bg-white p-4">
+                  {profileChips.length > 0 ? (
+                    <div className="flex flex-wrap gap-1.5 text-xs">
+                      {profileChips.map((chip, i) => (
+                        <span
                           key={i}
-                          className="line-clamp-2 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600"
+                          className="rounded-full border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-neutral-700"
                         >
-                          {m.content}
-                        </p>
+                          {chip}
+                        </span>
                       ))}
                     </div>
-                  </div>
-                )}
-              </div>
-            </section>
-
-            <section id="workspace-runs" className="space-y-3">
-              <h3 className="text-sm font-semibold">Simulation runs</h3>
-              {sortedRuns.length > 0 ? (
-                <ul className="space-y-2">
-                  {sortedRuns.map((r) => {
-                    const status = runStatusPresentation(r.status);
-                    const title = simulationRunTitle(r);
-                    const meta = `${new Date(r.timestamp).toLocaleString()} · ${
-                      status.label
-                    } · ${r.results.blocks.length} desks · ${
-                      r.results.audienceAggregate?.totalPersonas ?? 0
-                    } personas · $${r.results.costUsd.toFixed(2)}${
-                      r.params?.mode === "scoped" ? " · lighter" : ""
-                    }`;
-                    return (
-                      <li key={r.runId}>
-                        <div className="group flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40">
-                          {editingRunId === r.runId ? (
-                            <>
-                              <span
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
-                                title={status.label}
-                              >
-                                {status.icon === "complete" ? (
-                                  <CheckCircle2 className="h-4 w-4" />
-                                ) : status.icon === "failed" ||
-                                  status.icon === "cancelled" ? (
-                                  <XCircle className="h-4 w-4" />
-                                ) : (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                )}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <input
-                                  value={runDraft}
-                                  maxLength={500}
-                                  autoFocus
-                                  onChange={(e) => setRunDraft(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") {
-                                      e.preventDefault();
-                                      void commitRunEdit();
-                                    } else if (e.key === "Escape") {
-                                      e.preventDefault();
-                                      setEditingRunId(null);
-                                    }
-                                  }}
-                                  className="block w-full rounded border border-indigo-300 bg-white px-2 py-1 text-sm font-medium text-neutral-900 outline-none"
-                                />
-                                <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
-                                  {meta}
-                                </span>
-                              </span>
-                            </>
-                          ) : (
-                            <a
-                              href={`/runs/${r.runId}`}
-                              className="flex min-w-0 flex-1 items-center gap-3"
-                            >
-                              <span
-                                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
-                                title={status.label}
-                              >
-                                {status.icon === "complete" ? (
-                                  <CheckCircle2 className="h-4 w-4" />
-                                ) : status.icon === "failed" ||
-                                  status.icon === "cancelled" ? (
-                                  <XCircle className="h-4 w-4" />
-                                ) : (
-                                  <Loader2 className="h-4 w-4 animate-spin" />
-                                )}
-                              </span>
-                              <span className="min-w-0 flex-1">
-                                <span
-                                  className="block truncate text-sm font-medium text-neutral-800"
-                                  title={title}
-                                >
-                                  {title}
-                                </span>
-                                <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
-                                  {meta}
-                                </span>
-                              </span>
-                              <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-600" />
-                            </a>
-                          )}
-                          {editingRunId === r.runId ? (
-                            <>
-                              <button
-                                onClick={() => void commitRunEdit()}
-                                title="Save run name"
-                                className="shrink-0 rounded p-1 text-neutral-400 hover:text-emerald-600"
-                              >
-                                <Check className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setEditingRunId(null)}
-                                title="Cancel rename"
-                                className="shrink-0 rounded p-1 text-neutral-400 hover:text-neutral-700"
-                              >
-                                <X className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          ) : (
-                            <>
-                              <button
-                                onClick={() => startRunEdit(r)}
-                                title="Rename run"
-                                className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-indigo-600 group-hover:opacity-100"
-                              >
-                                <Pencil className="h-3.5 w-3.5" />
-                              </button>
-                              <button
-                                onClick={() => void deleteSimulationRun(r)}
-                                title="Delete run"
-                                className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-red-500 group-hover:opacity-100"
-                              >
-                                <Trash2 className="h-3.5 w-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-sm text-neutral-500">
-                  No simulations yet. Finish setup to launch the first run.
-                </div>
-              )}
-            </section>
-
-            <section id="workspace-data" className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <h3 className="text-sm font-semibold">
-                  Project data {documents.length > 0 && `(${documents.length})`}
-                </h3>
-                <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
-                  {uploading ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
                   ) : (
-                    <Upload className="h-3.5 w-3.5" />
+                    <p className="text-sm text-neutral-500">
+                      Complete the setup steps to turn this into a structured
+                      venture profile.
+                    </p>
                   )}
-                  Upload
-                  <input
-                    type="file"
-                    multiple
-                    accept=".txt,.md,.csv,.tsv,.json,text/plain"
-                    className="hidden"
-                    disabled={uploading}
-                    onChange={(e) => {
-                      void onFilesPicked(e.target.files);
-                      e.target.value = "";
-                    }}
-                  />
-                </label>
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-white p-3">
-                {documents.length > 0 ? (
-                  <ul className="space-y-1">
-                    {documents.map((d) => (
-                      <li
-                        key={d.id}
-                        className="flex items-center justify-between rounded-lg border border-neutral-200 px-2.5 py-2 text-xs"
-                      >
-                        <span className="flex min-w-0 items-center gap-1.5 text-neutral-700">
-                          <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-                          <span className="truncate" title={d.name}>
-                            {d.name}
+                  {profile && (
+                    <div className="mt-4 border-t border-neutral-100 pt-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                            Product images
+                          </p>
+                          <p className="mt-0.5 text-xs text-neutral-500">
+                            {productImages.length} reference
+                            {productImages.length === 1 ? "" : "s"}
+                          </p>
+                        </div>
+                        <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
+                          {uploadingImages ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Upload className="h-3.5 w-3.5" />
+                          )}
+                          {uploadingImages ? "Adding" : "Add images"}
+                          <input
+                            type="file"
+                            multiple
+                            accept="image/png,image/jpeg,image/webp,image/gif"
+                            className="hidden"
+                            disabled={uploadingImages}
+                            onChange={(e) => {
+                              void onProductImagesPicked(e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      </div>
+
+                      {productImages.length > 0 ? (
+                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {productImages.map((image) => (
+                            <div
+                              key={image.id}
+                              className="overflow-hidden rounded-lg border border-neutral-200 bg-white"
+                            >
+                              <div className="relative aspect-[4/3] bg-neutral-100">
+                                <img
+                                  src={image.url}
+                                  alt={image.visualSummary || image.name}
+                                  loading="lazy"
+                                  className="h-full w-full object-cover"
+                                />
+                                <button
+                                  type="button"
+                                  onClick={() =>
+                                    void deleteProductImage(image.id)
+                                  }
+                                  className="absolute right-1.5 top-1.5 rounded bg-white/90 p-1 text-neutral-500 shadow-sm hover:text-red-500"
+                                  title="Remove image"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </div>
+                              <div className="min-h-[76px] p-2">
+                                <p className="truncate text-xs font-medium text-neutral-800">
+                                  {image.name}
+                                </p>
+                                {image.visualSummary ? (
+                                  <p className="mt-1 line-clamp-2 text-[11px] leading-snug text-neutral-500">
+                                    {image.visualSummary}
+                                  </p>
+                                ) : (
+                                  <p className="mt-1 text-[11px] text-neutral-400">
+                                    Visual summary pending
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <div className="mt-3 flex min-h-24 items-center justify-center rounded-lg border border-dashed border-neutral-300 bg-neutral-50 text-xs text-neutral-400">
+                          <ImageIcon className="mr-2 h-4 w-4" />
+                          No product images yet
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {userAnswers.length > 0 && !done && (
+                    <div className="mt-4 border-t border-neutral-100 pt-3">
+                      <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                        Captured so far
+                      </p>
+                      <div className="space-y-1.5">
+                        {userAnswers.map((m, i) => (
+                          <p
+                            key={i}
+                            className="line-clamp-2 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-600"
+                          >
+                            {m.content}
+                          </p>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-runs"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <h3 className="text-sm font-semibold">Simulation runs</h3>
+                {done && profile && !launching ? (
+                  <section className="space-y-3 rounded-lg border border-neutral-200 bg-white p-4">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
+                        {simRuns.length > 0
+                          ? "Run a follow-up simulation"
+                          : "Run a simulation"}
+                      </p>
+                      <h3 className="mt-1 text-base font-semibold">
+                        Explore the next decision
+                      </h3>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+                      <div className="space-y-2">
+                        <input
+                          value={focusQuestion}
+                          onChange={(e) => setFocusQuestion(e.target.value)}
+                          placeholder="Question to explore"
+                          disabled={launching}
+                          className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 disabled:opacity-50"
+                        />
+                        <textarea
+                          value={additionalContext}
+                          onChange={(e) => setAdditionalContext(e.target.value)}
+                          placeholder="New information since the last run (optional)"
+                          disabled={launching}
+                          rows={3}
+                          className="w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500 disabled:opacity-50"
+                        />
+                      </div>
+
+                      <div className="space-y-3 rounded-lg bg-neutral-50 p-3">
+                        <div className="flex items-center justify-between gap-2">
+                          <label className="text-[11px] font-medium text-neutral-600">
+                            Audience size
+                          </label>
+                          <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-[11px] font-semibold text-indigo-700">
+                            ~${estimateRunCost(agentCount).toFixed(2)} est.
                           </span>
-                          <span className="shrink-0 text-[10px] text-neutral-400">
-                            {d.chunkCount} chunks
-                          </span>
-                        </span>
-                        <button
-                          onClick={() => void deleteDocument(d.id)}
-                          className="shrink-0 rounded p-1 text-neutral-300 hover:text-red-500"
-                          title="Remove"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
-                      </li>
-                    ))}
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="range"
+                            min={0}
+                            max={MAX_AGENTS}
+                            step={100}
+                            value={agentCount}
+                            onChange={(e) => {
+                              const v = Number(e.target.value);
+                              setAgentCount(v);
+                              setAgentCountText(String(v));
+                            }}
+                            disabled={launching || mode === "scoped"}
+                            className="min-w-0 flex-1 accent-indigo-600 disabled:opacity-40"
+                          />
+                          <input
+                            type="number"
+                            inputMode="numeric"
+                            min={0}
+                            max={MAX_AGENTS}
+                            step={100}
+                            value={agentCountText}
+                            placeholder="6000"
+                            onChange={(e) => {
+                              const raw = e.target.value;
+                              setAgentCountText(raw);
+                              const n = Number(raw);
+                              if (raw !== "" && Number.isFinite(n)) {
+                                setAgentCount(
+                                  Math.max(
+                                    0,
+                                    Math.min(MAX_AGENTS, Math.round(n)),
+                                  ),
+                                );
+                              }
+                            }}
+                            onBlur={() => {
+                              const n = Number(agentCountText);
+                              const v =
+                                agentCountText === "" || !Number.isFinite(n)
+                                  ? 0
+                                  : Math.max(
+                                      0,
+                                      Math.min(MAX_AGENTS, Math.round(n)),
+                                    );
+                              setAgentCount(v);
+                              setAgentCountText(String(v));
+                            }}
+                            disabled={launching || mode === "scoped"}
+                            className="w-20 rounded-lg border border-neutral-300 px-2 py-1 text-xs outline-none focus:border-indigo-500 disabled:opacity-40"
+                          />
+                        </div>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex overflow-hidden rounded-lg border border-neutral-300 text-[11px] font-medium">
+                            <button
+                              type="button"
+                              onClick={() => setMode("full")}
+                              className={`px-2.5 py-1.5 ${
+                                mode === "full"
+                                  ? "bg-neutral-900 text-white"
+                                  : "text-neutral-600 hover:bg-neutral-50"
+                              }`}
+                              title="Full simulation: fresh research desks + a newly simulated audience."
+                            >
+                              Full
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setMode("scoped")}
+                              disabled={!latestAudienceRunId}
+                              className={`px-2.5 py-1.5 disabled:opacity-40 ${
+                                mode === "scoped"
+                                  ? "bg-neutral-900 text-white"
+                                  : "text-neutral-600 hover:bg-neutral-50"
+                              }`}
+                              title={
+                                latestAudienceRunId
+                                  ? "Re-run research toward your question and reuse the latest completed audience."
+                                  : "Available after a completed simulation with an audience."
+                              }
+                            >
+                              Lighter
+                            </button>
+                          </div>
+                          <button
+                            onClick={() => void launchNewRun()}
+                            disabled={launching}
+                            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
+                          >
+                            <Play className="h-3 w-3" />
+                            {mode === "scoped"
+                              ? "Run lighter"
+                              : agentCount === 0
+                                ? "Run research"
+                                : `Run ${agentCount.toLocaleString()} agents`}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                ) : null}
+                {sortedRuns.length > 0 ? (
+                  <ul className="space-y-2">
+                    {sortedRuns.map((r) => {
+                      const status = runStatusPresentation(r.status);
+                      const title = simulationRunTitle(r);
+                      const meta = `${new Date(r.timestamp).toLocaleString()} · ${
+                        status.label
+                      } · ${r.results.blocks.length} desks · ${
+                        r.results.audienceAggregate?.totalPersonas ?? 0
+                      } personas · $${r.results.costUsd.toFixed(2)}${
+                        r.params?.mode === "scoped" ? " · lighter" : ""
+                      }`;
+                      return (
+                        <li key={r.runId}>
+                          <div className="group flex items-center gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-3 transition hover:border-indigo-300 hover:bg-indigo-50/40">
+                            {editingRunId === r.runId ? (
+                              <>
+                                <span
+                                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
+                                  title={status.label}
+                                >
+                                  {status.icon === "complete" ? (
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  ) : status.icon === "failed" ||
+                                    status.icon === "cancelled" ? (
+                                    <XCircle className="h-4 w-4" />
+                                  ) : (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  )}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <input
+                                    value={runDraft}
+                                    maxLength={500}
+                                    autoFocus
+                                    onChange={(e) =>
+                                      setRunDraft(e.target.value)
+                                    }
+                                    onKeyDown={(e) => {
+                                      if (e.key === "Enter") {
+                                        e.preventDefault();
+                                        void commitRunEdit();
+                                      } else if (e.key === "Escape") {
+                                        e.preventDefault();
+                                        setEditingRunId(null);
+                                      }
+                                    }}
+                                    className="block w-full rounded border border-indigo-300 bg-white px-2 py-1 text-sm font-medium text-neutral-900 outline-none"
+                                  />
+                                  <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                                    {meta}
+                                  </span>
+                                </span>
+                              </>
+                            ) : (
+                              <a
+                                href={`/runs/${r.runId}`}
+                                className="flex min-w-0 flex-1 items-center gap-3"
+                              >
+                                <span
+                                  className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${status.tone}`}
+                                  title={status.label}
+                                >
+                                  {status.icon === "complete" ? (
+                                    <CheckCircle2 className="h-4 w-4" />
+                                  ) : status.icon === "failed" ||
+                                    status.icon === "cancelled" ? (
+                                    <XCircle className="h-4 w-4" />
+                                  ) : (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  )}
+                                </span>
+                                <span className="min-w-0 flex-1">
+                                  <span
+                                    className="block truncate text-sm font-medium text-neutral-800"
+                                    title={title}
+                                  >
+                                    {title}
+                                  </span>
+                                  <span className="mt-0.5 block truncate text-[11px] text-neutral-400">
+                                    {meta}
+                                  </span>
+                                </span>
+                                <ArrowRight className="h-4 w-4 shrink-0 text-neutral-300 transition group-hover:translate-x-0.5 group-hover:text-indigo-600" />
+                              </a>
+                            )}
+                            {editingRunId === r.runId ? (
+                              <>
+                                <button
+                                  onClick={() => void commitRunEdit()}
+                                  title="Save run name"
+                                  className="shrink-0 rounded p-1 text-neutral-400 hover:text-emerald-600"
+                                >
+                                  <Check className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => setEditingRunId(null)}
+                                  title="Cancel rename"
+                                  className="shrink-0 rounded p-1 text-neutral-400 hover:text-neutral-700"
+                                >
+                                  <X className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  onClick={() => startRunEdit(r)}
+                                  title="Rename run"
+                                  className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-indigo-600 group-hover:opacity-100"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => void deleteSimulationRun(r)}
+                                  title="Delete run"
+                                  className="shrink-0 rounded p-1 text-neutral-300 opacity-0 transition hover:text-red-500 group-hover:opacity-100"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </li>
+                      );
+                    })}
                   </ul>
                 ) : (
-                  <p className="text-sm text-neutral-500">
-                    Upload sales notes, survey results, pricing, or competitor
-                    lists to ground future research.
-                  </p>
+                  <div className="rounded-lg border border-dashed border-neutral-300 bg-white p-6 text-sm text-neutral-500">
+                    No simulations yet. Finish setup to launch the first run.
+                  </div>
                 )}
-              </div>
-            </section>
+              </section>
+
+              <section
+                className={
+                  activeWorkspaceSection === "workspace-data"
+                    ? "space-y-3"
+                    : "hidden"
+                }
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <h3 className="text-sm font-semibold">
+                    Project data{" "}
+                    {documents.length > 0 && `(${documents.length})`}
+                  </h3>
+                  <label className="flex cursor-pointer items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-2.5 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:bg-indigo-50">
+                    {uploading ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Upload className="h-3.5 w-3.5" />
+                    )}
+                    Upload
+                    <input
+                      type="file"
+                      multiple
+                      accept=".txt,.md,.csv,.tsv,.json,text/plain"
+                      className="hidden"
+                      disabled={uploading}
+                      onChange={(e) => {
+                        void onFilesPicked(e.target.files);
+                        e.target.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                <div className="rounded-lg border border-neutral-200 bg-white p-3">
+                  {documents.length > 0 ? (
+                    <ul className="space-y-1">
+                      {documents.map((d) => (
+                        <li
+                          key={d.id}
+                          className="flex items-center justify-between rounded-lg border border-neutral-200 px-2.5 py-2 text-xs"
+                        >
+                          <span className="flex min-w-0 items-center gap-1.5 text-neutral-700">
+                            <FileText className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+                            <span className="truncate" title={d.name}>
+                              {d.name}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-neutral-400">
+                              {d.chunkCount} chunks
+                            </span>
+                          </span>
+                          <button
+                            onClick={() => void deleteDocument(d.id)}
+                            className="shrink-0 rounded p-1 text-neutral-300 hover:text-red-500"
+                            title="Remove"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <p className="text-sm text-neutral-500">
+                      Upload sales notes, survey results, pricing, or competitor
+                      lists to ground future research.
+                    </p>
+                  )}
+                </div>
+              </section>
+            </div>
           </div>
 
-          <aside className="space-y-4 xl:sticky xl:top-5 xl:self-start">
+          <aside className="hidden">
             {!done && (
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <div className="mb-3 flex items-start justify-between gap-3">
