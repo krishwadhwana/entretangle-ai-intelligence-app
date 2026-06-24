@@ -174,6 +174,7 @@ const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per
 const OWNER_WEB_TIMEOUT_MS = 22_000;
 const OWNER_FALLBACK_TIMEOUT_MS = 25_000;
 const OWNER_QA_TIMEOUT_MS = 45_000;
+const DESIGN_SITE_TIMEOUT_MS = 120_000;
 const MARKET_DATA_TIMEOUT_MS = 90_000;
 const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
 const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
@@ -1641,7 +1642,7 @@ export async function callSiteGenerator(
     user: siteGenUser(profile, tokens, brandKit, brief),
     schema: SiteGenOutputSchema,
     maxCompletionTokens: 12000,
-    requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
+    requestTimeoutMs: DESIGN_SITE_TIMEOUT_MS,
     requestMaxRetries: 0,
   });
 }
