@@ -1,15 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { sanitizeSiteHtml, looksLikeHtmlDoc } from "@/lib/design/site";
 import { deployStaticSite, vercelDeployEnabled } from "@/lib/deploy/vercel";
-import { callSiteGenerator } from "@/lib/llm";
+import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
-import { SiteAssetSchema } from "@/lib/schema";
 import {
   deleteSiteAsset,
   getDesignStudio,
   getProject,
-  saveSiteAsset,
   setSiteDeployUrl,
 } from "@/lib/store";
 
@@ -94,40 +91,11 @@ export async function POST(
       { status: 409 }
     );
   }
-  const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
-
-  try {
-    const out = await callSiteGenerator(
-      body.data.sourceRunId,
-      project.ventureProfile,
-      tokens,
-      brandKit,
-      body.data.brief
-    );
-    const html = sanitizeSiteHtml(out.html);
-    if (!looksLikeHtmlDoc(html)) {
-      return NextResponse.json(
-        { error: "The generated site was malformed. Try again." },
-        { status: 502 }
-      );
-    }
-    const site = SiteAssetSchema.parse({
-      id: `site-${Date.now().toString(36)}`,
-      title: out.title,
-      brandName: project.ventureProfile.product || project.name,
-      html,
-      deployUrl: null,
-      createdAt: new Date().toISOString(),
-    });
-    const studio = await saveSiteAsset(params.id, site);
-    return NextResponse.json({ site, sites: studio.sites });
-  } catch (error) {
-    const { payload, status } = toProviderErrorPayload(
-      error,
-      "website generation failed"
-    );
-    return NextResponse.json(payload, { status });
-  }
+  const job = await enqueueProjectJob(params.id, "design_site", {
+    sourceRunId: body.data.sourceRunId,
+    brief: body.data.brief,
+  });
+  return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
 }
 
 export async function DELETE(

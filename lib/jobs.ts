@@ -1,4 +1,5 @@
 import { prisma } from "./db";
+import type { Prisma } from "@prisma/client";
 import { RunEmitter } from "./events";
 import { providerErrorMessage } from "./providerErrors";
 
@@ -13,7 +14,14 @@ export const LEASE_RENEW_MS = 30_000;
 // worker indefinitely — past this it stays put (visible) rather than re-running.
 const MAX_RECLAIM_ATTEMPTS = 5;
 
-export type RunJobType = "execute" | "resume" | "add_cohort";
+export type RunJobType =
+  | "execute"
+  | "resume"
+  | "add_cohort"
+  | "design_tokens"
+  | "design_logo"
+  | "design_collateral"
+  | "design_site";
 export type RunJobStatus =
   | "queued"
   | "running"
@@ -23,11 +31,13 @@ export type RunJobStatus =
 
 export type ClaimedRunJob = {
   id: string;
-  runId: string;
+  runId: string | null;
+  projectId: string | null;
   type: RunJobType;
   status: RunJobStatus;
   attempts: number;
   cancelRequested: boolean;
+  payload: Prisma.JsonValue | null;
 };
 
 export class RunCancelledError extends Error {
@@ -43,7 +53,7 @@ export function isRunCancelledError(error: unknown): error is RunCancelledError 
 
 export async function enqueueRunJob(
   runId: string,
-  type: RunJobType
+  type: Extract<RunJobType, "execute" | "resume" | "add_cohort">
 ): Promise<{ id: string; alreadyQueued: boolean }> {
   // Release any job orphaned by a dead worker (running but lease expired) so it
   // no longer masks this run as "active" — otherwise "Continue run" would dedupe
@@ -74,6 +84,51 @@ export async function enqueueRunJob(
 
   const job = await prisma.runJob.create({
     data: { runId, type, status: "queued" },
+    select: { id: true },
+  });
+  return { id: job.id, alreadyQueued: false };
+}
+
+export async function enqueueProjectJob(
+  projectId: string,
+  type: Exclude<RunJobType, "execute" | "resume" | "add_cohort">,
+  payload: Prisma.InputJsonValue,
+  opts: { priority?: number } = {}
+): Promise<{ id: string; alreadyQueued: boolean }> {
+  await prisma.runJob.updateMany({
+    where: {
+      projectId,
+      type,
+      status: "running",
+      lockedAt: { lt: new Date(Date.now() - LEASE_MS) },
+    },
+    data: {
+      status: "failed",
+      error: "worker lease expired (orphaned by worker restart)",
+      finishedAt: new Date(),
+      lockedBy: null,
+    },
+  });
+
+  const existing = await prisma.runJob.findFirst({
+    where: {
+      projectId,
+      type,
+      status: { in: ["queued", "running"] },
+    },
+    orderBy: { createdAt: "desc" },
+    select: { id: true },
+  });
+  if (existing) return { id: existing.id, alreadyQueued: true };
+
+  const job = await prisma.runJob.create({
+    data: {
+      projectId,
+      type,
+      status: "queued",
+      payload,
+      priority: opts.priority ?? 0,
+    },
     select: { id: true },
   });
   return { id: job.id, alreadyQueued: false };
@@ -154,11 +209,13 @@ export async function claimNextRunJob(
   const rows = await prisma.$queryRaw<
     Array<{
       id: string;
-      run_id: string;
+      run_id: string | null;
+      project_id: string | null;
       type: string;
       status: string;
       attempts: number;
       cancel_requested: boolean;
+      payload: Prisma.JsonValue | null;
     }>
   >`
     UPDATE run_jobs
@@ -186,7 +243,15 @@ export async function claimNextRunJob(
         AND NOT EXISTS (
           SELECT 1
           FROM run_jobs AS active
-          WHERE active.run_id = candidate.run_id
+          WHERE (
+              (candidate.run_id IS NOT NULL AND active.run_id = candidate.run_id)
+              OR (
+                candidate.run_id IS NULL
+                AND candidate.project_id IS NOT NULL
+                AND active.project_id = candidate.project_id
+                AND active.type = candidate.type
+              )
+            )
             AND active.id <> candidate.id
             AND active.status = 'running'
             -- Only a LIVE sibling (fresh lease) blocks; a stale one is dead.
@@ -196,17 +261,19 @@ export async function claimNextRunJob(
       FOR UPDATE SKIP LOCKED
       LIMIT 1
     )
-    RETURNING id, run_id, type, status, attempts, cancel_requested
+    RETURNING id, run_id, project_id, type, status, attempts, cancel_requested, payload
   `;
   const row = rows[0];
   if (!row) return null;
   return {
     id: row.id,
     runId: row.run_id,
+    projectId: row.project_id,
     type: row.type as RunJobType,
     status: row.status as RunJobStatus,
     attempts: row.attempts,
     cancelRequested: row.cancel_requested,
+    payload: row.payload,
   };
 }
 
@@ -227,6 +294,21 @@ export async function markJobSucceeded(jobId: string): Promise<void> {
   await prisma.runJob.update({
     where: { id: jobId },
     data: { status: "succeeded", finishedAt: new Date(), lockedBy: null },
+  });
+}
+
+export async function markJobSucceededWithResult(
+  jobId: string,
+  result: Prisma.InputJsonValue
+): Promise<void> {
+  await prisma.runJob.update({
+    where: { id: jobId },
+    data: {
+      status: "succeeded",
+      result,
+      finishedAt: new Date(),
+      lockedBy: null,
+    },
   });
 }
 

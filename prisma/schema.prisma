@@ -39,6 +39,7 @@ model Project {
 
   runs      Run[]
   documents Document[]
+  jobs      RunJob[]
 
   @@map("projects")
 }
@@ -109,8 +110,9 @@ model Run {
 // navigation/dev-server restarts do not own long-running simulations.
 model RunJob {
   id              String    @id @default(cuid())
-  runId           String    @map("run_id")
-  type            String // "execute" | "resume"
+  runId           String?   @map("run_id")
+  projectId       String?   @map("project_id")
+  type            String // "execute" | "resume" | project-level owner jobs
   status          String    @default("queued") // queued|running|succeeded|failed|cancelled
   priority        Int       @default(0)
   attempts        Int       @default(0)
@@ -121,13 +123,17 @@ model RunJob {
   finishedAt      DateTime? @map("finished_at")
   cancelRequested Boolean   @default(false) @map("cancel_requested")
   error           String?
+  payload         Json?
+  result          Json?
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 
-  run Run @relation(fields: [runId], references: [id], onDelete: Cascade)
+  run     Run?     @relation(fields: [runId], references: [id], onDelete: Cascade)
+  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
 
   @@index([status, priority, createdAt])
   @@index([runId, status])
+  @@index([projectId, status])
   @@map("run_jobs")
 }
 

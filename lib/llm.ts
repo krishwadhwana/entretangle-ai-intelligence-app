@@ -1,7 +1,12 @@
 import OpenAI from "openai";
 import { z } from "zod";
 import { config } from "./config";
-import { recordUsage, type ModelTier } from "./usage";
+import {
+  recordProjectOnlyUsage,
+  recordUsage,
+  type ModelTier,
+  type UsageFeatureKey,
+} from "./usage";
 import {
   PlannerV2OutputSchema,
   VenturePlanningContextSchema,
@@ -201,6 +206,8 @@ function stripFences(text: string): string {
  */
 async function callJson<T>(opts: {
   runId: string | null;
+  projectId?: string | null;
+  feature?: UsageFeatureKey;
   system: string;
   user: string;
   schema: z.ZodType<T, z.ZodTypeDef, unknown>;
@@ -248,13 +255,26 @@ async function callJson<T>(opts: {
           }
         : undefined
     );
-    if (opts.runId && response.usage) {
-      await recordUsage(
-        opts.runId,
-        response.usage.prompt_tokens,
-        response.usage.completion_tokens,
-        opts.tier ?? "frontier"
-      );
+    if (response.usage) {
+      if (opts.runId) {
+        await recordUsage(
+          opts.runId,
+          response.usage.prompt_tokens,
+          response.usage.completion_tokens,
+          opts.tier ?? "frontier",
+          0,
+          { feature: opts.feature, projectId: opts.projectId }
+        );
+      } else if (opts.projectId) {
+        await recordProjectOnlyUsage(
+          opts.projectId,
+          response.usage.prompt_tokens,
+          response.usage.completion_tokens,
+          opts.tier ?? "frontier",
+          0,
+          opts.feature ?? "simulation.core"
+        );
+      }
     }
 
     const text = response.choices[0]?.message?.content ?? "";
@@ -386,7 +406,8 @@ async function callDeskWebSearch(
       response.usage.input_tokens ?? 0,
       response.usage.output_tokens ?? 0,
       "frontier",
-      searchCalls
+      searchCalls,
+      { feature: "simulation.web_research" }
     );
   }
 
@@ -465,7 +486,14 @@ export async function callExecutor(
   }
   await emitChain;
   if (usage) {
-    await recordUsage(runId, usage.prompt_tokens, usage.completion_tokens);
+    await recordUsage(
+      runId,
+      usage.prompt_tokens,
+      usage.completion_tokens,
+      "frontier",
+      0,
+      { feature: "simulation.web_research" }
+    );
   }
 
   let parseError: string;
@@ -515,6 +543,7 @@ export async function callCohortSim(
       : "";
   const out = await callJson({
     runId,
+    feature: "simulation.audience",
     system: cohortSimSystem(cohort, profile, currency, n, focus, calibration),
     user: `Simulate ${n} personas now.${batchNote} Output JSON only.`,
     schema: CohortSimOutputSchema,
@@ -540,6 +569,7 @@ export async function callAudienceSynth(
   }
   return callJson({
     runId,
+    feature: "simulation.audience",
     system: audienceSynthSystem(profile, aggregate, groundTruth, focus),
     user: "Begin. Output JSON only.",
     schema: ExecutorOutputSchema,
@@ -587,7 +617,8 @@ export async function callDemographics(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "market.data" }
       );
     }
     const parsed = DemographicsOutputSchema.safeParse(
@@ -708,7 +739,8 @@ export async function callBuildIndustryKnowledge(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "industry.data" }
       );
     }
     const parsed = IndustryKnowledgePackSchema.safeParse(
@@ -948,6 +980,7 @@ export async function callQuery(
   }
   return callJson({
     runId,
+    feature: "simulation.chat",
     system: QUERY_SYSTEM,
     user: queryV2User(profile, conclusions, aggregate, question),
     schema: QueryOutputSchema,
@@ -955,7 +988,8 @@ export async function callQuery(
 }
 
 export async function callFounderStory(
-  context: unknown
+  context: unknown,
+  projectId: string | null = null
 ): Promise<FounderStorySection> {
   if (config.mockMode) {
     return FounderStorySectionSchema.parse({
@@ -979,6 +1013,8 @@ export async function callFounderStory(
   }
   return callJson({
     runId: null,
+    projectId,
+    feature: "founder.story",
     system: FOUNDER_STORY_SYSTEM,
     user: founderStoryUser(context),
     schema: FounderStorySectionSchema,
@@ -1375,7 +1411,8 @@ export async function callBrandKit(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "brand.social" }
       );
     }
     const parsed = BrandKitSchema.safeParse(
@@ -1399,6 +1436,7 @@ export async function callBrandKit(
     try {
       return await callJson({
         runId,
+        feature: "brand.social",
         system: BRAND_KIT_SYSTEM,
         user: brandKitUser(profile, conclusions, aggregate, founderStory),
         schema: BrandKitSchema,
@@ -1460,17 +1498,27 @@ const FALLBACK_DESIGN_TOKENS: DesignTokens = {
  */
 export async function callDesignTokens(
   runId: string | null,
+  projectId: string | null,
   profile: ClientProfile,
   brandKit: BrandKit | null,
   founderStory: FounderStorySection | null = null,
-  productImageNotes: string[] = []
+  productImageNotes: string[] = [],
+  guidance = ""
 ): Promise<DesignTokens> {
   if (config.mockMode) return DesignTokensSchema.parse(FALLBACK_DESIGN_TOKENS);
   try {
     return await callJson({
       runId,
+      projectId,
+      feature: "design.tokens",
       system: DESIGN_TOKENS_SYSTEM,
-      user: designTokensUser(profile, brandKit, founderStory, productImageNotes),
+      user: designTokensUser(
+        profile,
+        brandKit,
+        founderStory,
+        productImageNotes,
+        guidance
+      ),
       schema: DesignTokensSchema,
       maxCompletionTokens: 3000,
       requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
@@ -1490,6 +1538,7 @@ export async function callDesignTokens(
  */
 export async function callCollateralCopy(
   runId: string | null,
+  projectId: string | null,
   type: CollateralType,
   profile: ClientProfile,
   brandKit: BrandKit | null,
@@ -1508,6 +1557,8 @@ export async function callCollateralCopy(
   }
   return callJson({
     runId,
+    projectId,
+    feature: "design.collateral",
     system: COLLATERAL_COPY_SYSTEM,
     user: collateralCopyUser(type, profile, brandKit, brief),
     schema: CollateralContentSchema,
@@ -1525,9 +1576,11 @@ export async function callCollateralCopy(
  */
 export async function callLogoMarks(
   runId: string | null,
+  projectId: string | null,
   profile: ClientProfile,
   tokens: DesignTokens,
-  brandKit: BrandKit | null
+  brandKit: BrandKit | null,
+  brief = ""
 ): Promise<LogoMarksOutput> {
   if (config.mockMode) {
     return LogoMarksOutputSchema.parse({
@@ -1543,8 +1596,10 @@ export async function callLogoMarks(
   }
   return callJson({
     runId,
+    projectId,
+    feature: "design.logo",
     system: LOGO_MARKS_SYSTEM,
-    user: logoMarksUser(profile, tokens, brandKit),
+    user: logoMarksUser(profile, tokens, brandKit, brief),
     schema: LogoMarksOutputSchema,
     maxCompletionTokens: 4000,
     requestTimeoutMs: OWNER_QA_TIMEOUT_MS,
@@ -1560,6 +1615,7 @@ export async function callLogoMarks(
  */
 export async function callSiteGenerator(
   runId: string | null,
+  projectId: string | null,
   profile: ClientProfile,
   tokens: DesignTokens,
   brandKit: BrandKit | null,
@@ -1579,6 +1635,8 @@ export async function callSiteGenerator(
   }
   return callJson({
     runId,
+    projectId,
+    feature: "design.site",
     system: SITE_GEN_SYSTEM,
     user: siteGenUser(profile, tokens, brandKit, brief),
     schema: SiteGenOutputSchema,
@@ -1602,6 +1660,7 @@ export async function callDataQuestion(
   if (config.mockMode) return `(mock) Answer about ${subject}: ${question}`;
   const out = await callJson({
     runId,
+    feature: "simulation.chat",
     system: DATA_QA_SYSTEM,
     user: dataQaUser(subject, contextJson, question, history),
     schema: z.object({ answer: z.string() }),
@@ -1632,6 +1691,7 @@ export async function callAssumptionUpdate(
   }
   return callJson({
     runId,
+    feature: "simulation.chat",
     system: ASSUMPTION_UPDATE_SYSTEM,
     user: assumptionUpdateUser(contextJson, knowledge),
     schema: AssumptionUpdateSchema,
@@ -1647,6 +1707,7 @@ export async function callAssumptionUpdate(
  * keeps the curated priors). No runId — runs at project setup.
  */
 export async function callMarketData(
+  projectId: string | null,
   country: string,
   category: string
 ): Promise<MarketDataOutput> {
@@ -1672,6 +1733,21 @@ export async function callMarketData(
     },
     { timeout: MARKET_DATA_TIMEOUT_MS, maxRetries: 0 }
   );
+  const searchCalls = Array.isArray(response.output)
+    ? response.output.filter((o: { type?: string }) =>
+        String(o.type ?? "").startsWith("web_search")
+      ).length
+    : 0;
+  if (projectId && response.usage) {
+    await recordProjectOnlyUsage(
+      projectId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      searchCalls,
+      "market.data"
+    );
+  }
   const parsed = MarketDataOutputSchema.safeParse(
     JSON.parse(stripFences(response.output_text ?? ""))
   );
@@ -1791,7 +1867,8 @@ export async function callGeneratePlaybook(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "playbook" }
       );
     }
     const parsed = GeneratedPlaybookSchema.safeParse(
@@ -1819,7 +1896,8 @@ export async function callGeneratePlaybook(
  * No runId — this runs at project creation, before any run exists.
  */
 export async function callWebsiteAnalysis(
-  url: string
+  url: string,
+  projectId: string | null = null
 ): Promise<WebsiteAnalysisOutput> {
   if (config.mockMode) {
     return WebsiteAnalysisOutputSchema.parse({
@@ -1852,6 +1930,21 @@ export async function callWebsiteAnalysis(
       },
       { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
     );
+    const searchCalls = Array.isArray(response.output)
+      ? response.output.filter((o: { type?: string }) =>
+          String(o.type ?? "").startsWith("web_search")
+        ).length
+      : 0;
+    if (projectId && response.usage) {
+      await recordProjectOnlyUsage(
+        projectId,
+        response.usage.input_tokens ?? 0,
+        response.usage.output_tokens ?? 0,
+        "frontier",
+        searchCalls,
+        "website.analysis"
+      );
+    }
     const parsed = WebsiteAnalysisOutputSchema.safeParse(
       JSON.parse(stripFences(response.output_text ?? ""))
     );
@@ -1865,6 +1958,8 @@ export async function callWebsiteAnalysis(
     console.error(`[website-analysis] web path failed, falling back:`, e);
     return callJson({
       runId: null,
+      projectId,
+      feature: "website.analysis",
       system: WEBSITE_ANALYSIS_SYSTEM,
       user: websiteAnalysisUser(url),
       schema: WebsiteAnalysisOutputSchema,
@@ -2055,7 +2150,8 @@ export async function callInspiration(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "inspiration" }
       );
     }
     const parsed = InspirationKitSchema.safeParse(
@@ -2077,6 +2173,7 @@ export async function callInspiration(
     try {
       return await callJson({
         runId,
+        feature: "inspiration",
         system: INSPIRATION_SYSTEM,
         user: inspirationUser(profile, conclusions),
         schema: InspirationKitSchema,
@@ -2299,7 +2396,8 @@ export async function callFinancialInputs(
         response.usage.input_tokens ?? 0,
         response.usage.output_tokens ?? 0,
         "frontier",
-        searchCalls
+        searchCalls,
+        { feature: "financials" }
       );
     }
     const parsed = FinancialInputsSchema.safeParse(
@@ -2313,6 +2411,7 @@ export async function callFinancialInputs(
     console.error(`[financials] web-grounded path failed, falling back:`, e);
     return callJson({
       runId,
+      feature: "financials",
       system: FINANCIALS_SYSTEM,
       user,
       schema: FinancialInputsSchema,

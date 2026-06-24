@@ -123,11 +123,14 @@ export async function POST(
     .filter((url): url is string => Boolean(url));
 
   try {
-    const generated = await callFounderStory({
-      projectId: params.id,
-      venture: project.ventureProfile,
-      evidence: limitedEvidence,
-    });
+    const generated = await callFounderStory(
+      {
+        projectId: params.id,
+        venture: project.ventureProfile,
+        evidence: limitedEvidence,
+      },
+      params.id
+    );
     const founderStory = FounderStorySectionSchema.parse({
       ...generated,
       sources: Array.from(new Set([...generated.sources, ...inputSources])),

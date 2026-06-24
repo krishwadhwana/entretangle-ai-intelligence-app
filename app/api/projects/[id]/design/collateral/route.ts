@@ -1,18 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { renderCollateral, COLLATERAL_LABELS } from "@/lib/design/collateral";
-import { callCollateralCopy } from "@/lib/llm";
-import { toProviderErrorPayload } from "@/lib/providerErrors";
+import { enqueueProjectJob } from "@/lib/jobs";
 import {
   CollateralContentSchema,
   CollateralTypeSchema,
-  DesignAssetSchema,
 } from "@/lib/schema";
 import {
   deleteDesignAsset,
   getDesignStudio,
   getProject,
-  saveDesignAsset,
 } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -28,17 +24,6 @@ const PostSchema = z.object({
   // Optional: re-render edited copy without another LLM call.
   content: CollateralContentSchema.optional(),
 });
-
-// Cheap unique id without Date.now()/Math.random churn in a hot path: type +
-// a short suffix derived from the brand name + asset count.
-function assetId(type: string, seed: string): string {
-  const slug = seed
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 24);
-  return `${type}-${slug || "asset"}-${Date.now().toString(36)}`;
-}
 
 export async function GET(
   _req: NextRequest,
@@ -80,46 +65,13 @@ export async function POST(
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
-
-  try {
-    const content =
-      body.data.content ??
-      (await callCollateralCopy(
-        body.data.sourceRunId,
-        body.data.type,
-        project.ventureProfile,
-        brandKit,
-        body.data.brief
-      ));
-
-    const { svg, width, height } = await renderCollateral(
-      body.data.type,
-      tokens,
-      content
-    );
-
-    const asset = DesignAssetSchema.parse({
-      id: assetId(body.data.type, content.brandName),
-      type: body.data.type,
-      title: `${COLLATERAL_LABELS[body.data.type]} — ${content.brandName}`,
-      format: "svg",
-      svg,
-      width,
-      height,
-      content,
-      createdAt: new Date().toISOString(),
-    });
-
-    const studio = await saveDesignAsset(params.id, asset);
-    return NextResponse.json({ asset, assets: studio.assets });
-  } catch (error) {
-    const { payload, status } = toProviderErrorPayload(
-      error,
-      "collateral generation failed"
-    );
-    return NextResponse.json(payload, { status });
-  }
+  const job = await enqueueProjectJob(params.id, "design_collateral", {
+    type: body.data.type,
+    brief: body.data.brief,
+    sourceRunId: body.data.sourceRunId,
+    ...(body.data.content ? { content: body.data.content } : {}),
+  });
+  return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
 }
 
 export async function DELETE(

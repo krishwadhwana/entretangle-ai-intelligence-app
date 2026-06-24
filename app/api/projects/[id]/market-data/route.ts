@@ -54,7 +54,7 @@ export async function POST(
   const country = countryLabel(profile.data.geography, market);
 
   try {
-    const out = await callMarketData(country, category);
+    const out = await callMarketData(params.id, country, category);
     const datum = MarketDatumSchema.parse({
       ...out,
       market,

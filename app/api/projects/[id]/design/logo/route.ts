@@ -1,14 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { buildLogoVariants } from "@/lib/design/logo";
-import { callLogoMarks } from "@/lib/llm";
-import { toProviderErrorPayload } from "@/lib/providerErrors";
-import { LogoAssetSchema } from "@/lib/schema";
+import { enqueueProjectJob } from "@/lib/jobs";
 import {
   deleteLogoAsset,
   getDesignStudio,
   getProject,
-  saveLogoAsset,
 } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -19,6 +15,7 @@ export const maxDuration = 120;
 // designStudio section. Always returns at least the wordmark variant.
 const PostSchema = z.object({
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+  brief: z.string().trim().max(2000).default(""),
 });
 
 export async function GET(
@@ -60,48 +57,11 @@ export async function POST(
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const brandName = project.ventureProfile.product || project.name;
-  const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
-
-  try {
-    // Marks are the creative part; if the model fails, still ship the wordmark.
-    let concept = "Wordmark logo built from the brand's heading font.";
-    let style = tokens.logo.style || "wordmark";
-    let marks: { label: string; svg: string }[] = [];
-    try {
-      const out = await callLogoMarks(
-        body.data.sourceRunId,
-        project.ventureProfile,
-        tokens,
-        brandKit
-      );
-      concept = out.concept;
-      style = out.style;
-      marks = out.marks;
-    } catch (markErr) {
-      console.error("[logo] marks generation failed, wordmark only:", markErr);
-    }
-
-    const variants = await buildLogoVariants(brandName, tokens, marks);
-    const logo = LogoAssetSchema.parse({
-      id: `logo-${Date.now().toString(36)}`,
-      brandName,
-      style,
-      concept,
-      variants,
-      createdAt: new Date().toISOString(),
-    });
-    const studio = await saveLogoAsset(params.id, logo);
-    return NextResponse.json({ logo, logos: studio.logos });
-  } catch (error) {
-    // Reaching here means even the deterministic wordmark failed (e.g. font
-    // fetch) — surface the provider error.
-    const { payload, status } = toProviderErrorPayload(
-      error,
-      "logo generation failed"
-    );
-    return NextResponse.json(payload, { status });
-  }
+  const job = await enqueueProjectJob(params.id, "design_logo", {
+    sourceRunId: body.data.sourceRunId,
+    brief: body.data.brief,
+  });
+  return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
 }
 
 export async function DELETE(

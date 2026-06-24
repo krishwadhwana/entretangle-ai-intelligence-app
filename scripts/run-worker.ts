@@ -1,4 +1,5 @@
 import { randomUUID } from "crypto";
+import type { Prisma } from "@prisma/client";
 import {
   claimNextRunJob,
   isRunCancelledError,
@@ -6,6 +7,7 @@ import {
   markJobCancelled,
   markJobFailed,
   markJobSucceeded,
+  markJobSucceededWithResult,
   markRunCancelled,
   renewJobLease,
   throwIfRunCancelled,
@@ -13,6 +15,7 @@ import {
 } from "../lib/jobs";
 import { prisma } from "../lib/db";
 import { executeRun, resumeRun, addPendingCohorts } from "../lib/orchestrator";
+import { runDesignStudioJob } from "../lib/design/jobs";
 
 const workerId = process.env.WORKER_ID ?? `run-worker-${randomUUID()}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "2000", 10);
@@ -24,7 +27,7 @@ function sleep(ms: number): Promise<void> {
 
 async function runJob(job: ClaimedRunJob): Promise<void> {
   console.log(
-    `[worker ${workerId}] ${job.type} ${job.runId} (${job.id}) attempt ${job.attempts}`
+    `[worker ${workerId}] ${job.type} ${job.runId ?? job.projectId} (${job.id}) attempt ${job.attempts}`
   );
   // Renew the lease while we work so the reclaim path never steals a job from
   // this live worker; cleared in finally so a dead worker's lease goes stale.
@@ -35,6 +38,17 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
   }, LEASE_RENEW_MS);
   if (typeof lease.unref === "function") lease.unref();
   try {
+    if (job.type.startsWith("design_")) {
+      if (!job.projectId) throw new Error(`${job.type} job missing projectId`);
+      const result = await runDesignStudioJob({
+        type: job.type as "design_tokens" | "design_logo" | "design_collateral" | "design_site",
+        projectId: job.projectId,
+        payload: job.payload,
+      });
+      await markJobSucceededWithResult(job.id, result as Prisma.InputJsonValue);
+      return;
+    }
+    if (!job.runId) throw new Error(`${job.type} job missing runId`);
     const run = await prisma.run.findUnique({
       where: { id: job.runId },
       select: {
@@ -104,7 +118,7 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
     await markJobSucceeded(job.id);
   } catch (error) {
     if (isRunCancelledError(error)) {
-      await markRunCancelled(job.runId);
+      if (job.runId) await markRunCancelled(job.runId);
       await markJobCancelled(job.id);
       console.log(`[worker ${workerId}] cancelled ${job.runId}`);
       return;

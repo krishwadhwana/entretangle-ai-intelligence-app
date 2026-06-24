@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { callDesignTokens } from "@/lib/llm";
+import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
+import { DesignTokensSchema } from "@/lib/schema";
 import {
   getDesignStudio,
-  getFounderStory,
   getProject,
   saveDesignTokens,
 } from "@/lib/store";
@@ -20,6 +20,8 @@ export const maxDuration = 120;
 const BodySchema = z.object({
   // Optional provenance: the run whose brand kit seeded these tokens.
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+  guidance: z.string().trim().max(2000).default(""),
+  tokens: DesignTokensSchema.optional(),
 });
 
 export async function GET(
@@ -53,20 +55,18 @@ export async function POST(
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const brandKit = project.ownerDashboard?.brandSocial?.kit ?? null;
-  const founderStory = await getFounderStory(params.id).catch(() => null);
-
   try {
-    const tokens = await callDesignTokens(
-      body.data.sourceRunId,
-      project.ventureProfile,
-      brandKit,
-      founderStory
-    );
+    if (!body.data.tokens) {
+      const job = await enqueueProjectJob(params.id, "design_tokens", {
+        sourceRunId: body.data.sourceRunId,
+        guidance: body.data.guidance,
+      });
+      return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
+    }
     const generatedAt = new Date().toISOString();
     const designStudio = await saveDesignTokens(
       params.id,
-      tokens,
+      body.data.tokens,
       body.data.sourceRunId,
       generatedAt
     );

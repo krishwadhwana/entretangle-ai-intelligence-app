@@ -13,6 +13,7 @@ import {
   InspirationSectionSchema,
   InterviewTranscriptSchema,
   InvestorOSSectionSchema,
+  UsageLedgerSchema,
   WebsiteAnalysisSchema,
   type DesignAsset,
   type DesignStudioSection,
@@ -37,6 +38,7 @@ import {
   type OwnerDashboard,
   type RunStatus,
   type SimulationRunRecord,
+  type UsageLedger,
 } from "./schema";
 import { blockToWire, cohortToWire, personaToWire } from "./wire";
 
@@ -77,6 +79,7 @@ export type OwnerDashboardRunSlice = {
   brandSocial: OwnerDashboard["brandSocial"] | null;
   financials: OwnerDashboard["financials"] | null;
   inspiration: OwnerDashboard["inspiration"] | null;
+  usage: OwnerDashboard["usage"];
 };
 
 // Default state for a freshly-initialised owner dashboard.
@@ -136,6 +139,12 @@ const EMPTY_OWNER_DASHBOARD: OwnerDashboard = {
     generatedAt: null,
     sourceRunId: null,
   },
+  usage: {
+    tokensUsed: 0,
+    costUsd: 0,
+    features: {},
+    updatedAt: null,
+  },
 };
 
 // Parse the owner_dashboard JSONB SECTION BY SECTION. A whole-object parse
@@ -162,6 +171,7 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
   const pb = z.record(GeneratedPlaybookSchema).safeParse(obj.playbooks);
   const investorOS = InvestorOSSectionSchema.safeParse(obj.investorOS);
   const designStudio = DesignStudioSectionSchema.safeParse(obj.designStudio);
+  const usage = UsageLedgerSchema.safeParse(obj.usage);
   const brandSocialByRun = brandByRun.success ? { ...brandByRun.data } : {};
   if (
     brand.success &&
@@ -209,6 +219,9 @@ function parseOwnerDashboard(raw: Prisma.JsonValue | null): OwnerDashboard {
     designStudio: designStudio.success
       ? designStudio.data
       : structuredClone(EMPTY_OWNER_DASHBOARD.designStudio),
+    usage: usage.success
+      ? usage.data
+      : structuredClone(EMPTY_OWNER_DASHBOARD.usage),
   };
 }
 
@@ -660,15 +673,15 @@ export async function saveDesignTokens(
   sourceRunId: string | null,
   generatedAt: string
 ): Promise<DesignStudioSection> {
-  const section = DesignStudioSectionSchema.parse({
+  const owner = await readOwnerDashboard(id);
+  owner.designStudio = DesignStudioSectionSchema.parse({
+    ...owner.designStudio,
     tokens,
     generatedAt,
     sourceRunId,
   });
-  const owner = await readOwnerDashboard(id);
-  owner.designStudio = section;
   await writeOwnerDashboard(id, owner);
-  return section;
+  return owner.designStudio;
 }
 
 export async function getDesignStudio(
@@ -1152,6 +1165,11 @@ export async function getOwnerDashboard(id: string): Promise<OwnerDashboard | nu
   return row ? parseOwnerDashboard(row.ownerDashboard) : null;
 }
 
+export async function getProjectUsage(id: string): Promise<UsageLedger | null> {
+  const owner = await getOwnerDashboard(id);
+  return owner?.usage ?? null;
+}
+
 export async function getOwnerDashboardRunSlice(
   id: string,
   runId: string
@@ -1192,6 +1210,7 @@ export async function getOwnerDashboardRunSlice(
       InspirationSectionSchema,
       (s) => Boolean(s.kit)
     ),
+    usage: owner.usage,
   };
 }
 

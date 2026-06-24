@@ -1415,7 +1415,8 @@ export function designTokensUser(
   profile: ClientProfile,
   brandKit: BrandKit | null,
   founderStory: FounderStorySection | null,
-  productImageNotes: string[] = []
+  productImageNotes: string[] = [],
+  guidance = ""
 ): string {
   return JSON.stringify(
     {
@@ -1423,6 +1424,7 @@ export function designTokensUser(
       brandIdentity: brandKit?.brandIdentity ?? null,
       founderStory: compactFounderStory(founderStory),
       productImageNotes,
+      founderGuidance: guidance || null,
       task:
         "Distill the concrete design tokens (palette, typography, logo) as specified.",
     },
@@ -1512,7 +1514,8 @@ Output JSON ONLY, no markdown fences, matching exactly:
 export function logoMarksUser(
   profile: ClientProfile,
   tokensJson: unknown,
-  brandKit: BrandKit | null
+  brandKit: BrandKit | null,
+  brief = ""
 ): string {
   return JSON.stringify(
     {
@@ -1520,6 +1523,7 @@ export function logoMarksUser(
       designTokens: tokensJson,
       brandVoice: brandKit?.brandIdentity?.voice ?? null,
       positioning: brandKit?.brandIdentity?.positioning ?? null,
+      founderBrief: brief || null,
       task: "Design the logo marks as specified.",
     },
     null,

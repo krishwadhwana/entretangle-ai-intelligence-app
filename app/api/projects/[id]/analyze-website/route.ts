@@ -29,7 +29,7 @@ export async function POST(
   const url = /^https?:\/\//i.test(raw) ? raw : `https://${raw}`;
 
   try {
-    const out = await callWebsiteAnalysis(url);
+    const out = await callWebsiteAnalysis(url, params.id);
     const analysis = WebsiteAnalysisSchema.parse({
       ...out,
       url,

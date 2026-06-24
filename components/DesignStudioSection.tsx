@@ -19,8 +19,10 @@ import type {
   CollateralType,
   DesignAsset,
   DesignStudioSection as DesignStudioState,
+  DesignTokens,
   LogoAsset,
   SiteAsset,
+  UsageLedger,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
@@ -29,6 +31,19 @@ const COLLATERAL_TYPES: { type: CollateralType; label: string }[] = [
   { type: "flyer", label: "Flyer" },
   { type: "poster", label: "Poster" },
 ];
+
+const DESIGN_USAGE_KEYS = new Set([
+  "design.tokens",
+  "design.logo",
+  "design.collateral",
+  "design.site",
+]);
+
+type JobStatus = {
+  id: string;
+  status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
+  error?: string | null;
+};
 
 // A readable text color (black/white) for a given hex background, so swatch
 // labels stay legible without depending on the generated palette's contrast.
@@ -65,6 +80,50 @@ function Swatch({ name, hex, usage }: { name: string; hex: string; usage?: strin
         ) : null}
       </div>
     </div>
+  );
+}
+
+function csvToList(value: string): string[] {
+  return value
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function listToCsv(value: string[] | undefined): string {
+  return (value ?? []).join(", ");
+}
+
+function formatUsd(value: number): string {
+  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
+}
+
+function Field({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: string;
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+        {label}
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+      />
+    </label>
   );
 }
 
@@ -350,16 +409,21 @@ function SiteCard({
 export default function DesignStudioSection({
   projectId,
   sourceRunId,
+  usage,
   refreshKey = 0,
 }: {
   projectId: string | null;
   sourceRunId?: string | null;
+  usage?: UsageLedger | null;
   refreshKey?: number;
 }) {
   const [studio, setStudio] = useState<DesignStudioState | null>(null);
   const [assets, setAssets] = useState<DesignAsset[]>([]);
   const [logos, setLogos] = useState<LogoAsset[]>([]);
   const [sites, setSites] = useState<SiteAsset[]>([]);
+  const [tokenDraft, setTokenDraft] = useState<DesignTokens | null>(null);
+  const [tokenGuidance, setTokenGuidance] = useState("");
+  const [logoBrief, setLogoBrief] = useState("");
   const [deployEnabled, setDeployEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
@@ -370,6 +434,54 @@ export default function DesignStudioSection({
   const [brief, setBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
 
+  const refreshStudio = useCallback(async () => {
+    if (!projectId) return;
+    const res = await fetch(`/api/projects/${projectId}/design/tokens`);
+    if (res.ok) {
+      const { designStudio } = (await res.json()) as {
+        designStudio: DesignStudioState | null;
+      };
+      setStudio(designStudio);
+      setAssets(designStudio?.assets ?? []);
+      setLogos(designStudio?.logos ?? []);
+      setSites(designStudio?.sites ?? []);
+      setTokenDraft(designStudio?.tokens ?? null);
+    }
+    const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
+    if (siteRes.ok) {
+      const { deployEnabled: enabled } = (await siteRes.json()) as {
+        deployEnabled?: boolean;
+      };
+      setDeployEnabled(Boolean(enabled));
+    }
+  }, [projectId]);
+
+  const waitForJob = useCallback(
+    async (jobId: string, fallback: string) => {
+      const deadline = Date.now() + 10 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        const res = await fetch(`/api/jobs/${jobId}`);
+        const data = (await res.json().catch(() => ({}))) as {
+          job?: JobStatus;
+          error?: unknown;
+        };
+        if (!res.ok) {
+          throw new Error(providerErrorMessage(data.error ?? data, fallback));
+        }
+        if (data.job?.status === "succeeded") {
+          await refreshStudio();
+          return;
+        }
+        if (data.job?.status === "failed" || data.job?.status === "cancelled") {
+          throw new Error(data.job.error || fallback);
+        }
+      }
+      throw new Error("Generation is still running. Refresh in a moment.");
+    },
+    [refreshStudio]
+  );
+
   useEffect(() => {
     if (!projectId) {
       setLoading(false);
@@ -379,26 +491,7 @@ export default function DesignStudioSection({
     setLoading(true);
     (async () => {
       try {
-        const res = await fetch(`/api/projects/${projectId}/design/tokens`);
-        if (res.ok) {
-          const { designStudio } = (await res.json()) as {
-            designStudio: DesignStudioState | null;
-          };
-          if (!cancelled) {
-            setStudio(designStudio);
-            setAssets(designStudio?.assets ?? []);
-            setLogos(designStudio?.logos ?? []);
-            setSites(designStudio?.sites ?? []);
-          }
-        }
-        // Whether one-click Vercel publish is configured (VERCEL_TOKEN set).
-        const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
-        if (siteRes.ok) {
-          const { deployEnabled: enabled } = (await siteRes.json()) as {
-            deployEnabled?: boolean;
-          };
-          if (!cancelled) setDeployEnabled(Boolean(enabled));
-        }
+        await refreshStudio();
       } catch {
         /* best-effort hydration */
       } finally {
@@ -408,7 +501,7 @@ export default function DesignStudioSection({
     return () => {
       cancelled = true;
     };
-  }, [projectId, refreshKey]);
+  }, [projectId, refreshKey, refreshStudio]);
 
   const generateTokens = useCallback(async () => {
     if (!projectId) return;
@@ -418,7 +511,10 @@ export default function DesignStudioSection({
       const res = await fetch(`/api/projects/${projectId}/design/tokens`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceRunId: sourceRunId ?? null }),
+        body: JSON.stringify({
+          sourceRunId: sourceRunId ?? null,
+          guidance: tokenGuidance,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -427,13 +523,49 @@ export default function DesignStudioSection({
         );
         return;
       }
-      setStudio(data.designStudio as DesignStudioState);
+      if (data.jobId) {
+        await waitForJob(String(data.jobId), "Design token generation failed.");
+        return;
+      }
+      const next = data.designStudio as DesignStudioState;
+      setStudio(next);
+      setTokenDraft(next.tokens);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
       setGenerating(false);
     }
-  }, [projectId, sourceRunId]);
+  }, [projectId, sourceRunId, tokenGuidance, waitForJob]);
+
+  const saveTokenDraft = useCallback(async () => {
+    if (!projectId || !tokenDraft) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/design/tokens`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sourceRunId: sourceRunId ?? null,
+          tokens: tokenDraft,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(
+          providerErrorMessage(data.error ?? data, `Save failed (${res.status}).`)
+        );
+        return;
+      }
+      const next = data.designStudio as DesignStudioState;
+      setStudio(next);
+      setTokenDraft(next.tokens);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed.");
+    } finally {
+      setGenerating(false);
+    }
+  }, [projectId, sourceRunId, tokenDraft]);
 
   const makeCollateral = useCallback(
     async (type: CollateralType) => {
@@ -447,20 +579,24 @@ export default function DesignStudioSection({
           body: JSON.stringify({ type, brief, sourceRunId: sourceRunId ?? null }),
         });
         const data = await res.json();
-        if (!res.ok) {
-          setError(
-            providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
-          );
-          return;
-        }
-        setAssets((data.assets as DesignAsset[]) ?? []);
+      if (!res.ok) {
+        setError(
+          providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
+        );
+        return;
+      }
+      if (data.jobId) {
+        await waitForJob(String(data.jobId), "Collateral generation failed.");
+        return;
+      }
+      setAssets((data.assets as DesignAsset[]) ?? []);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Generation failed.");
       } finally {
         setMakingType(null);
       }
     },
-    [projectId, brief, sourceRunId]
+    [projectId, brief, sourceRunId, waitForJob]
   );
 
   const removeAsset = useCallback(
@@ -491,7 +627,7 @@ export default function DesignStudioSection({
       const res = await fetch(`/api/projects/${projectId}/design/logo`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ sourceRunId: sourceRunId ?? null }),
+        body: JSON.stringify({ sourceRunId: sourceRunId ?? null, brief: logoBrief }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -500,13 +636,17 @@ export default function DesignStudioSection({
         );
         return;
       }
+      if (data.jobId) {
+        await waitForJob(String(data.jobId), "Logo generation failed.");
+        return;
+      }
       setLogos((data.logos as LogoAsset[]) ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
       setMakingLogo(false);
     }
-  }, [projectId, sourceRunId]);
+  }, [projectId, sourceRunId, logoBrief, waitForJob]);
 
   const removeLogo = useCallback(
     async (logoId: string) => {
@@ -549,13 +689,17 @@ export default function DesignStudioSection({
         );
         return;
       }
+      if (data.jobId) {
+        await waitForJob(String(data.jobId), "Website generation failed.");
+        return;
+      }
       setSites((data.sites as SiteAsset[]) ?? []);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
       setMakingSite(false);
     }
-  }, [projectId, brief, sourceRunId]);
+  }, [projectId, brief, sourceRunId, waitForJob]);
 
   const deploySite = useCallback(
     async (siteId: string) => {
@@ -608,6 +752,64 @@ export default function DesignStudioSection({
     [projectId, sites]
   );
 
+  const updatePalette = useCallback(
+    (key: keyof DesignTokens["palette"], value: string) => {
+      setTokenDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              palette: { ...prev.palette, [key]: value },
+            }
+          : prev
+      );
+    },
+    []
+  );
+
+  const updateTypography = useCallback(
+    (key: keyof DesignTokens["typography"], value: string | string[]) => {
+      setTokenDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              typography: { ...prev.typography, [key]: value },
+            }
+          : prev
+      );
+    },
+    []
+  );
+
+  const updateLogo = useCallback(
+    (key: keyof DesignTokens["logo"], value: string | string[]) => {
+      setTokenDraft((prev) =>
+        prev
+          ? {
+              ...prev,
+              logo: { ...prev.logo, [key]: value },
+            }
+          : prev
+      );
+    },
+    []
+  );
+
+  const updateTokenList = useCallback(
+    (key: "motifs", value: string) => {
+      setTokenDraft((prev) =>
+        prev ? { ...prev, [key]: csvToList(value) } : prev
+      );
+    },
+    []
+  );
+
+  const updateTokenText = useCallback(
+    (key: "imagery" | "rationale", value: string) => {
+      setTokenDraft((prev) => (prev ? { ...prev, [key]: value } : prev));
+    },
+    []
+  );
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-neutral-400">
@@ -616,12 +818,19 @@ export default function DesignStudioSection({
     );
   }
 
-  const tokens = studio?.tokens ?? null;
+  const tokens = tokenDraft ?? studio?.tokens ?? null;
   const palette = tokens?.palette;
+  const designUsage = usage
+    ? Object.values(usage.features)
+        .filter((f) => DESIGN_USAGE_KEYS.has(f.key))
+        .sort((a, b) => b.costUsd - a.costUsd)
+    : [];
+  const designCost = designUsage.reduce((sum, f) => sum + f.costUsd, 0);
+  const designTokensUsed = designUsage.reduce((sum, f) => sum + f.tokensUsed, 0);
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="mb-5">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-800">
             <Palette className="h-4 w-4 text-indigo-600" /> Design Studio
@@ -631,25 +840,89 @@ export default function DesignStudioSection({
             direction — plus branded collateral generated from them.
           </p>
         </div>
-        <button
-          onClick={generateTokens}
-          disabled={generating || !projectId}
-          className="flex shrink-0 items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
-        >
-          {generating ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <RefreshCw className="h-3.5 w-3.5" />
-          )}
-          {tokens ? "Regenerate tokens" : "Generate tokens"}
-        </button>
       </div>
+
+      {usage ? (
+        <section className="mb-5 rounded-xl border border-neutral-200 bg-white p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                LLM spend
+              </p>
+              <p className="mt-1 text-sm font-semibold text-neutral-800">
+                Design Studio {formatUsd(designCost)}
+              </p>
+              <p className="mt-0.5 text-[11px] text-neutral-400">
+                {designTokensUsed.toLocaleString()} design tokens · project total{" "}
+                {formatUsd(usage.costUsd)}
+              </p>
+            </div>
+            <div className="min-w-[220px] flex-1 space-y-1">
+              {designUsage.length ? (
+                designUsage.map((f) => (
+                  <div
+                    key={f.key}
+                    className="flex items-center justify-between gap-3 text-[11px]"
+                  >
+                    <span className="truncate text-neutral-500">{f.label}</span>
+                    <span className="shrink-0 font-mono text-neutral-700">
+                      {formatUsd(f.costUsd)}
+                    </span>
+                  </div>
+                ))
+              ) : (
+                <p className="text-[11px] text-neutral-400">
+                  No recorded design-generation spend yet.
+                </p>
+              )}
+            </div>
+          </div>
+        </section>
+      ) : null}
 
       {error ? (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
           <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" /> {error}
         </div>
       ) : null}
+
+      <section className="mb-5 rounded-xl border border-neutral-200 bg-white p-4">
+        <label className="block">
+          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            AI token direction
+          </span>
+          <textarea
+            value={tokenGuidance}
+            onChange={(e) => setTokenGuidance(e.target.value)}
+            placeholder="Optional direction, e.g. 'more premium skincare, less playful; use teal, cream, coral; editorial serif headline font'"
+            rows={3}
+            className="w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+          />
+        </label>
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={generateTokens}
+            disabled={generating || !projectId}
+            className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-3 py-2 text-xs font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+          >
+            {generating ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {tokens ? "Regenerate with direction" : "Generate tokens"}
+          </button>
+          {tokens ? (
+            <button
+              onClick={saveTokenDraft}
+              disabled={generating || !projectId || !tokenDraft}
+              className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+            >
+              Save token edits
+            </button>
+          ) : null}
+        </div>
+      </section>
 
       {!tokens ? (
         <div className="rounded-xl border border-dashed border-neutral-200 bg-neutral-50/60 p-8 text-center text-[12px] text-neutral-400">
@@ -673,6 +946,38 @@ export default function DesignStudioSection({
                   <Swatch key={c.name} name={c.name} hex={c.hex} usage={c.usage} />
                 ))}
               </div>
+              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <Field
+                  label="Primary"
+                  value={palette.primary}
+                  onChange={(v) => updatePalette("primary", v)}
+                  placeholder="#0F766E"
+                />
+                <Field
+                  label="Secondary"
+                  value={palette.secondary}
+                  onChange={(v) => updatePalette("secondary", v)}
+                  placeholder="#FF7A59"
+                />
+                <Field
+                  label="Accent"
+                  value={palette.accent}
+                  onChange={(v) => updatePalette("accent", v)}
+                  placeholder="#FACC15"
+                />
+                <Field
+                  label="Dark"
+                  value={palette.neutralDark}
+                  onChange={(v) => updatePalette("neutralDark", v)}
+                  placeholder="#102A2F"
+                />
+                <Field
+                  label="Light"
+                  value={palette.neutralLight}
+                  onChange={(v) => updatePalette("neutralLight", v)}
+                  placeholder="#FFF7EA"
+                />
+              </div>
             </section>
           ) : null}
 
@@ -681,22 +986,24 @@ export default function DesignStudioSection({
               <Type className="h-3.5 w-3.5" /> Typography
             </p>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-400">
-                  Heading
-                </p>
-                <p className="mt-1 text-lg font-semibold text-neutral-800">
-                  {tokens.typography.headingFamily}
-                </p>
-              </div>
-              <div className="rounded-xl border border-neutral-200 bg-white p-3">
-                <p className="text-[10px] uppercase tracking-wide text-neutral-400">
-                  Body
-                </p>
-                <p className="mt-1 text-lg text-neutral-800">
-                  {tokens.typography.bodyFamily}
-                </p>
-              </div>
+              <Field
+                label="Heading font"
+                value={tokens.typography.headingFamily}
+                onChange={(v) => updateTypography("headingFamily", v)}
+                placeholder="Playfair Display"
+              />
+              <Field
+                label="Body font"
+                value={tokens.typography.bodyFamily}
+                onChange={(v) => updateTypography("bodyFamily", v)}
+                placeholder="Inter"
+              />
+              <Field
+                label="Weights"
+                value={listToCsv(tokens.typography.weights)}
+                onChange={(v) => updateTypography("weights", csvToList(v))}
+                placeholder="400, 600, 700"
+              />
             </div>
             {tokens.typography.pairingRationale ? (
               <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">
@@ -709,12 +1016,40 @@ export default function DesignStudioSection({
             <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
               Logo direction
             </p>
-            <p className="mt-1 text-[12px] leading-relaxed text-neutral-700">
-              {tokens.logo.direction}
-            </p>
-            <p className="mt-1 text-[11px] capitalize text-neutral-400">
-              Style: {tokens.logo.style}
-            </p>
+            <textarea
+              value={tokens.logo.direction}
+              onChange={(e) => updateLogo("direction", e.target.value)}
+              rows={3}
+              className="mt-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Field
+                label="Style"
+                value={tokens.logo.style}
+                onChange={(v) => updateLogo("style", v)}
+                placeholder="wordmark, emblem, lettermark, combination"
+              />
+              <Field
+                label="Motif ideas"
+                value={listToCsv(tokens.logo.motifSuggestions)}
+                onChange={(v) => updateLogo("motifSuggestions", csvToList(v))}
+                placeholder="water droplet, monogram, ritual mark"
+              />
+            </div>
+            <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <Field
+                label="Brand motifs"
+                value={listToCsv(tokens.motifs)}
+                onChange={(v) => updateTokenList("motifs", v)}
+                placeholder="soft arcs, product tiles, editorial borders"
+              />
+              <Field
+                label="Imagery"
+                value={tokens.imagery}
+                onChange={(v) => updateTokenText("imagery", v)}
+                placeholder="bright product shots, wet bathroom textures"
+              />
+            </div>
           </section>
 
           {/* Logo generator */}
@@ -736,6 +1071,13 @@ export default function DesignStudioSection({
                 {logos.length ? "New concept" : "Generate logo"}
               </button>
             </div>
+            <textarea
+              value={logoBrief}
+              onChange={(e) => setLogoBrief(e.target.value)}
+              placeholder="Optional logo brief — e.g. 'minimal droplet monogram, no leaf, premium but warm, should work as an app icon'"
+              rows={2}
+              className="mb-3 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
             {logos.length ? (
               <div className="space-y-3">
                 {logos.map((logo) => (
@@ -758,7 +1100,7 @@ export default function DesignStudioSection({
             <input
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
-              placeholder="Optional brief — e.g. 'launch flyer for the summer drop, 20% off'"
+              placeholder="Optional social ad brief — e.g. 'Instagram launch ad for monsoon hydration combo, show premium product focus, 20% off'"
               className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
             <div className="flex flex-wrap gap-2">

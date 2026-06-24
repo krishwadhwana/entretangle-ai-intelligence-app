@@ -1567,6 +1567,31 @@ const EMPTY_DESIGN_STUDIO = {
   sourceRunId: null,
 };
 
+export const UsageFeatureSchema = z.object({
+  key: z.string(),
+  label: z.string(),
+  tokensUsed: z.number().default(0),
+  costUsd: z.number().default(0),
+  calls: z.number().default(0),
+  lastUsedAt: z.string().nullable().default(null),
+});
+export type UsageFeature = z.infer<typeof UsageFeatureSchema>;
+
+export const UsageLedgerSchema = z.object({
+  tokensUsed: z.number().default(0),
+  costUsd: z.number().default(0),
+  features: z.record(UsageFeatureSchema).default({}),
+  updatedAt: z.string().nullable().default(null),
+});
+export type UsageLedger = z.infer<typeof UsageLedgerSchema>;
+
+const EMPTY_USAGE_LEDGER = {
+  tokensUsed: 0,
+  costUsd: 0,
+  features: {},
+  updatedAt: null,
+};
+
 export const OwnerDashboardSchema = z.object({
   founderStory: FounderStorySectionSchema.default(EMPTY_FOUNDER_STORY),
   brandSocial: BrandSocialSectionSchema.default({
@@ -1591,6 +1616,8 @@ export const OwnerDashboardSchema = z.object({
   // Project-level brand design tokens (palette, type, logo direction) that the
   // design generators (collateral, logos, website) all consume.
   designStudio: DesignStudioSectionSchema.default(EMPTY_DESIGN_STUDIO),
+  // Project-level LLM spend ledger, broken down by feature.
+  usage: UsageLedgerSchema.default(EMPTY_USAGE_LEDGER),
 });
 export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 
