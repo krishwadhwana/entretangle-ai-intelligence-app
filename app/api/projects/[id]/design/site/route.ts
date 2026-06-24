@@ -91,11 +91,22 @@ export async function POST(
       { status: 409 }
     );
   }
-  const job = await enqueueProjectJob(params.id, "design_site", {
-    sourceRunId: body.data.sourceRunId,
-    brief: body.data.brief,
-  });
-  return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
+  try {
+    const job = await enqueueProjectJob(params.id, "design_site", {
+      sourceRunId: body.data.sourceRunId,
+      brief: body.data.brief,
+    });
+    return NextResponse.json(
+      { jobId: job.id, alreadyQueued: job.alreadyQueued },
+      { status: 202 }
+    );
+  } catch (error) {
+    const { payload, status } = toProviderErrorPayload(
+      error,
+      "website generation failed"
+    );
+    return NextResponse.json(payload, { status });
+  }
 }
 
 export async function DELETE(

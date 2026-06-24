@@ -4,7 +4,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
-import type { AudienceAggregate, Cohort, Domain, Persona } from "@/lib/schema";
+import type {
+  AudienceAggregate,
+  Cohort,
+  Domain,
+  Persona,
+  UsageLedger,
+} from "@/lib/schema";
 import {
   RotateCcw,
   Coins,
@@ -251,6 +257,7 @@ export default function RunDashboard({
   const [exportBusy, setExportBusy] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
   const [dossierBusy, setDossierBusy] = useState(false);
+  const [projectUsage, setProjectUsage] = useState<UsageLedger | null>(null);
   // The "Test in another market" edit-profile modal: which market it's open for,
   // plus the editable (pre-filled) destination-market overrides.
   const [exportMarket, setExportMarket] = useState<string | null>(null);
@@ -387,6 +394,11 @@ export default function RunDashboard({
     () => cohorts.reduce((s, c) => s + c.personas.length, 0),
     [cohorts]
   );
+  const totalTokensUsed = Math.max(
+    state.tokensUsed,
+    projectUsage?.tokensUsed ?? 0
+  );
+  const totalCostUsd = Math.max(state.costUsd, projectUsage?.costUsd ?? 0);
 
   // Live progress while the run is still working (SSE-driven).
   const progress = useMemo(() => {
@@ -801,6 +813,32 @@ export default function RunDashboard({
     if (view === "owner") setOwnerMounted(true);
   }, [view]);
 
+  useEffect(() => {
+    if (!projectId) {
+      setProjectUsage(null);
+      return;
+    }
+    let cancelled = false;
+    async function loadUsage() {
+      try {
+        const res = await fetch(`/api/projects/${projectId}/owner-dashboard`);
+        if (!res.ok) return;
+        const data = (await res.json()) as {
+          ownerDashboard?: { usage?: UsageLedger | null } | null;
+        };
+        if (!cancelled) setProjectUsage(data.ownerDashboard?.usage ?? null);
+      } catch {
+        /* best-effort telemetry */
+      }
+    }
+    void loadUsage();
+    const interval = window.setInterval(loadUsage, 10_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+    };
+  }, [projectId]);
+
   if (!hydrated) {
     return (
       <div className="flex h-full flex-col">
@@ -932,10 +970,12 @@ export default function RunDashboard({
           <Users className="h-3.5 w-3.5" />
           {personaCount.toLocaleString()}
         </span>
-        <span className="flex items-center gap-1 text-[11px] text-neutral-500">
+        <span
+          className="flex items-center gap-1 text-[11px] text-neutral-500"
+          title={projectUsage ? "total project LLM spend" : "current run LLM spend"}
+        >
           <Coins className="h-3.5 w-3.5" />
-          {state.tokensUsed.toLocaleString()} tok · $
-          {state.costUsd.toFixed(2)}
+          {totalTokensUsed.toLocaleString()} tok · ${totalCostUsd.toFixed(2)}
         </span>
         {(resumable || resuming) && (
           <button

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { enqueueProjectJob } from "@/lib/jobs";
+import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
   CollateralContentSchema,
   CollateralTypeSchema,
@@ -65,13 +66,24 @@ export async function POST(
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
   }
 
-  const job = await enqueueProjectJob(params.id, "design_collateral", {
-    type: body.data.type,
-    brief: body.data.brief,
-    sourceRunId: body.data.sourceRunId,
-    ...(body.data.content ? { content: body.data.content } : {}),
-  });
-  return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
+  try {
+    const job = await enqueueProjectJob(params.id, "design_collateral", {
+      type: body.data.type,
+      brief: body.data.brief,
+      sourceRunId: body.data.sourceRunId,
+      ...(body.data.content ? { content: body.data.content } : {}),
+    });
+    return NextResponse.json(
+      { jobId: job.id, alreadyQueued: job.alreadyQueued },
+      { status: 202 }
+    );
+  } catch (error) {
+    const { payload, status } = toProviderErrorPayload(
+      error,
+      "collateral generation failed"
+    );
+    return NextResponse.json(payload, { status });
+  }
 }
 
 export async function DELETE(

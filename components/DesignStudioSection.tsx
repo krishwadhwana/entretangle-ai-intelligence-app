@@ -22,7 +22,6 @@ import type {
   DesignTokens,
   LogoAsset,
   SiteAsset,
-  UsageLedger,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
@@ -31,13 +30,6 @@ const COLLATERAL_TYPES: { type: CollateralType; label: string }[] = [
   { type: "flyer", label: "Flyer" },
   { type: "poster", label: "Poster" },
 ];
-
-const DESIGN_USAGE_KEYS = new Set([
-  "design.tokens",
-  "design.logo",
-  "design.collateral",
-  "design.site",
-]);
 
 type JobStatus = {
   id: string;
@@ -94,8 +86,14 @@ function listToCsv(value: string[] | undefined): string {
   return (value ?? []).join(", ");
 }
 
-function formatUsd(value: number): string {
-  return `$${value.toFixed(value < 1 ? 4 : 2)}`;
+async function readJsonResponse(res: Response): Promise<Record<string, unknown>> {
+  const text = await res.text().catch(() => "");
+  if (!text.trim()) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: text };
+  }
 }
 
 function Field({
@@ -409,12 +407,10 @@ function SiteCard({
 export default function DesignStudioSection({
   projectId,
   sourceRunId,
-  usage,
   refreshKey = 0,
 }: {
   projectId: string | null;
   sourceRunId?: string | null;
-  usage?: UsageLedger | null;
   refreshKey?: number;
 }) {
   const [studio, setStudio] = useState<DesignStudioState | null>(null);
@@ -449,7 +445,7 @@ export default function DesignStudioSection({
     }
     const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
     if (siteRes.ok) {
-      const { deployEnabled: enabled } = (await siteRes.json()) as {
+      const { deployEnabled: enabled } = (await readJsonResponse(siteRes)) as {
         deployEnabled?: boolean;
       };
       setDeployEnabled(Boolean(enabled));
@@ -516,7 +512,7 @@ export default function DesignStudioSection({
           guidance: tokenGuidance,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setError(
           providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
@@ -550,7 +546,7 @@ export default function DesignStudioSection({
           tokens: tokenDraft,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setError(
           providerErrorMessage(data.error ?? data, `Save failed (${res.status}).`)
@@ -578,18 +574,21 @@ export default function DesignStudioSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ type, brief, sourceRunId: sourceRunId ?? null }),
         });
-        const data = await res.json();
-      if (!res.ok) {
-        setError(
-          providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
-        );
-        return;
-      }
-      if (data.jobId) {
-        await waitForJob(String(data.jobId), "Collateral generation failed.");
-        return;
-      }
-      setAssets((data.assets as DesignAsset[]) ?? []);
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+          setError(
+            providerErrorMessage(
+              data.error ?? data,
+              `Generation failed (${res.status}).`
+            )
+          );
+          return;
+        }
+        if (data.jobId) {
+          await waitForJob(String(data.jobId), "Collateral generation failed.");
+          return;
+        }
+        setAssets((data.assets as DesignAsset[]) ?? []);
       } catch (e) {
         setError(e instanceof Error ? e.message : "Generation failed.");
       } finally {
@@ -629,7 +628,7 @@ export default function DesignStudioSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ sourceRunId: sourceRunId ?? null, brief: logoBrief }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setError(
           providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
@@ -682,7 +681,7 @@ export default function DesignStudioSection({
           sourceRunId: sourceRunId ?? null,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse(res);
       if (!res.ok) {
         setError(
           providerErrorMessage(data.error ?? data, `Generation failed (${res.status}).`)
@@ -712,7 +711,7 @@ export default function DesignStudioSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ action: "deploy", siteId }),
         });
-        const data = await res.json();
+        const data = await readJsonResponse(res);
         if (!res.ok) {
           setError(
             providerErrorMessage(data.error ?? data, `Deploy failed (${res.status}).`)
@@ -820,13 +819,6 @@ export default function DesignStudioSection({
 
   const tokens = tokenDraft ?? studio?.tokens ?? null;
   const palette = tokens?.palette;
-  const designUsage = usage
-    ? Object.values(usage.features)
-        .filter((f) => DESIGN_USAGE_KEYS.has(f.key))
-        .sort((a, b) => b.costUsd - a.costUsd)
-    : [];
-  const designCost = designUsage.reduce((sum, f) => sum + f.costUsd, 0);
-  const designTokensUsed = designUsage.reduce((sum, f) => sum + f.tokensUsed, 0);
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -841,44 +833,6 @@ export default function DesignStudioSection({
           </p>
         </div>
       </div>
-
-      {usage ? (
-        <section className="mb-5 rounded-xl border border-neutral-200 bg-white p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                LLM spend
-              </p>
-              <p className="mt-1 text-sm font-semibold text-neutral-800">
-                Design Studio {formatUsd(designCost)}
-              </p>
-              <p className="mt-0.5 text-[11px] text-neutral-400">
-                {designTokensUsed.toLocaleString()} design tokens · project total{" "}
-                {formatUsd(usage.costUsd)}
-              </p>
-            </div>
-            <div className="min-w-[220px] flex-1 space-y-1">
-              {designUsage.length ? (
-                designUsage.map((f) => (
-                  <div
-                    key={f.key}
-                    className="flex items-center justify-between gap-3 text-[11px]"
-                  >
-                    <span className="truncate text-neutral-500">{f.label}</span>
-                    <span className="shrink-0 font-mono text-neutral-700">
-                      {formatUsd(f.costUsd)}
-                    </span>
-                  </div>
-                ))
-              ) : (
-                <p className="text-[11px] text-neutral-400">
-                  No recorded design-generation spend yet.
-                </p>
-              )}
-            </div>
-          </div>
-        </section>
-      ) : null}
 
       {error ? (
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-[12px] text-red-700">
@@ -998,12 +952,54 @@ export default function DesignStudioSection({
                 onChange={(v) => updateTypography("bodyFamily", v)}
                 placeholder="Inter"
               />
-              <Field
-                label="Weights"
-                value={listToCsv(tokens.typography.weights)}
-                onChange={(v) => updateTypography("weights", csvToList(v))}
-                placeholder="400, 600, 700"
-              />
+            </div>
+            <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-[1.1fr_0.9fr]">
+                <div>
+                  <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Font preview
+                  </p>
+                  <p
+                    className="text-3xl font-bold leading-tight text-neutral-900"
+                    style={{
+                      fontFamily: `${tokens.typography.headingFamily}, Georgia, serif`,
+                    }}
+                  >
+                    Fresh rituals for modern brands
+                  </p>
+                  <p
+                    className="mt-3 text-[13px] leading-relaxed text-neutral-600"
+                    style={{
+                      fontFamily: `${tokens.typography.bodyFamily}, Inter, Arial, sans-serif`,
+                    }}
+                  >
+                    A quick look at how the selected body face reads across
+                    product copy, social captions, landing pages, and pitch
+                    assets.
+                  </p>
+                </div>
+                <div
+                  className="rounded-lg border border-neutral-100 bg-neutral-50 p-3 text-neutral-800"
+                  style={{
+                    fontFamily: `${tokens.typography.bodyFamily}, Inter, Arial, sans-serif`,
+                  }}
+                >
+                  <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Families
+                  </p>
+                  <p
+                    className="mt-2 text-xl leading-snug text-neutral-900"
+                    style={{
+                      fontFamily: `${tokens.typography.headingFamily}, Georgia, serif`,
+                    }}
+                  >
+                    {tokens.typography.headingFamily}
+                  </p>
+                  <p className="mt-1 text-[12px] text-neutral-500">
+                    {tokens.typography.bodyFamily}
+                  </p>
+                </div>
+              </div>
             </div>
             {tokens.typography.pairingRationale ? (
               <p className="mt-2 text-[12px] leading-relaxed text-neutral-500">

@@ -16,7 +16,6 @@ import type {
   FinancialsSection as FinancialsState,
   FounderStorySection as FounderStoryState,
   InspirationSection as InspirationState,
-  UsageLedger,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import BrandSocialSection from "./BrandSocialSection";
@@ -40,7 +39,6 @@ type OwnerDashboardRunSlice = {
   brandSocial: BrandSocialState | null;
   financials: FinancialsState | null;
   inspiration: InspirationState | null;
-  usage: UsageLedger | null;
 };
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
@@ -68,7 +66,6 @@ export default function OwnerDashboard({
   const [brandSocial, setBrandSocial] = useState<BrandSocialState | null>(null);
   const [financials, setFinancials] = useState<FinancialsState | null>(null);
   const [inspiration, setInspiration] = useState<InspirationState | null>(null);
-  const [usage, setUsage] = useState<UsageLedger | null>(null);
   const [investorRefreshKey, setInvestorRefreshKey] = useState(0);
   const [loading, setLoading] = useState(true);
   const refreshInvestor = () => setInvestorRefreshKey((key) => key + 1);
@@ -82,7 +79,6 @@ export default function OwnerDashboard({
     setBrandSocial(null);
     setFinancials(null);
     setInspiration(null);
-    setUsage(null);
     if (!projectId) {
       setLoading(false);
       return;
@@ -103,7 +99,6 @@ export default function OwnerDashboard({
             setBrandSocial(ownerDashboard?.brandSocial ?? null);
             setFinancials(ownerDashboard?.financials ?? null);
             setInspiration(ownerDashboard?.inspiration ?? null);
-            setUsage(ownerDashboard?.usage ?? null);
           }
         }
       } catch {
@@ -198,7 +193,6 @@ export default function OwnerDashboard({
               <DesignStudioSection
                 projectId={projectId}
                 sourceRunId={runId}
-                usage={usage}
               />
             </div>
             <div className={section === "inspiration" ? "" : "hidden"}>
