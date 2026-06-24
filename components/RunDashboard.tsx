@@ -23,7 +23,6 @@ import {
   Rocket,
   Ship,
   Square,
-  FileDown,
   MapPin,
   Search,
   X,
@@ -36,6 +35,7 @@ import InsightsView from "./InsightsView";
 import PlaybookView from "./PlaybookView";
 import OwnerDashboard from "./OwnerDashboard";
 import LaunchSimulation from "./LaunchSimulation";
+import DossierExportMenu from "./DossierExportMenu";
 import { providerErrorMessage } from "@/lib/providerErrors";
 import ExportViability from "./ExportViability";
 import CohortDrawer from "./CohortDrawer";
@@ -653,8 +653,8 @@ export default function RunDashboard({
 
   // Generate a full graphical PDF dossier for this run: verdict, audience charts,
   // key findings, launch trajectory, and (for export runs) cross-border viability.
-  const onDownloadDossier = useCallback(async () => {
-    if (dossierBusy) return;
+  const buildRunDossierForExport = useCallback(async () => {
+    if (dossierBusy) throw new Error("Dossier is already building");
     setDossierBusy(true);
     try {
       let launch = null;
@@ -682,17 +682,14 @@ export default function RunDashboard({
           // export viability is optional
         }
       }
-      const [{ buildRunDossier }, { downloadDossier, slug }] = await Promise.all([
-        import("./runDossier"),
-        import("./pdf"),
-      ]);
+      const [{ buildRunDossier }] = await Promise.all([import("./runDossier")]);
       const cohortRows = Object.values(state.cohorts);
       const audienceCurrency =
         cohortRows.find((c) => c.stats?.wtpCurrency)?.stats?.wtpCurrency ??
         cohortRows.flatMap((c) => c.personas).find((p) => p.wtpCurrency)
           ?.wtpCurrency ??
         currency;
-      const dossier = buildRunDossier({
+      return buildRunDossier({
         brief,
         mode,
         targetMarket,
@@ -706,7 +703,6 @@ export default function RunDashboard({
         exportReport,
         generatedOn: new Date().toLocaleDateString(),
       });
-      downloadDossier(dossier, `${slug(dossier.title)}-dossier`);
     } finally {
       setDossierBusy(false);
     }
@@ -913,19 +909,17 @@ export default function RunDashboard({
         >
           <Rocket className="h-3 w-3" /> Launch Simulation
         </button>
-        <button
-          onClick={() => void onDownloadDossier()}
-          disabled={dossierBusy || (!state.finalReport && !state.aggregate)}
+        <DossierExportMenu
+          projectId={projectId}
+          busy={dossierBusy}
+          disabled={!state.finalReport && !state.aggregate}
+          filename={`${runId}-dossier`}
+          title="Run dossier"
+          sourceType="run"
+          sourceId={runId}
+          onBuildDossier={buildRunDossierForExport}
           className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-          title="Download a full graphical PDF dossier for this run"
-        >
-          {dossierBusy ? (
-            <Loader2 className="h-3 w-3 animate-spin" />
-          ) : (
-            <FileDown className="h-3 w-3" />
-          )}
-          Dossier
-        </button>
+        />
         {!isExportRun && canLaunch ? (
           <button
             onClick={() => openExportModal("United States")}

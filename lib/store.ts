@@ -28,6 +28,9 @@ import {
   ProjectWorkspaceSchema,
   UsageLedgerSchema,
   WebsiteAnalysisSchema,
+  WorkspaceNodeKindSchema,
+  WorkspaceNodeScopeSchema,
+  WorkspaceNodeWireSchema,
   type DesignAsset,
   type AssetLibraryRating,
   type DesignStudioSection,
@@ -62,6 +65,9 @@ import {
   type RunStatus,
   type SimulationRunRecord,
   type UsageLedger,
+  type WorkspaceNodeKind,
+  type WorkspaceNodeScope,
+  type WorkspaceNodeWire,
 } from "./schema";
 import { blockToWire, cohortToWire, personaToWire } from "./wire";
 
@@ -581,12 +587,455 @@ export async function getLatestProject(): Promise<ProjectFull | null> {
 
 export async function renameProject(id: string, name: string): Promise<void> {
   await prisma.project.update({ where: { id }, data: { name } });
+  await prisma.workspaceNode.updateMany({
+    where: { kind: "project", refProjectId: id },
+    data: { title: name },
+  });
 }
 
 export async function deleteProject(id: string): Promise<void> {
   // Runs keep living (projectId -> null via onDelete: SetNull); only the
   // workspace row goes away.
+  await prisma.workspaceNode.deleteMany({
+    where: {
+      OR: [{ refProjectId: id }, { projectId: id }],
+    },
+  });
   await prisma.project.delete({ where: { id } });
+}
+
+type WorkspaceNodeRow = {
+  id: string;
+  scope: string;
+  projectId: string | null;
+  parentId: string | null;
+  kind: string;
+  title: string;
+  note: string;
+  refProjectId: string | null;
+  moduleId: string | null;
+  payload: Prisma.JsonValue;
+  sortOrder: number;
+  createdAt: Date;
+  updatedAt: Date;
+};
+
+function workspaceNodeToWire(row: WorkspaceNodeRow): WorkspaceNodeWire {
+  return WorkspaceNodeWireSchema.parse({
+    id: row.id,
+    scope: row.scope,
+    projectId: row.projectId,
+    parentId: row.parentId,
+    kind: row.kind,
+    title: row.title,
+    note: row.note,
+    refProjectId: row.refProjectId,
+    moduleId: row.moduleId,
+    payload:
+      row.payload && typeof row.payload === "object" && !Array.isArray(row.payload)
+        ? (row.payload as Record<string, unknown>)
+        : {},
+    sortOrder: row.sortOrder,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  });
+}
+
+function sameWorkspaceWhere(scope: WorkspaceNodeScope, projectId?: string | null) {
+  return scope === "project"
+    ? { scope, projectId: projectId ?? "" }
+    : { scope, projectId: null };
+}
+
+async function assertWorkspaceParent(
+  input: {
+    scope: WorkspaceNodeScope;
+    projectId?: string | null;
+    parentId?: string | null;
+  },
+  movingNodeId?: string,
+) {
+  if (!input.parentId) return null;
+  const parent = await prisma.workspaceNode.findUnique({
+    where: { id: input.parentId },
+  });
+  if (!parent) throw new Error("parent folder not found");
+  if (parent.kind !== "folder") throw new Error("parent must be a folder");
+  if (parent.scope !== input.scope) throw new Error("parent scope mismatch");
+  if ((parent.projectId ?? null) !== (input.projectId ?? null)) {
+    throw new Error("parent project mismatch");
+  }
+  if (movingNodeId) {
+    let cursor: string | null = parent.id;
+    while (cursor) {
+      if (cursor === movingNodeId) {
+        throw new Error("cannot move a folder into itself or its descendant");
+      }
+      const row: { parentId: string | null } | null =
+        await prisma.workspaceNode.findUnique({
+          where: { id: cursor },
+          select: { parentId: true },
+        });
+      cursor = row?.parentId ?? null;
+    }
+  }
+  return parent;
+}
+
+async function createNodeWithOptionalId(input: {
+  id?: string;
+  scope: WorkspaceNodeScope;
+  projectId?: string | null;
+  parentId?: string | null;
+  kind: WorkspaceNodeKind;
+  title: string;
+  note?: string;
+  refProjectId?: string | null;
+  moduleId?: string | null;
+  payload?: Record<string, unknown>;
+  sortOrder?: number;
+}) {
+  const payload = (input.payload ?? {}) as Prisma.InputJsonValue;
+  const data = {
+    ...(input.id ? { id: input.id } : {}),
+    scope: input.scope,
+    projectId: input.scope === "project" ? (input.projectId ?? "") : null,
+    parentId: input.parentId ?? null,
+    kind: input.kind,
+    title: input.title,
+    note: input.note ?? "",
+    refProjectId: input.refProjectId ?? null,
+    moduleId: input.moduleId ?? null,
+    payload,
+    sortOrder: input.sortOrder ?? 0,
+  };
+  try {
+    return await prisma.workspaceNode.create({ data });
+  } catch (error) {
+    if (!input.id) throw error;
+    return prisma.workspaceNode.create({
+      data: {
+        ...data,
+        id: undefined,
+      },
+    });
+  }
+}
+
+async function ensureGlobalWorkspaceNodes(): Promise<void> {
+  const projects = await prisma.project.findMany({
+    orderBy: { updatedAt: "desc" },
+    select: {
+      id: true,
+      name: true,
+      ownerDashboard: true,
+      updatedAt: true,
+    },
+  });
+  for (const project of projects) {
+    const existingPlacements = await prisma.workspaceNode.findMany({
+      where: {
+        scope: "global",
+        kind: "project",
+        refProjectId: project.id,
+      },
+      orderBy: [{ createdAt: "asc" }],
+    });
+    if (existingPlacements[0]) {
+      await prisma.workspaceNode.update({
+        where: { id: existingPlacements[0].id },
+        data: { title: project.name },
+      });
+      if (existingPlacements.length > 1) {
+        await prisma.workspaceNode.deleteMany({
+          where: {
+            id: { in: existingPlacements.slice(1).map((node) => node.id) },
+          },
+        });
+      }
+      continue;
+    }
+
+    const owner = parseOwnerDashboard(project.ownerDashboard);
+    const organizer = owner.dashboardOrganizer;
+    let parentId: string | null = null;
+    if (organizer.folderId) {
+      const folderId = organizer.folderId;
+      const existingFolder = await prisma.workspaceNode.findUnique({
+        where: { id: folderId },
+      });
+      if (
+        existingFolder &&
+        existingFolder.scope === "global" &&
+        existingFolder.kind === "folder"
+      ) {
+        parentId = existingFolder.id;
+        await prisma.workspaceNode.update({
+          where: { id: existingFolder.id },
+          data: {
+            title: organizer.folderName || existingFolder.title,
+            note: organizer.folderNote || existingFolder.note,
+          },
+        });
+      } else if (!existingFolder) {
+        const folder = await createNodeWithOptionalId({
+          id: folderId,
+          scope: "global",
+          kind: "folder",
+          title: organizer.folderName || "Untitled folder",
+          note: organizer.folderNote,
+          sortOrder: project.updatedAt.getTime(),
+        });
+        parentId = folder.id;
+      }
+    }
+    await createNodeWithOptionalId({
+      scope: "global",
+      kind: "project",
+      title: project.name,
+      note: organizer.projectNote,
+      parentId,
+      refProjectId: project.id,
+      sortOrder: project.updatedAt.getTime(),
+    });
+  }
+}
+
+async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { ownerDashboard: true },
+  });
+  if (!project) throw new Error("project not found");
+  const owner = parseOwnerDashboard(project.ownerDashboard);
+  for (const folder of owner.projectWorkspace.folders) {
+    const existing = await prisma.workspaceNode.findFirst({
+      where: {
+        OR: [{ id: folder.id }, { scope: "project", projectId, kind: "folder", title: folder.name }],
+      },
+    });
+    if (existing) {
+      if (
+        existing.scope === "project" &&
+        existing.projectId === projectId &&
+        existing.kind === "folder"
+      ) {
+        await prisma.workspaceNode.update({
+          where: { id: existing.id },
+          data: {
+            title: folder.name,
+            note: folder.description,
+            moduleId: folder.moduleId,
+          },
+        });
+      }
+      continue;
+    }
+    await createNodeWithOptionalId({
+      id: folder.id,
+      scope: "project",
+      projectId,
+      kind: "folder",
+      title: folder.name,
+      note: folder.description,
+      moduleId: folder.moduleId,
+      sortOrder: new Date(folder.createdAt).getTime() || 0,
+    });
+  }
+}
+
+export async function listWorkspaceNodes(input: {
+  scope: WorkspaceNodeScope;
+  projectId?: string | null;
+}): Promise<WorkspaceNodeWire[]> {
+  const scope = WorkspaceNodeScopeSchema.parse(input.scope);
+  if (scope === "global") {
+    await ensureGlobalWorkspaceNodes();
+  } else {
+    if (!input.projectId) throw new Error("projectId is required");
+    await ensureProjectWorkspaceNodes(input.projectId);
+  }
+  const rows = await prisma.workspaceNode.findMany({
+    where: sameWorkspaceWhere(scope, input.projectId),
+    orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
+  });
+  return rows.map(workspaceNodeToWire);
+}
+
+export async function createWorkspaceNode(input: {
+  scope: WorkspaceNodeScope;
+  projectId?: string | null;
+  parentId?: string | null;
+  kind: Extract<WorkspaceNodeKind, "folder" | "dashboard">;
+  title: string;
+  note?: string;
+  moduleId?: string | null;
+  payload?: Record<string, unknown>;
+}): Promise<WorkspaceNodeWire> {
+  const scope = WorkspaceNodeScopeSchema.parse(input.scope);
+  const kind = WorkspaceNodeKindSchema.parse(input.kind);
+  if (kind !== "folder" && kind !== "dashboard") {
+    throw new Error("only folders and dashboards can be created here");
+  }
+  if (scope === "project" && !input.projectId) {
+    throw new Error("projectId is required");
+  }
+  await assertWorkspaceParent({
+    scope,
+    projectId: input.projectId,
+    parentId: input.parentId,
+  });
+  const row = await createNodeWithOptionalId({
+    scope,
+    projectId: input.projectId,
+    parentId: input.parentId ?? null,
+    kind,
+    title: input.title.trim(),
+    note: input.note?.trim() ?? "",
+    moduleId: input.moduleId ?? null,
+    payload: input.payload,
+    sortOrder: Date.now(),
+  });
+  return workspaceNodeToWire(row);
+}
+
+export async function updateWorkspaceNode(
+  id: string,
+  patch: Partial<{
+    title: string;
+    note: string;
+    parentId: string | null;
+    moduleId: string | null;
+    payload: Record<string, unknown>;
+    sortOrder: number;
+  }>,
+): Promise<WorkspaceNodeWire> {
+  const current = await prisma.workspaceNode.findUnique({ where: { id } });
+  if (!current) throw new Error("workspace node not found");
+  if (patch.parentId !== undefined) {
+    await assertWorkspaceParent(
+      {
+        scope: WorkspaceNodeScopeSchema.parse(current.scope),
+        projectId: current.projectId,
+        parentId: patch.parentId,
+      },
+      current.kind === "folder" ? current.id : undefined,
+    );
+  }
+  const row = await prisma.workspaceNode.update({
+    where: { id },
+    data: {
+      ...(patch.title !== undefined ? { title: patch.title.trim() } : {}),
+      ...(patch.note !== undefined ? { note: patch.note.trim() } : {}),
+      ...(patch.parentId !== undefined ? { parentId: patch.parentId } : {}),
+      ...(patch.moduleId !== undefined ? { moduleId: patch.moduleId } : {}),
+      ...(patch.payload !== undefined
+        ? { payload: patch.payload as Prisma.InputJsonValue }
+        : {}),
+      ...(patch.sortOrder !== undefined ? { sortOrder: patch.sortOrder } : {}),
+    },
+  });
+  return workspaceNodeToWire(row);
+}
+
+export async function deleteWorkspaceNode(id: string): Promise<void> {
+  const node = await prisma.workspaceNode.findUnique({ where: { id } });
+  if (!node) throw new Error("workspace node not found");
+  if (node.kind === "folder") {
+    await prisma.workspaceNode.updateMany({
+      where: { parentId: id },
+      data: { parentId: node.parentId },
+    });
+  }
+  await prisma.workspaceNode.delete({ where: { id } });
+}
+
+export async function moveWorkspaceProjects(input: {
+  projectIds: string[];
+  parentId?: string | null;
+}): Promise<WorkspaceNodeWire[]> {
+  const projectIds = Array.from(new Set(input.projectIds.filter(Boolean)));
+  await assertWorkspaceParent({
+    scope: "global",
+    parentId: input.parentId ?? null,
+  });
+  const projects = await prisma.project.findMany({
+    where: { id: { in: projectIds } },
+    select: { id: true, name: true, updatedAt: true },
+  });
+  const nodes: WorkspaceNodeWire[] = [];
+  for (const project of projects) {
+    const existing = await prisma.workspaceNode.findMany({
+      where: {
+        scope: "global",
+        kind: "project",
+        refProjectId: project.id,
+      },
+      orderBy: [{ createdAt: "asc" }],
+    });
+    const keep = existing[0];
+    let row: WorkspaceNodeRow;
+    if (keep) {
+      row = await prisma.workspaceNode.update({
+        where: { id: keep.id },
+        data: {
+          title: project.name,
+          parentId: input.parentId ?? null,
+          sortOrder: Date.now(),
+        },
+      });
+      if (existing.length > 1) {
+        await prisma.workspaceNode.deleteMany({
+          where: { id: { in: existing.slice(1).map((node) => node.id) } },
+        });
+      }
+    } else {
+      row = await createNodeWithOptionalId({
+        scope: "global",
+        kind: "project",
+        title: project.name,
+        refProjectId: project.id,
+        parentId: input.parentId ?? null,
+        sortOrder: project.updatedAt.getTime(),
+      });
+    }
+    nodes.push(workspaceNodeToWire(row));
+  }
+  return nodes;
+}
+
+export async function saveProjectExportNode(
+  projectId: string,
+  input: {
+    folderId?: string | null;
+    title: string;
+    filename: string;
+    sourceType: string;
+    sourceId?: string | null;
+    dossier: unknown;
+  },
+): Promise<WorkspaceNodeWire> {
+  await assertWorkspaceParent({
+    scope: "project",
+    projectId,
+    parentId: input.folderId ?? null,
+  });
+  const row = await createNodeWithOptionalId({
+    scope: "project",
+    projectId,
+    parentId: input.folderId ?? null,
+    kind: "export",
+    title: input.title.trim() || input.filename,
+    payload: {
+      filename: input.filename,
+      sourceType: input.sourceType,
+      sourceId: input.sourceId ?? null,
+      dossier: input.dossier,
+      savedAt: new Date().toISOString(),
+    },
+    sortOrder: Date.now(),
+  });
+  return workspaceNodeToWire(row);
 }
 
 export async function saveInterviewTranscript(

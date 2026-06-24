@@ -1468,7 +1468,7 @@ function clean(s: string | undefined): string {
     .replace(/[^\x09\x0A\x0D\x20-\xFF]/g, ""); // drop remaining non-Latin-1
 }
 
-function sanitize(d: Dossier): Dossier {
+export function sanitizeDossier(d: Dossier): Dossier {
   const kpi = (k: KPI): KPI => ({
     label: clean(k.label), value: clean(k.value),
     sub: k.sub ? clean(k.sub) : undefined, tone: k.tone,
@@ -1535,17 +1535,38 @@ export function downloadDossier(
   filename: string,
   options: DossierDownloadOptions = {}
 ): void {
-  const safe = sanitize(d);
+  const safe = sanitizeDossier(d);
   const shouldSavePdf = options.pdf ?? true;
   const shouldSaveAnimated = options.animated ?? true;
   if (shouldSavePdf) {
-    const D = new Doc(safe.accent ?? INDIGO);
-    renderDossier(D, safe);
-    D.d.save(filename.endsWith(".pdf") ? filename : `${filename}.pdf`);
+    downloadDossierPdf(safe, filename);
   }
   if (shouldSaveAnimated) {
     downloadAnimatedDossier(safe, filename, options.openAnimated ?? true);
   }
+}
+
+export function buildDossierPdfBlob(d: Dossier): Blob {
+  const safe = sanitizeDossier(d);
+  const D = new Doc(safe.accent ?? INDIGO);
+  renderDossier(D, safe);
+  return D.d.output("blob");
+}
+
+export function downloadBlob(blob: Blob, filename: string): void {
+  const href = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = href;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(href), 2500);
+}
+
+export function downloadDossierPdf(d: Dossier, filename: string): void {
+  const normalized = filename.endsWith(".pdf") ? filename : `${filename}.pdf`;
+  downloadBlob(buildDossierPdfBlob(d), normalized);
 }
 
 // A short, filesystem-safe slug for filenames.

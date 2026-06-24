@@ -323,6 +323,7 @@ export const LaunchModelBenchmarkInputsSchema = z
     paidCac: MarketRangeSchema.nullable().optional(),
     rentalRentableDaysPerMonth: MarketRangeSchema.nullable().optional(),
     rentalAvgDurationDays: MarketRangeSchema.nullable().optional(),
+    rentalDowntimeDaysPerBooking: MarketRangeSchema.nullable().optional(),
     rentalMaintenancePerOrder: MarketRangeSchema.nullable().optional(),
     rentalDamageLossPct: MarketRangeSchema.nullable().optional(),
     rentalDepositAmount: MarketRangeSchema.nullable().optional(),
@@ -1762,6 +1763,36 @@ export type DashboardProjectOrganizer = z.infer<
   typeof DashboardProjectOrganizerSchema
 >;
 
+export const WorkspaceNodeScopeSchema = z.enum(["global", "project"]);
+export type WorkspaceNodeScope = z.infer<typeof WorkspaceNodeScopeSchema>;
+
+export const WorkspaceNodeKindSchema = z.enum([
+  "folder",
+  "dashboard",
+  "project",
+  "export",
+]);
+export type WorkspaceNodeKind = z.infer<typeof WorkspaceNodeKindSchema>;
+
+export const WorkspaceNodePayloadSchema = z.record(z.unknown()).default({});
+
+export const WorkspaceNodeWireSchema = z.object({
+  id: z.string(),
+  scope: WorkspaceNodeScopeSchema,
+  projectId: z.string().nullable().default(null),
+  parentId: z.string().nullable().default(null),
+  kind: WorkspaceNodeKindSchema,
+  title: z.string(),
+  note: z.string().default(""),
+  refProjectId: z.string().nullable().default(null),
+  moduleId: z.string().nullable().default(null),
+  payload: WorkspaceNodePayloadSchema,
+  sortOrder: z.number().int().default(0),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type WorkspaceNodeWire = z.infer<typeof WorkspaceNodeWireSchema>;
+
 const EMPTY_DASHBOARD_PROJECT_ORGANIZER = {
   folderId: null,
   folderName: "",
@@ -2210,6 +2241,9 @@ export const LaunchBusinessModelSchema = z.enum([
 ]);
 export type LaunchBusinessModel = z.infer<typeof LaunchBusinessModelSchema>;
 
+export const RentalPricingBasisSchema = z.enum(["per_booking", "per_day"]);
+export type RentalPricingBasis = z.infer<typeof RentalPricingBasisSchema>;
+
 export const LaunchChannelKindSchema = z.enum([
   "paid",
   "organic",
@@ -2305,8 +2339,10 @@ export const LaunchSimInputsSchema = z.object({
   // furniture, vehicles), so demand is capped by asset-days rather than stock.
   rentalAssetCount: z.number().int().nonnegative().default(3),
   rentalAssetCost: z.number().nonnegative().default(0),
+  rentalPricingBasis: RentalPricingBasisSchema.default("per_booking"),
   rentalRentableDaysPerMonth: z.number().positive().max(31).default(24),
   rentalAvgDurationDays: z.number().positive().max(365).default(1),
+  rentalDowntimeDaysPerBooking: z.number().nonnegative().max(365).default(0),
   rentalMaintenancePerOrder: z.number().nonnegative().default(0),
   rentalDamageLossPct: z.number().min(0).max(100).default(0),
   rentalDepositAmount: z.number().nonnegative().default(0),

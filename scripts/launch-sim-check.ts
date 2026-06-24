@@ -166,8 +166,10 @@ const rentalInputs = LaunchSimInputsSchema.parse({
   cpm: 100,
   rentalAssetCount: 3,
   rentalAssetCost: 0,
+  rentalPricingBasis: "per_booking",
   rentalRentableDaysPerMonth: 24,
   rentalAvgDurationDays: 1,
+  rentalDowntimeDaysPerBooking: 0,
 });
 const rentalLaunch = simulateLaunch(personas, rentalInputs, {
   fixedCostsPerMonthFloor: 80000,
@@ -188,6 +190,38 @@ assert(
 assert(
   rentalLaunch.summary.stockoutUnits > 0,
   "rental scenarios report unserved demand when asset capacity is exhausted"
+);
+const rentalDowntimeLaunch = simulateLaunch(
+  personas,
+  { ...rentalInputs, rentalDowntimeDaysPerBooking: 1 },
+  {
+    fixedCostsPerMonthFloor: 80000,
+    blendedCac: 1,
+  }
+);
+assert(
+  rentalDowntimeLaunch.summary.totalOrders <= 36 + 1,
+  "rental downtime reduces reusable asset capacity"
+);
+const rentalPerDayLaunch = simulateLaunch(
+  personas,
+  {
+    ...rentalInputs,
+    salePrice: 700,
+    rentalPricingBasis: "per_day",
+    rentalAvgDurationDays: 3,
+  },
+  {
+    fixedCostsPerMonthFloor: 80000,
+    blendedCac: 1,
+  }
+);
+assert(
+  Math.abs(
+    rentalPerDayLaunch.summary.grossRevenue -
+      rentalPerDayLaunch.summary.unitsSold * 2100
+  ) < 1,
+  "rental per-day pricing multiplies revenue by average rental duration"
 );
 
 const subscriptionLaunch = simulateLaunch(

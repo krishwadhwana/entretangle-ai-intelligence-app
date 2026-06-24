@@ -138,8 +138,10 @@ const DEFAULT_INPUTS: LaunchSimInputs = {
   launchInvestmentReserve: null,
   rentalAssetCount: 3,
   rentalAssetCost: 0,
+  rentalPricingBasis: "per_day",
   rentalRentableDaysPerMonth: 24,
   rentalAvgDurationDays: 1,
+  rentalDowntimeDaysPerBooking: 0,
   rentalMaintenancePerOrder: 0,
   rentalDamageLossPct: 0,
   rentalDepositAmount: 0,
@@ -240,6 +242,13 @@ function applyModelDefaults(
       DEFAULT_INPUTS.rentalAvgDurationDays,
       benchmarks,
       (n) => Math.max(0.25, n)
+    );
+    next = applyNumberBenchmark(
+      next,
+      "rentalDowntimeDaysPerBooking",
+      DEFAULT_INPUTS.rentalDowntimeDaysPerBooking,
+      benchmarks,
+      (n) => Math.max(0, n)
     );
     next = applyNumberBenchmark(
       next,
@@ -396,7 +405,12 @@ export default function LaunchSimulation({
     [displayCurrency, displayFxRate, engineCurrency]
   );
   const unitLabel = unitLabelFor(inputs.businessModel);
-  const salePriceLabel = salePriceLabelFor(inputs.businessModel);
+  const salePriceLabel =
+    inputs.businessModel === "rental" && inputs.rentalPricingBasis === "per_day"
+      ? "Price/day"
+      : inputs.businessModel === "rental"
+        ? "Price/booking"
+        : salePriceLabelFor(inputs.businessModel);
   const costPriceLabel = costPriceLabelFor(inputs.businessModel);
   const businessModelLabel =
     BUSINESS_MODEL_OPTIONS.find((opt) => opt.value === inputs.businessModel)?.label ??
@@ -983,6 +997,35 @@ export default function LaunchSimulation({
                       onChange={(v) => set("rentalAssetCost", v)}
                       small
                     />
+                    <div>
+                      <label className="mb-1 block text-[10px] font-medium uppercase tracking-wide text-neutral-500">
+                        Price basis
+                      </label>
+                      <div className="flex overflow-hidden rounded-lg border border-neutral-300 text-xs">
+                        {[
+                          ["per_day", "Per day"],
+                          ["per_booking", "Per booking"],
+                        ].map(([value, label]) => (
+                          <button
+                            key={value}
+                            type="button"
+                            onClick={() =>
+                              set(
+                                "rentalPricingBasis",
+                                value as LaunchSimInputs["rentalPricingBasis"]
+                              )
+                            }
+                            className={`flex-1 px-2 py-1.5 ${
+                              inputs.rentalPricingBasis === value
+                                ? "bg-indigo-600 text-white"
+                                : "bg-white text-neutral-600"
+                            }`}
+                          >
+                            {label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <NumField
                       label="Rentable days"
                       unit="days/mo"
@@ -996,12 +1039,36 @@ export default function LaunchSimulation({
                     <NumField
                       label="Avg duration"
                       unit="days"
-                      help="Average booking length. A 2-day weekend rental consumes twice the asset capacity of a 1-day rental."
+                      help="Weighted average booking length. If some bookings run 3 days and some run 30 days, enter the average asset-days per booking."
                       value={inputs.rentalAvgDurationDays}
                       onChange={(v) => set("rentalAvgDurationDays", Math.max(0.25, v))}
                       step={0.25}
                       small
                     />
+                    <div>
+                      <NumField
+                        label="Downtime"
+                        unit="days/booking"
+                        help="Reset, pickup, testing, cleaning, or idle days after a rental. Use 0 when the asset can go straight to the next renter."
+                        value={inputs.rentalDowntimeDaysPerBooking}
+                        onChange={(v) =>
+                          set("rentalDowntimeDaysPerBooking", Math.max(0, v))
+                        }
+                        step={0.25}
+                        small
+                      />
+                      <button
+                        type="button"
+                        onClick={() => set("rentalDowntimeDaysPerBooking", 0)}
+                        className={`mt-1 rounded-lg border px-2.5 py-1 text-[11px] font-medium ${
+                          inputs.rentalDowntimeDaysPerBooking === 0
+                            ? "border-neutral-900 bg-neutral-900 text-white"
+                            : "border-neutral-300 bg-white text-neutral-600 hover:bg-neutral-50"
+                        }`}
+                      >
+                        No downtime
+                      </button>
+                    </div>
                     <NumField
                       label="Maintenance"
                       unit={`${engineCurrency}/booking`}
@@ -4105,11 +4172,23 @@ function buildAdvancedSettingsBullets(
       ? [
           `Rental - Assets: ${fmt.num(used.rentalAssetCount)} reusable assets`,
           `Rental - Asset cost: ${moneyPer(used.rentalAssetCost, "asset")}`,
+          `Rental - Pricing basis: ${
+            used.rentalPricingBasis === "per_day" ? "per day" : "per booking"
+          }`,
+          `Rental - Revenue/booking: ${fmt.money(
+            used.rentalPricingBasis === "per_day"
+              ? used.salePrice * used.rentalAvgDurationDays
+              : used.salePrice
+          )}`,
           `Rental - Rentable days: ${smartNumber(used.rentalRentableDaysPerMonth)} days/asset/month`,
           `Rental - Avg duration: ${smartNumber(used.rentalAvgDurationDays)} days/booking`,
+          `Rental - Downtime: ${smartNumber(used.rentalDowntimeDaysPerBooking)} days/booking`,
           `Rental - Capacity: ${fmt.num(
             (used.rentalAssetCount * used.rentalRentableDaysPerMonth) /
-              Math.max(used.rentalAvgDurationDays, 1 / 30)
+              Math.max(
+                used.rentalAvgDurationDays + used.rentalDowntimeDaysPerBooking,
+                1 / 30
+              )
           )} bookings/month`,
           `Rental - Maintenance: ${moneyPer(used.rentalMaintenancePerOrder, "booking")}`,
           `Rental - Damage/loss risk: ${smartNumber(used.rentalDamageLossPct)}%`,

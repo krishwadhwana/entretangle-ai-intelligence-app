@@ -44,6 +44,30 @@ model Project {
   @@map("projects")
 }
 
+// Nested organizer shared by the dashboard and project workspaces. One table
+// backs folders, saved dashboard views, project placements, and saved PDF
+// export records.
+model WorkspaceNode {
+  id           String   @id @default(cuid())
+  scope        String
+  projectId    String?  @map("project_id")
+  parentId     String?  @map("parent_id")
+  kind         String
+  title        String
+  note         String   @default("")
+  refProjectId String?  @map("ref_project_id")
+  moduleId     String?  @map("module_id")
+  payload      Json     @default("{}")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  @@index([scope, projectId])
+  @@index([parentId])
+  @@index([refProjectId])
+  @@map("workspace_nodes")
+}
+
 // Founder-uploaded reference data (sales, surveys, competitor lists, …) used
 // as RAG ground truth: research desks and audience synthesis retrieve the
 // most relevant chunks of these and treat them as fact (SPEC-V2 §1A "pull

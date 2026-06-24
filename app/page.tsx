@@ -68,9 +68,14 @@ import type {
   ProductImageRef,
   SiteAsset,
   SimulationRunRecord,
+  WorkspaceNodeWire,
   WebsiteAnalysis,
 } from "@/lib/schema";
 import DesignStudioSection from "@/components/DesignStudioSection";
+import WorkspaceTree, {
+  workspaceDescendantIds,
+  workspacePathLabel,
+} from "@/components/WorkspaceTree";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
@@ -219,6 +224,11 @@ type DashboardNoteTarget =
       title: string;
       note: string;
     };
+type WorkspaceNodeNoteTarget = {
+  node: WorkspaceNodeWire;
+  title: string;
+  note: string;
+};
 
 const EMPTY_DASHBOARD_ORGANIZER_CLIENT: DashboardProjectOrganizer = {
   folderId: null,
@@ -228,15 +238,6 @@ const EMPTY_DASHBOARD_ORGANIZER_CLIENT: DashboardProjectOrganizer = {
   projectNote: "",
   updatedAt: null,
 };
-
-const DASHBOARD_FOLDER_COLORS = [
-  "indigo",
-  "emerald",
-  "amber",
-  "rose",
-  "sky",
-  "violet",
-];
 
 type DocSummary = {
   id: string;
@@ -1886,19 +1887,28 @@ function ProjectComparePanel({
 function ModuleWorkspaceHub({
   modules,
   selectedModuleId,
+  workspaceNodes,
   folders,
   campaigns,
+  exportNodes,
   savingKey,
   deletingKey,
   onSelectModule,
   onSaveFolder,
   onSaveCampaign,
   onDeleteWorkspaceItem,
+  onCreateSubfolder,
+  onNoteNode,
+  onRenameNode,
+  onDeleteNode,
+  onOpenExport,
 }: {
   modules: BusinessModule[];
   selectedModuleId: BusinessModuleId;
+  workspaceNodes: WorkspaceNodeWire[];
   folders: ProjectFolder[];
   campaigns: ProjectCampaign[];
+  exportNodes: WorkspaceNodeWire[];
   savingKey: string | null;
   deletingKey: string | null;
   onSelectModule: (id: BusinessModuleId) => void;
@@ -1918,6 +1928,11 @@ function ModuleWorkspaceHub({
     type: "folder" | "campaign",
     itemId: string,
   ) => Promise<void>;
+  onCreateSubfolder: (parentId: string | null) => void;
+  onNoteNode: (node: WorkspaceNodeWire) => void;
+  onRenameNode: (node: WorkspaceNodeWire) => void;
+  onDeleteNode: (node: WorkspaceNodeWire) => void;
+  onOpenExport: (node: WorkspaceNodeWire) => void;
 }) {
   const [folderName, setFolderName] = useState("");
   const [folderDescription, setFolderDescription] = useState("");
@@ -2009,6 +2024,36 @@ function ModuleWorkspaceHub({
             </button>
           );
         })}
+      </div>
+
+      <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-3">
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <div>
+            <h4 className="text-xs font-semibold text-neutral-800">
+              Project folder tree
+            </h4>
+            <p className="mt-0.5 text-[11px] text-neutral-500">
+              Folders can contain folders, campaigns can point at any folder,
+              and exports stay re-downloadable here.
+            </p>
+          </div>
+          <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+            {exportNodes.length} exports
+          </span>
+        </div>
+        <WorkspaceTree
+          nodes={workspaceNodes}
+          selectedFolderId="all"
+          rootLabel="All project work"
+          unfiledLabel="Project root"
+          showItems
+          onSelectFolder={() => undefined}
+          onCreateFolder={onCreateSubfolder}
+          onOpenExport={onOpenExport}
+          onNote={onNoteNode}
+          onRename={onRenameNode}
+          onDelete={onDeleteNode}
+        />
       </div>
 
       {selectedModule ? (
@@ -2789,12 +2834,17 @@ function IntakePageInner() {
     useState<DashboardStatusFilter>("all");
   const [dashboardFolderFilter, setDashboardFolderFilter] =
     useState<DashboardFolderFilter>("all");
-  const [folderCreateOpen, setFolderCreateOpen] = useState(false);
-  const [newFolderName, setNewFolderName] = useState("");
-  const [newFolderNote, setNewFolderNote] = useState("");
+  const [globalWorkspaceNodes, setGlobalWorkspaceNodes] = useState<
+    WorkspaceNodeWire[]
+  >([]);
+  const [projectWorkspaceNodes, setProjectWorkspaceNodes] = useState<
+    WorkspaceNodeWire[]
+  >([]);
   const [noteTarget, setNoteTarget] = useState<DashboardNoteTarget | null>(
     null,
   );
+  const [workspaceNodeNoteTarget, setWorkspaceNodeNoteTarget] =
+    useState<WorkspaceNodeNoteTarget | null>(null);
   const [noteDraft, setNoteDraft] = useState("");
   const [savingDashboardOrganizer, setSavingDashboardOrganizer] =
     useState(false);
@@ -2885,6 +2935,38 @@ function IntakePageInner() {
     window.history.pushState(null, "", `${url.pathname}${url.search}`);
   }
 
+  async function loadGlobalWorkspaceNodes() {
+    const res = await fetch("/api/workspace/nodes?scope=global");
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : `Workspace organizer failed (${res.status})`,
+      );
+    }
+    setGlobalWorkspaceNodes((data.nodes ?? []) as WorkspaceNodeWire[]);
+  }
+
+  async function loadProjectWorkspaceNodes(id = projectId) {
+    if (!id) {
+      setProjectWorkspaceNodes([]);
+      return;
+    }
+    const res = await fetch(
+      `/api/workspace/nodes?scope=project&projectId=${encodeURIComponent(id)}`,
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(
+        typeof data?.error === "string"
+          ? data.error
+          : `Project folders failed (${res.status})`,
+      );
+    }
+    setProjectWorkspaceNodes((data.nodes ?? []) as WorkspaceNodeWire[]);
+  }
+
   function applyProject(proj: ProjectData, updateUrl = false) {
     const t = proj.interviewTranscript;
     if (typeof window !== "undefined") {
@@ -2913,6 +2995,7 @@ function IntakePageInner() {
     setMode("full");
     setActiveWorkspaceSection("workspace-overview");
     void loadDocuments(proj.id);
+    void loadProjectWorkspaceNodes(proj.id).catch(() => undefined);
   }
 
   function clearProjectState() {
@@ -2940,6 +3023,7 @@ function IntakePageInner() {
     setActiveWorkspaceSection("workspace-overview");
     setEditingRunId(null);
     setRunDraft("");
+    setProjectWorkspaceNodes([]);
   }
 
   function currentProjectSnapshot(): ProjectData | null {
@@ -3046,6 +3130,23 @@ function IntakePageInner() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (loading) return;
+    void loadGlobalWorkspaceNodes().catch((err) => {
+      setError(
+        err instanceof Error ? err.message : "Workspace organizer failed",
+      );
+    });
+  }, [loading, projects.length, projectPreviews.length]);
+
+  useEffect(() => {
+    if (!projectId) {
+      setProjectWorkspaceNodes([]);
+      return;
+    }
+    void loadProjectWorkspaceNodes(projectId).catch(() => undefined);
+  }, [projectId]);
 
   useEffect(() => {
     function onPopState() {
@@ -3281,6 +3382,275 @@ function IntakePageInner() {
     });
   }
 
+  function upsertWorkspaceNodeInState(node: WorkspaceNodeWire) {
+    const setter =
+      node.scope === "global" ? setGlobalWorkspaceNodes : setProjectWorkspaceNodes;
+    setter((prev) =>
+      prev.some((item) => item.id === node.id)
+        ? prev.map((item) => (item.id === node.id ? node : item))
+        : [...prev, node],
+    );
+  }
+
+  async function createWorkspaceFolder(
+    scope: "global" | "project",
+    parentId: string | null,
+    moduleId?: BusinessModuleId | null,
+  ) {
+    const title = window.prompt("Folder name:");
+    if (!title?.trim()) return;
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/workspace/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope,
+          projectId: scope === "project" ? projectId : null,
+          parentId,
+          kind: "folder",
+          title: title.trim(),
+          moduleId: scope === "project" ? (moduleId ?? selectedWorkspaceModuleId) : null,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.node) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Folder create failed (${res.status})`,
+        );
+      }
+      const node = data.node as WorkspaceNodeWire;
+      upsertWorkspaceNodeInState(node);
+      if (scope === "global") setDashboardFolderFilter(node.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Folder create failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function createSavedDashboard(parentId: string | null) {
+    const title = window.prompt("Saved dashboard name:", "Dashboard view");
+    if (!title?.trim()) return;
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/workspace/nodes", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "global",
+          parentId,
+          kind: "dashboard",
+          title: title.trim(),
+          payload: {
+            query: projectQuery,
+            folderFilter: dashboardFolderFilter,
+            statusFilter: dashboardStatusFilter,
+            sort: dashboardSort,
+            viewMode: dashboardViewMode,
+          },
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.node) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Dashboard save failed (${res.status})`,
+        );
+      }
+      upsertWorkspaceNodeInState(data.node as WorkspaceNodeWire);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Dashboard save failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  function openSavedDashboard(node: WorkspaceNodeWire) {
+    const payload = node.payload ?? {};
+    setProjectQuery(typeof payload.query === "string" ? payload.query : "");
+    setDashboardFolderFilter(
+      typeof payload.folderFilter === "string" ? payload.folderFilter : "all",
+    );
+    setDashboardStatusFilter(
+      payload.statusFilter === "setup" ||
+        payload.statusFilter === "running" ||
+        payload.statusFilter === "active" ||
+        payload.statusFilter === "ready"
+        ? payload.statusFilter
+        : "all",
+    );
+    setDashboardSort(
+      payload.sort === "updated-asc" ||
+        payload.sort === "name-asc" ||
+        payload.sort === "name-desc" ||
+        payload.sort === "runs-desc" ||
+        payload.sort === "assets-desc"
+        ? payload.sort
+        : "updated-desc",
+    );
+    setDashboardViewMode(payload.viewMode === "list" ? "list" : "grid");
+  }
+
+  async function moveSelectedProjectsToWorkspace(parentId: string | null) {
+    const selectedIds = Array.from(compareIds);
+    if (selectedIds.length === 0) {
+      setError("Select projects first, then choose a folder.");
+      return;
+    }
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/workspace/nodes/move-projects", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ projectIds: selectedIds, parentId }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Project move failed (${res.status})`,
+        );
+      }
+      await loadGlobalWorkspaceNodes();
+      setDashboardFolderFilter(parentId ?? "unfiled");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Project move failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  function openWorkspaceNodeNote(node: WorkspaceNodeWire) {
+    setWorkspaceNodeNoteTarget({
+      node,
+      title: node.title,
+      note: node.note ?? "",
+    });
+    setNoteDraft(node.note ?? "");
+  }
+
+  async function saveWorkspaceNodeNote() {
+    if (!workspaceNodeNoteTarget) return;
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/workspace/nodes/${workspaceNodeNoteTarget.node.id}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ note: noteDraft.trim() }),
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.node) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Note save failed (${res.status})`,
+        );
+      }
+      upsertWorkspaceNodeInState(data.node as WorkspaceNodeWire);
+      setWorkspaceNodeNoteTarget(null);
+      setNoteDraft("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Note save failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function renameWorkspaceNode(node: WorkspaceNodeWire) {
+    const title = window.prompt("Rename:", node.title);
+    if (!title?.trim() || title.trim() === node.title) return;
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspace/nodes/${node.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: title.trim() }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data.node) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Rename failed (${res.status})`,
+        );
+      }
+      upsertWorkspaceNodeInState(data.node as WorkspaceNodeWire);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Rename failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function deleteWorkspaceNode(node: WorkspaceNodeWire) {
+    if (
+      !window.confirm(
+        node.kind === "folder"
+          ? `Delete "${node.title}"? Its children move up one level.`
+          : `Delete "${node.title}"?`,
+      )
+    ) {
+      return;
+    }
+    setSavingDashboardOrganizer(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/workspace/nodes/${node.id}`, {
+        method: "DELETE",
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Delete failed (${res.status})`,
+        );
+      }
+      if (node.scope === "global") {
+        await loadGlobalWorkspaceNodes();
+        if (dashboardFolderFilter === node.id) setDashboardFolderFilter("all");
+      } else {
+        await loadProjectWorkspaceNodes(node.projectId);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Delete failed");
+    } finally {
+      setSavingDashboardOrganizer(false);
+    }
+  }
+
+  async function downloadSavedExport(node: WorkspaceNodeWire) {
+    const payload = node.payload ?? {};
+    const dossier = payload.dossier;
+    if (!dossier || typeof dossier !== "object") {
+      setError("This export does not have a saved dossier snapshot.");
+      return;
+    }
+    try {
+      const { downloadDossier, slug } = await import("@/components/pdf");
+      const filename =
+        typeof payload.filename === "string" && payload.filename.trim()
+          ? payload.filename.replace(/\.pdf$/i, "")
+          : `${slug(node.title)}-export`;
+      downloadDossier(dossier as Parameters<typeof downloadDossier>[0], filename);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Export download failed");
+    }
+  }
+
   function updateDashboardOrganizerInState(
     id: string,
     organizer: DashboardProjectOrganizer,
@@ -3336,110 +3706,6 @@ function IntakePageInner() {
       note: organizer.projectNote,
     });
     setNoteDraft(organizer.projectNote);
-  }
-
-  function openFolderNote(folder: DashboardFolderSummary) {
-    setNoteTarget({
-      type: "folder",
-      id: folder.id,
-      title: folder.name,
-      note: folder.note,
-    });
-    setNoteDraft(folder.note);
-  }
-
-  async function createDashboardFolder(e?: React.FormEvent) {
-    e?.preventDefault();
-    const selectedIds = Array.from(compareIds);
-    if (selectedIds.length === 0) {
-      setError("Select one or more projects before creating a folder.");
-      return;
-    }
-    const name = newFolderName.trim();
-    if (!name) {
-      setError("Name the folder before saving it.");
-      return;
-    }
-    const folderId =
-      typeof window !== "undefined" && window.crypto?.randomUUID
-        ? window.crypto.randomUUID()
-        : `folder-${Date.now()}`;
-    const color =
-      DASHBOARD_FOLDER_COLORS[
-        Math.abs(selectedIds.length + dashboardFolders.length) %
-          DASHBOARD_FOLDER_COLORS.length
-      ];
-    setSavingDashboardOrganizer(true);
-    setError(null);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          saveDashboardOrganizerForProject(id, {
-            folderId,
-            folderName: name,
-            folderColor: color,
-            folderNote: newFolderNote.trim(),
-          }),
-        ),
-      );
-      setDashboardFolderFilter(folderId);
-      setFolderCreateOpen(false);
-      setNewFolderName("");
-      setNewFolderNote("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Folder save failed");
-    } finally {
-      setSavingDashboardOrganizer(false);
-    }
-  }
-
-  async function moveSelectedProjectsToFolder(folder: DashboardFolderSummary) {
-    const selectedIds = Array.from(compareIds);
-    if (selectedIds.length === 0) {
-      setError("Select projects first, then choose a folder.");
-      return;
-    }
-    setSavingDashboardOrganizer(true);
-    setError(null);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          saveDashboardOrganizerForProject(id, {
-            folderId: folder.id,
-            folderName: folder.name,
-            folderColor: folder.color,
-            folderNote: folder.note,
-          }),
-        ),
-      );
-      setDashboardFolderFilter(folder.id);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Folder move failed");
-    } finally {
-      setSavingDashboardOrganizer(false);
-    }
-  }
-
-  async function removeSelectedProjectsFromFolders() {
-    const selectedIds = Array.from(compareIds);
-    if (selectedIds.length === 0) {
-      setError("Select projects first, then remove them from folders.");
-      return;
-    }
-    setSavingDashboardOrganizer(true);
-    setError(null);
-    try {
-      await Promise.all(
-        selectedIds.map((id) =>
-          saveDashboardOrganizerForProject(id, { folderId: null }),
-        ),
-      );
-      setDashboardFolderFilter("all");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Folder update failed");
-    } finally {
-      setSavingDashboardOrganizer(false);
-    }
   }
 
   async function saveDashboardNote() {
@@ -3610,25 +3876,23 @@ function IntakePageInner() {
     setSavingWorkspaceKey("folder");
     setError(null);
     try {
-      const res = await fetch(`/api/projects/${projectId}`, {
-        method: "PATCH",
+      const res = await fetch("/api/workspace/nodes", {
+        method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectFolder: input }),
+        body: JSON.stringify({
+          scope: "project",
+          projectId,
+          kind: "folder",
+          title: input.name,
+          note: input.description,
+          moduleId: input.moduleId,
+        }),
       });
       const data = await res.json().catch(() => ({}));
-      if (!res.ok || !data.folder) {
+      if (!res.ok || !data.node) {
         throw new Error(`Folder save failed (${res.status})`);
       }
-      const folder = data.folder as ProjectFolder;
-      updateActiveWorkspace((workspace) => ({
-        ...workspace,
-        folders: workspace.folders?.some((item) => item.id === folder.id)
-          ? workspace.folders.map((item) =>
-              item.id === folder.id ? folder : item,
-            )
-          : [...(workspace.folders ?? []), folder],
-        updatedAt: folder.updatedAt,
-      }));
+      upsertWorkspaceNodeInState(data.node as WorkspaceNodeWire);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Folder save failed");
     } finally {
@@ -3784,6 +4048,21 @@ function IntakePageInner() {
     setDeletingWorkspaceItemId(itemId);
     setError(null);
     try {
+      if (type === "folder") {
+        const res = await fetch(`/api/workspace/nodes/${itemId}`, {
+          method: "DELETE",
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            typeof data?.error === "string"
+              ? data.error
+              : `Delete failed (${res.status})`,
+          );
+        }
+        await loadProjectWorkspaceNodes(projectId);
+        return;
+      }
       const res = await fetch(`/api/projects/${projectId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -4570,7 +4849,28 @@ function IntakePageInner() {
   const projectWorkspace = workspaceWithDefaults(
     activeProjectPreview?.ownerDashboard?.projectWorkspace,
   );
-  const workspaceFolders = projectWorkspace.folders ?? [];
+  const workspaceNodeFolders = projectWorkspaceNodes.filter(
+    (node) => node.kind === "folder",
+  );
+  const workspaceNodeFolderIds = new Set(
+    workspaceNodeFolders.map((node) => node.id),
+  );
+  const workspaceFolders = [
+    ...workspaceNodeFolders.map<ProjectFolder>((node) => ({
+      id: node.id,
+      moduleId: (node.moduleId ?? "custom") as BusinessModuleId,
+      name: workspacePathLabel(projectWorkspaceNodes, node.id) || node.title,
+      description: node.note ?? "",
+      createdAt: node.createdAt,
+      updatedAt: node.updatedAt,
+    })),
+    ...(projectWorkspace.folders ?? []).filter(
+      (folder) => !workspaceNodeFolderIds.has(folder.id),
+    ),
+  ];
+  const workspaceExportNodes = projectWorkspaceNodes.filter(
+    (node) => node.kind === "export",
+  );
   const workspaceCampaigns = projectWorkspace.campaigns ?? [];
   const generationPrefs = projectWorkspace.generationPrefs ?? {};
   const printSpec = projectWorkspace.printSpec ?? EMPTY_PRINT_SPEC_CLIENT;
@@ -4664,7 +4964,8 @@ function IntakePageInner() {
       id: "workspace-work",
       label: "Folders",
       icon: FolderOpen,
-      count: workspaceFolders.length + workspaceCampaigns.length,
+      count:
+        workspaceFolders.length + workspaceCampaigns.length + workspaceExportNodes.length,
     },
     {
       id: "workspace-generations",
@@ -4749,53 +5050,67 @@ function IntakePageInner() {
       hasPreview: false,
     };
   });
-  const dashboardFolders = dashboardSourceProjects.reduce<
-    DashboardFolderSummary[]
-  >((folders, project) => {
-    const organizer = dashboardOrganizerFor(project);
-    if (!organizer.folderId) return folders;
-    const existing = folders.find((folder) => folder.id === organizer.folderId);
-    if (existing) {
-      existing.projectIds.push(project.id);
-      const currentUpdated = existing.updatedAt
-        ? new Date(existing.updatedAt).getTime()
-        : 0;
-      const nextUpdated = organizer.updatedAt
-        ? new Date(organizer.updatedAt).getTime()
-        : 0;
-      if (nextUpdated >= currentUpdated) {
-        existing.name = organizer.folderName || existing.name;
-        existing.color = organizer.folderColor || existing.color;
-        existing.note = organizer.folderNote;
-        existing.updatedAt = organizer.updatedAt;
-      }
-      return folders;
-    }
-    folders.push({
-      id: organizer.folderId,
-      name: organizer.folderName || "Untitled folder",
-      color: organizer.folderColor || "neutral",
-      note: organizer.folderNote,
-      projectIds: [project.id],
-      updatedAt: organizer.updatedAt,
-    });
-    return folders;
-  }, []);
+  const globalFolderNodes = globalWorkspaceNodes.filter(
+    (node) => node.kind === "folder",
+  );
+  const globalProjectNodes = globalWorkspaceNodes.filter(
+    (node) => node.kind === "project",
+  );
+  const globalNodeById = new Map(
+    globalWorkspaceNodes.map((node) => [node.id, node]),
+  );
+  const placementByProjectId = new Map(
+    globalProjectNodes
+      .filter((node) => node.refProjectId)
+      .map((node) => [node.refProjectId as string, node]),
+  );
+  const dashboardFolders = globalFolderNodes.map<DashboardFolderSummary>(
+    (folder) => {
+      const descendants = workspaceDescendantIds(globalWorkspaceNodes, folder.id);
+      const projectIds = globalProjectNodes
+        .filter((node) => node.refProjectId && descendants.has(node.id))
+        .map((node) => node.refProjectId as string);
+      return {
+        id: folder.id,
+        name: folder.title || "Untitled folder",
+        color: "neutral",
+        note: folder.note ?? "",
+        projectIds,
+        updatedAt: folder.updatedAt,
+      };
+    },
+  );
   dashboardFolders.sort((a, b) => a.name.localeCompare(b.name));
   const unfiledProjectCount = dashboardSourceProjects.filter(
-    (project) => !dashboardOrganizerFor(project).folderId,
+    (project) => {
+      const placement = placementByProjectId.get(project.id);
+      if (placement) return !placement.parentId;
+      return !dashboardOrganizerFor(project).folderId;
+    },
   ).length;
+  const selectedFolderDescendants =
+    dashboardFolderFilter !== "all" && dashboardFolderFilter !== "unfiled"
+      ? workspaceDescendantIds(globalWorkspaceNodes, dashboardFolderFilter)
+      : null;
   const dashboardDetailsReady =
     projects.length === 0 || projectPreviews.length >= projects.length;
   const dashboardProjects = dashboardSourceProjects
     .filter((p) => {
       const q = projectQuery.trim().toLowerCase();
       const organizer = dashboardOrganizerFor(p);
+      const placement = placementByProjectId.get(p.id);
+      const parentFolder = placement?.parentId
+        ? globalNodeById.get(placement.parentId)
+        : null;
       const folderMatch =
         dashboardFolderFilter === "all" ||
         (dashboardFolderFilter === "unfiled"
-          ? !organizer.folderId
-          : organizer.folderId === dashboardFolderFilter);
+          ? placement
+            ? !placement.parentId
+            : !organizer.folderId
+          : placement
+            ? Boolean(selectedFolderDescendants?.has(placement.id))
+            : organizer.folderId === dashboardFolderFilter);
       if (!folderMatch) return false;
       const status = dashboardProjectStatus(p, p.hasPreview, loadingPreviews);
       const statusMatch =
@@ -4809,9 +5124,9 @@ function IntakePageInner() {
         p.hasPreview ? p.ventureProfile?.category : null,
         p.hasPreview ? p.ventureProfile?.targetAudience : null,
         p.hasPreview ? p.interviewTranscript.brief : null,
-        organizer.folderName,
-        organizer.folderNote,
-        organizer.projectNote,
+        parentFolder?.title ?? organizer.folderName,
+        parentFolder?.note ?? organizer.folderNote,
+        placement?.note ?? organizer.projectNote,
       ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(q));
@@ -4906,73 +5221,68 @@ function IntakePageInner() {
       </form>
     </div>
   ) : null;
-  const folderCreateDialog = folderCreateOpen ? (
+  const dashboardNoteDialog = workspaceNodeNoteTarget ? (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
-      <form
-        onSubmit={(e) => void createDashboardFolder(e)}
-        className="w-full max-w-sm rounded-lg border border-neutral-200 bg-white p-5 shadow-xl"
-      >
+      <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-3">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
-              Dashboard folder
+              {workspaceNodeNoteTarget.node.kind} note
             </p>
-            <h2 className="mt-1 text-lg font-semibold text-neutral-950">
-              Group selected projects
+            <h2 className="mt-1 truncate text-lg font-semibold text-neutral-950">
+              {workspaceNodeNoteTarget.title}
             </h2>
-            <p className="mt-1 text-xs text-neutral-500">
-              {compareIds.size} selected project
-              {compareIds.size === 1 ? "" : "s"} will move here.
-            </p>
           </div>
           <button
             type="button"
-            onClick={() => setFolderCreateOpen(false)}
+            onClick={() => setWorkspaceNodeNoteTarget(null)}
             className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
             title="Close"
           >
             <X className="h-4 w-4" />
           </button>
         </div>
-        <input
-          value={newFolderName}
-          onChange={(e) => setNewFolderName(e.target.value)}
-          placeholder="Folder name"
-          autoFocus
-          className="mt-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
-        />
         <textarea
-          value={newFolderNote}
-          onChange={(e) => setNewFolderNote(e.target.value)}
-          placeholder="Optional folder note"
-          rows={4}
-          className="mt-3 w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
+          value={noteDraft}
+          onChange={(e) => setNoteDraft(e.target.value)}
+          placeholder="Add a quick note"
+          rows={7}
+          className="mt-4 w-full resize-y rounded-lg border border-neutral-300 px-3 py-2 text-sm leading-6 outline-none focus:border-indigo-500"
         />
-        <div className="mt-4 flex items-center justify-end gap-2">
+        <div className="mt-4 flex items-center justify-between gap-2">
           <button
             type="button"
-            onClick={() => setFolderCreateOpen(false)}
-            className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+            onClick={() => setNoteDraft("")}
+            className="rounded-lg px-3 py-2 text-xs font-medium text-neutral-500 hover:bg-neutral-100 hover:text-neutral-800"
           >
-            Cancel
+            Clear
           </button>
-          <button
-            type="submit"
-            disabled={savingDashboardOrganizer || compareIds.size === 0}
-            className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:cursor-not-allowed disabled:opacity-45"
-          >
-            {savingDashboardOrganizer ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FolderOpen className="h-3.5 w-3.5" />
-            )}
-            Create folder
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setWorkspaceNodeNoteTarget(null)}
+              className="rounded-lg border border-neutral-300 bg-white px-3 py-2 text-xs font-medium text-neutral-700 hover:bg-neutral-50"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void saveWorkspaceNodeNote()}
+              disabled={savingDashboardOrganizer}
+              className="flex items-center gap-1.5 rounded-lg bg-neutral-900 px-3 py-2 text-xs font-medium text-white hover:bg-neutral-700 disabled:opacity-50"
+            >
+              {savingDashboardOrganizer ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Check className="h-3.5 w-3.5" />
+              )}
+              Save note
+            </button>
+          </div>
         </div>
-      </form>
+      </div>
     </div>
-  ) : null;
-  const dashboardNoteDialog = noteTarget ? (
+  ) : noteTarget ? (
     <div className="fixed inset-0 z-[1200] flex items-center justify-center bg-neutral-950/35 px-4">
       <div className="w-full max-w-md rounded-lg border border-neutral-200 bg-white p-5 shadow-xl">
         <div className="flex items-start justify-between gap-3">
@@ -5060,6 +5370,22 @@ function IntakePageInner() {
               >
                 <Plus className="h-4 w-4" />
                 New project
+              </button>
+              <button
+                type="button"
+                onClick={() => void createWorkspaceFolder("global", null)}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
+              >
+                <FolderOpen className="h-4 w-4" />
+                Folder
+              </button>
+              <button
+                type="button"
+                onClick={() => void createSavedDashboard(null)}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3.5 py-2 text-sm font-medium text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50"
+              >
+                <LayoutTemplate className="h-4 w-4" />
+                Dashboard
               </button>
               <button
                 type="button"
@@ -5275,7 +5601,10 @@ function IntakePageInner() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => openFolderNote(folder)}
+                          onClick={() => {
+                            const node = globalNodeById.get(folder.id);
+                            if (node) openWorkspaceNodeNote(node);
+                          }}
                           title="Folder note"
                           className="flex h-8 w-8 items-center justify-center border-l border-current/10 hover:bg-white/55"
                         >
@@ -5289,7 +5618,7 @@ function IntakePageInner() {
                           <button
                             type="button"
                             onClick={() =>
-                              void moveSelectedProjectsToFolder(folder)
+                              void moveSelectedProjectsToWorkspace(folder.id)
                             }
                             disabled={savingDashboardOrganizer}
                             title="Move selected here"
@@ -5303,16 +5632,15 @@ function IntakePageInner() {
                   })}
                   <button
                     type="button"
-                    onClick={() => setFolderCreateOpen(true)}
-                    disabled={compareIds.size === 0}
+                    onClick={() => void createWorkspaceFolder("global", null)}
                     className="inline-flex h-8 items-center gap-1.5 rounded-full border border-neutral-300 bg-white px-3 text-xs font-medium text-neutral-700 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Plus className="h-3.5 w-3.5" />
-                    Folder selected
+                    New folder
                   </button>
                   <button
                     type="button"
-                    onClick={() => void removeSelectedProjectsFromFolders()}
+                    onClick={() => void moveSelectedProjectsToWorkspace(null)}
                     disabled={compareIds.size === 0 || savingDashboardOrganizer}
                     className="inline-flex h-8 items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 text-xs font-medium text-neutral-500 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-45"
                   >
@@ -5396,22 +5724,31 @@ function IntakePageInner() {
                                 <td className="px-3 py-2">
                                   {(() => {
                                     const organizer = dashboardOrganizerFor(p);
-                                    return organizer.folderId ? (
+                                    const placement = placementByProjectId.get(p.id);
+                                    const parent = placement?.parentId
+                                      ? globalNodeById.get(placement.parentId)
+                                      : null;
+                                    return parent || organizer.folderId ? (
                                       <button
                                         type="button"
                                         onClick={() =>
                                           setDashboardFolderFilter(
-                                            organizer.folderId ?? "all",
+                                            parent?.id ?? organizer.folderId ?? "all",
                                           )
                                         }
                                         className={`inline-flex max-w-[170px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
-                                          organizer.folderColor,
+                                          "neutral",
                                         )}`}
                                       >
                                         <FolderOpen className="h-3 w-3 shrink-0" />
                                         <span className="truncate">
-                                          {organizer.folderName ||
-                                            "Untitled folder"}
+                                          {parent
+                                            ? workspacePathLabel(
+                                                globalWorkspaceNodes,
+                                                parent.id,
+                                              )
+                                            : organizer.folderName ||
+                                              "Untitled folder"}
                                         </span>
                                       </button>
                                     ) : (
@@ -5452,9 +5789,14 @@ function IntakePageInner() {
                                   <div className="flex items-center justify-end gap-1">
                                     <button
                                       type="button"
-                                      onClick={() => openProjectNote(p)}
+                                      onClick={() => {
+                                        const node = placementByProjectId.get(p.id);
+                                        if (node) openWorkspaceNodeNote(node);
+                                        else openProjectNote(p);
+                                      }}
                                       title="Project note"
                                       className={`rounded-md p-1.5 ${
+                                        placementByProjectId.get(p.id)?.note ||
                                         dashboardOrganizerFor(p).projectNote
                                           ? "bg-amber-50 text-amber-700"
                                           : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
@@ -5519,6 +5861,10 @@ function IntakePageInner() {
                       const assetCountForProject = p.hasPreview
                         ? projectAssetTotal(p)
                         : "-";
+                      const placement = placementByProjectId.get(p.id);
+                      const parentFolder = placement?.parentId
+                        ? globalNodeById.get(placement.parentId)
+                        : null;
                       return (
                         <article
                           key={p.id}
@@ -5533,10 +5879,13 @@ function IntakePageInner() {
                                 </h3>
                                 <button
                                   type="button"
-                                  onClick={() => openProjectNote(p)}
+                                  onClick={() => {
+                                    if (placement) openWorkspaceNodeNote(placement);
+                                    else openProjectNote(p);
+                                  }}
                                   title="Project note"
                                   className={`shrink-0 rounded-md p-1 ${
-                                    organizer.projectNote
+                                    placement?.note || organizer.projectNote
                                       ? "bg-amber-50 text-amber-700"
                                       : "text-neutral-300 hover:bg-neutral-100 hover:text-neutral-700"
                                   }`}
@@ -5555,22 +5904,27 @@ function IntakePageInner() {
                                 >
                                   {status}
                                 </span>
-                                {organizer.folderId ? (
+                                {parentFolder || organizer.folderId ? (
                                   <button
                                     type="button"
                                     onClick={() =>
                                       setDashboardFolderFilter(
-                                        organizer.folderId ?? "all",
+                                        parentFolder?.id ?? organizer.folderId ?? "all",
                                       )
                                     }
                                     className={`inline-flex max-w-[150px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
-                                      organizer.folderColor,
+                                      "neutral",
                                     )}`}
                                   >
                                     <FolderOpen className="h-3 w-3 shrink-0" />
                                     <span className="truncate">
-                                      {organizer.folderName ||
-                                        "Untitled folder"}
+                                      {parentFolder
+                                        ? workspacePathLabel(
+                                            globalWorkspaceNodes,
+                                            parentFolder.id,
+                                          )
+                                        : organizer.folderName ||
+                                          "Untitled folder"}
                                     </span>
                                   </button>
                                 ) : null}
@@ -5677,59 +6031,43 @@ function IntakePageInner() {
                   <div>
                     <h2 className="text-sm font-semibold">Organizer</h2>
                     <p className="mt-0.5 text-xs text-neutral-500">
-                      {compareIds.size} selected
+                      {compareIds.size} selected · nested folders
                     </p>
                   </div>
                   <button
                     type="button"
-                    onClick={() => setFolderCreateOpen(true)}
-                    disabled={compareIds.size === 0}
+                    onClick={() => void createWorkspaceFolder("global", null)}
                     className="flex items-center gap-1 rounded-lg bg-neutral-950 px-2.5 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-45"
                   >
                     <Plus className="h-3.5 w-3.5" />
                     Folder
                   </button>
                 </div>
-                {dashboardFolders.length > 0 ? (
-                  <div className="mt-3 space-y-1.5">
-                    {dashboardFolders.slice(0, 6).map((folder) => (
-                      <div
-                        key={folder.id}
-                        className="flex items-center gap-2 rounded-lg border border-neutral-100 px-2.5 py-2"
-                      >
-                        <button
-                          type="button"
-                          onClick={() => setDashboardFolderFilter(folder.id)}
-                          className="min-w-0 flex-1 text-left"
-                        >
-                          <span className="block truncate text-xs font-semibold text-neutral-800">
-                            {folder.name}
-                          </span>
-                          <span className="mt-0.5 block text-[11px] text-neutral-400">
-                            {folder.projectIds.length} project
-                            {folder.projectIds.length === 1 ? "" : "s"}
-                          </span>
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openFolderNote(folder)}
-                          title="Folder note"
-                          className={`rounded-md p-1.5 ${
-                            folder.note
-                              ? "bg-amber-50 text-amber-700"
-                              : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-                          }`}
-                        >
-                          <FileText className="h-3.5 w-3.5" />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-3 rounded-lg border border-dashed border-neutral-200 bg-neutral-50 px-3 py-3 text-xs leading-5 text-neutral-500">
-                    No dashboard folders yet.
-                  </p>
-                )}
+                <div className="mt-3 max-h-[520px] overflow-y-auto pr-1">
+                  <WorkspaceTree
+                    nodes={globalWorkspaceNodes}
+                    selectedFolderId={dashboardFolderFilter}
+                    selectedCount={compareIds.size}
+                    rootLabel="All projects"
+                    unfiledLabel="Project root"
+                    allowDashboard
+                    onSelectFolder={setDashboardFolderFilter}
+                    onCreateFolder={(parentId) =>
+                      void createWorkspaceFolder("global", parentId)
+                    }
+                    onCreateDashboard={(parentId) =>
+                      void createSavedDashboard(parentId)
+                    }
+                    onMoveSelected={(parentId) =>
+                      void moveSelectedProjectsToWorkspace(parentId)
+                    }
+                    onOpenDashboard={openSavedDashboard}
+                    onOpenProject={switchProject}
+                    onNote={openWorkspaceNodeNote}
+                    onRename={renameWorkspaceNode}
+                    onDelete={deleteWorkspaceNode}
+                  />
+                </div>
               </section>
 
               <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
@@ -5793,7 +6131,6 @@ function IntakePageInner() {
         </section>
 
         {createProjectDialog}
-        {folderCreateDialog}
         {dashboardNoteDialog}
       </main>
     );
@@ -6088,14 +6425,27 @@ function IntakePageInner() {
                 <ModuleWorkspaceHub
                   modules={businessModules}
                   selectedModuleId={selectedWorkspaceModuleId}
+                  workspaceNodes={projectWorkspaceNodes}
                   folders={workspaceFolders}
                   campaigns={workspaceCampaigns}
+                  exportNodes={workspaceExportNodes}
                   savingKey={savingWorkspaceKey}
                   deletingKey={deletingWorkspaceItemId}
                   onSelectModule={setSelectedWorkspaceModuleId}
                   onSaveFolder={saveWorkspaceFolder}
                   onSaveCampaign={saveWorkspaceCampaign}
                   onDeleteWorkspaceItem={deleteWorkspaceItem}
+                  onCreateSubfolder={(parentId) =>
+                    void createWorkspaceFolder(
+                      "project",
+                      parentId,
+                      selectedWorkspaceModuleId,
+                    )
+                  }
+                  onNoteNode={openWorkspaceNodeNote}
+                  onRenameNode={renameWorkspaceNode}
+                  onDeleteNode={deleteWorkspaceNode}
+                  onOpenExport={(node) => void downloadSavedExport(node)}
                 />
               </section>
 
@@ -6295,14 +6645,27 @@ function IntakePageInner() {
                 <ModuleWorkspaceHub
                   modules={businessModules}
                   selectedModuleId={selectedWorkspaceModuleId}
+                  workspaceNodes={projectWorkspaceNodes}
                   folders={workspaceFolders}
                   campaigns={workspaceCampaigns}
+                  exportNodes={workspaceExportNodes}
                   savingKey={savingWorkspaceKey}
                   deletingKey={deletingWorkspaceItemId}
                   onSelectModule={setSelectedWorkspaceModuleId}
                   onSaveFolder={saveWorkspaceFolder}
                   onSaveCampaign={saveWorkspaceCampaign}
                   onDeleteWorkspaceItem={deleteWorkspaceItem}
+                  onCreateSubfolder={(parentId) =>
+                    void createWorkspaceFolder(
+                      "project",
+                      parentId,
+                      selectedWorkspaceModuleId,
+                    )
+                  }
+                  onNoteNode={openWorkspaceNodeNote}
+                  onRenameNode={renameWorkspaceNode}
+                  onDeleteNode={deleteWorkspaceNode}
+                  onOpenExport={(node) => void downloadSavedExport(node)}
                 />
               </section>
 

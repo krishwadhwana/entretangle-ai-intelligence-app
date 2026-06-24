@@ -1235,7 +1235,7 @@ Fields (all ranges {low,mid,high} or null):
 - cpmMeta: Meta (Instagram/Facebook) CPM
 - modelInputs: business-model-specific launch assumptions. Include only fields relevant to the requested business model and only when sourced:
   - paidCac: paid acquisition CAC for this business model
-  - rentalRentableDaysPerMonth, rentalAvgDurationDays, rentalMaintenancePerOrder, rentalDamageLossPct, rentalDepositAmount
+  - rentalRentableDaysPerMonth, rentalAvgDurationDays, rentalDowntimeDaysPerBooking, rentalMaintenancePerOrder, rentalDamageLossPct, rentalDepositAmount
   - subscriptionMonthlyChurnPct
   - bookingCapacityPerMonth
   - usageEventsPerCustomerPerMonth, usageMonthlyChurnPct

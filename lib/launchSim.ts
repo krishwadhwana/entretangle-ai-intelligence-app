@@ -599,7 +599,9 @@ function rentalCapacityPerStep(inputs: LaunchSimInputs, stepsPerMonth: number): 
     inputs.rentalAssetCount *
     inputs.rentalRentableDaysPerMonth *
     monthsPerStep;
-  return rentableAssetDays / Math.max(inputs.rentalAvgDurationDays, 1 / 30);
+  const assetDaysPerBooking =
+    inputs.rentalAvgDurationDays + inputs.rentalDowntimeDaysPerBooking;
+  return rentableAssetDays / Math.max(assetDaysPerBooking, 1 / 30);
 }
 
 function nonInventoryCapacityPerStep(
@@ -627,6 +629,16 @@ function rentalVariableCostPerOrder(inputs: LaunchSimInputs): number {
   const expectedDamageLoss =
     uncoveredAssetValue * clamp(inputs.rentalDamageLossPct / 100, 0, 1);
   return inputs.rentalMaintenancePerOrder + expectedDamageLoss;
+}
+
+function revenuePerOrder(inputs: LaunchSimInputs): number {
+  if (
+    inputs.businessModel === "rental" &&
+    inputs.rentalPricingBasis === "per_day"
+  ) {
+    return inputs.salePrice * Math.max(inputs.rentalAvgDurationDays, 0);
+  }
+  return inputs.salePrice;
 }
 
 function stepChurnFromMonthly(pct: number, stepsPerMonth: number): number {
@@ -902,6 +914,7 @@ export function simulateLaunch(
   const returnWindowSteps = Math.round(inputs.returnWindowDays / daysPerStep);
   const reorderLeadSteps = Math.round(inputs.reorderLeadTimeDays / daysPerStep);
   const returnShipping = inputs.returnShippingPerOrder ?? inputs.shippingPerOrder;
+  const orderRevenue = revenuePerOrder(inputs);
   const decisionSpeed =
     inputs.decisionSpeed ?? (inputs.granularity === "day" ? 0.1 : 0.5);
   const blendedCac =
@@ -1425,17 +1438,17 @@ export function simulateLaunch(
         activeRepeatMult[d.idx] = d.oldActiveRepeatMult;
       }
       if (orders <= 0) continue;
-      const rev = orders * inputs.salePrice;
+      const rev = orders * orderRevenue;
       byChannel.add(p.channelPref, orders, rev);
       byLocality.add(p.locality, orders, rev);
       byAge.add(ageBand(p.age), orders, rev);
       byGender.add(p.gender || "—", orders, rev);
       for (const share of d.channelShares) {
         const chOrders = first * share.share;
-        if (chOrders > 0) byAcquisitionChannel.addOrders(share.ch, chOrders, chOrders * inputs.salePrice);
+        if (chOrders > 0) byAcquisitionChannel.addOrders(share.ch, chOrders, chOrders * orderRevenue);
       }
       if (repeat > 0) {
-        byAcquisitionChannel.addOrders(returningChannel, repeat, repeat * inputs.salePrice);
+        byAcquisitionChannel.addOrders(returningChannel, repeat, repeat * orderRevenue);
       }
       const refunds = orders * clamp(refundP * d.refundMult, 0, 0.8);
       bySegment.add(String(p.segment ?? "—"), orders, rev, refunds);
@@ -1454,7 +1467,7 @@ export function simulateLaunch(
     // to refundArrivals[t] after it had already been read, so they vanished and
     // refund counts came out 0 even though the refund RATE was non-zero.
     const refundsLanding = refundArrivals[t];
-    const refundedRevenue = refundsLanding * inputs.salePrice;
+    const refundedRevenue = refundsLanding * orderRevenue;
     const refundCost =
       refundsLanding *
       (returnShipping + (1 - inputs.resellablePct) * inputs.costPrice);
@@ -1489,7 +1502,7 @@ export function simulateLaunch(
     }
 
     // Step P&L (accrual).
-    const revenue = unitsFulfilled * inputs.salePrice;
+    const revenue = unitsFulfilled * orderRevenue;
     const cogs =
       unitsFulfilled *
       (inputs.costPrice + rentalVariableCostPerOrder(inputs));
@@ -1683,9 +1696,10 @@ function buildDiagnostics(
     inputs.granularity === "month"
       ? `${inputs.horizon} months`
       : `${inputs.horizon} days`;
+  const orderRevenue = revenuePerOrder(inputs);
   const headline =
     summary.totalOrders > 0
-      ? `${horizon} produces ${fmtCount(summary.totalOrders)} orders and ${fmtMoney(summary.netProfit)} net profit at ${fmtMoney(inputs.salePrice)} sale price.`
+      ? `${horizon} produces ${fmtCount(summary.totalOrders)} orders and ${fmtMoney(summary.netProfit)} net profit at ${fmtMoney(orderRevenue)} revenue/order.`
       : `${horizon} produces no orders because the scenario does not put enough qualified buyers into the funnel.`;
 
   if (summary.totalImpressions <= 0 && summary.totalReached <= 0) {
@@ -1747,8 +1761,8 @@ function buildDiagnostics(
   if (summary.totalProductVisits > 0 && summary.totalOrders / summary.totalProductVisits < 0.01) {
     risks.push("Product visits are not turning into enough orders, which points to price, proof, trust, or checkout friction.");
   }
-  if (summary.blendedCac > 0 && summary.blendedCac > inputs.salePrice * 0.4) {
-    risks.push(`CAC is ${fmtMoney(summary.blendedCac)}, heavy for a ${fmtMoney(inputs.salePrice)} product.`);
+  if (summary.blendedCac > 0 && summary.blendedCac > orderRevenue * 0.4) {
+    risks.push(`CAC is ${fmtMoney(summary.blendedCac)}, heavy for ${fmtMoney(orderRevenue)} revenue/order.`);
     nextMoves.push("Shift budget toward the channels and segments with the lowest CAC before increasing total spend.");
   }
   if (summary.totalOrders > 0 && summary.breakEvenLabel == null) {
@@ -1773,6 +1787,7 @@ function buildAssumptions(
   fixedCostsWereFounderEntered: boolean
 ): LaunchAssumption[] {
   const preset = BUSINESS_PRESETS[inputs.businessModel] ?? BUSINESS_PRESETS.generic;
+  const orderRevenue = revenuePerOrder(inputs);
   const channelLabels = inputs.channels.map((c) => c.label).join(", ");
   const presetChannelIds = preset.defaultChannels.map((c) => c.id).join("|");
   const resolvedChannelIds = inputs.channels.map((c) => c.id).join("|");
@@ -1822,12 +1837,18 @@ function buildAssumptions(
   });
   add({
     key: "salePrice",
-    label: "Sale price",
+    label:
+      inputs.businessModel === "rental" && inputs.rentalPricingBasis === "per_day"
+        ? "Rental price/day"
+        : "Sale price",
     value: inputs.salePrice,
     unit: inputs.currency,
     source: "founder_entered",
     confidence: 0.8,
-    basis: "Retail price used for willingness-to-pay fit, revenue, payment fees, and CAC pressure.",
+    basis:
+      inputs.businessModel === "rental" && inputs.rentalPricingBasis === "per_day"
+        ? "Daily rental price used for willingness-to-pay fit; revenue is multiplied by average rental duration."
+        : "Retail price used for willingness-to-pay fit, revenue, payment fees, and CAC pressure.",
   });
   add({
     key: "costPrice",
@@ -2046,10 +2067,12 @@ function buildAssumptions(
       : "Computed launch setup, operating runway, creative/sampling and launch-management reserve that cash payback must recover.",
   });
   if (inputs.businessModel === "rental") {
+    const rentalAssetDaysPerBooking =
+      inputs.rentalAvgDurationDays + inputs.rentalDowntimeDaysPerBooking;
     const rentalMonthlyCapacity =
       inputs.rentalAssetCount *
       inputs.rentalRentableDaysPerMonth /
-      Math.max(inputs.rentalAvgDurationDays, 1 / 30);
+      Math.max(rentalAssetDaysPerBooking, 1 / 30);
     const uncoveredAssetValue = Math.max(
       0,
       inputs.rentalAssetCost - inputs.rentalDepositAmount
@@ -2075,13 +2098,31 @@ function buildAssumptions(
       basis: "Up-front purchase value per rental asset; counted in cash payback when entered.",
     });
     add({
+      key: "rentalPricingBasis",
+      label: "Rental pricing basis",
+      value: inputs.rentalPricingBasis === "per_day" ? "per day" : "per booking",
+      unit: "",
+      source: "founder_entered",
+      confidence: 0.8,
+      basis: "Controls whether the rental price is counted once per booking or multiplied by average rental duration.",
+    });
+    add({
+      key: "rentalRevenuePerBooking",
+      label: "Rental revenue/booking",
+      value: round(orderRevenue, 2),
+      unit: `${inputs.currency}/booking`,
+      source: "computed",
+      confidence: 0.8,
+      basis: "Computed from rental price basis and average duration; this is the revenue used in P&L per fulfilled booking.",
+    });
+    add({
       key: "rentalCapacityPerMonth",
       label: "Rental capacity",
       value: round(rentalMonthlyCapacity, 2),
       unit: "bookings/month",
       source: "computed",
       confidence: 0.8,
-      basis: "Computed as assets × rentable days per month ÷ average rental duration.",
+      basis: "Computed as assets × rentable days per month ÷ (average rental duration + downtime).",
     });
     add({
       key: "rentalAvgDurationDays",
@@ -2091,6 +2132,15 @@ function buildAssumptions(
       source: "founder_entered",
       confidence: 0.75,
       basis: "Average time one booking keeps an asset unavailable for another customer.",
+    });
+    add({
+      key: "rentalDowntimeDaysPerBooking",
+      label: "Downtime",
+      value: inputs.rentalDowntimeDaysPerBooking,
+      unit: "days/booking",
+      source: "founder_entered",
+      confidence: 0.75,
+      basis: "Extra reset, pickup, testing, cleaning, or idle days after a rental before the asset can be rented again. 0 means no downtime.",
     });
     add({
       key: "rentalMaintenancePerOrder",
