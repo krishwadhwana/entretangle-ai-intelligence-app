@@ -21,7 +21,9 @@ export const maxDuration = 120;
 const PostSchema = z.object({
   type: CollateralTypeSchema,
   brief: z.string().trim().max(2000).default(""),
-  visualMode: z.enum(["layout", "ai", "product"]).default("layout"),
+  useTemplates: z.boolean().default(true),
+  useAiVisual: z.boolean().default(false),
+  useProductImages: z.boolean().default(false),
   visualBrief: z.string().trim().max(2000).default(""),
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
   // Optional: re-render edited copy without another LLM call.
@@ -72,7 +74,9 @@ export async function POST(
     const job = await enqueueProjectJob(params.id, "design_collateral", {
       type: body.data.type,
       brief: body.data.brief,
-      visualMode: body.data.visualMode,
+      useTemplates: body.data.useTemplates,
+      useAiVisual: body.data.useAiVisual,
+      useProductImages: body.data.useProductImages,
       visualBrief: body.data.visualBrief,
       sourceRunId: body.data.sourceRunId,
       ...(body.data.content ? { content: body.data.content } : {}),

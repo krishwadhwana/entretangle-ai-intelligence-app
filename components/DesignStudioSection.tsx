@@ -31,13 +31,6 @@ const COLLATERAL_TYPES: { type: CollateralType; label: string }[] = [
   { type: "poster", label: "Poster" },
 ];
 
-const VISUAL_MODES = [
-  { id: "layout", label: "Layout" },
-  { id: "ai", label: "AI visual" },
-  { id: "product", label: "Product refs" },
-] as const;
-type VisualMode = (typeof VISUAL_MODES)[number]["id"];
-
 type JobStatus = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -435,7 +428,9 @@ export default function DesignStudioSection({
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
   const [brief, setBrief] = useState("");
-  const [visualMode, setVisualMode] = useState<VisualMode>("layout");
+  const [useTemplates, setUseTemplates] = useState(true);
+  const [useAiVisual, setUseAiVisual] = useState(false);
+  const [useProductImages, setUseProductImages] = useState(false);
   const [visualBrief, setVisualBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
 
@@ -584,11 +579,12 @@ export default function DesignStudioSection({
           body: JSON.stringify({
             type,
             brief,
-            visualMode: type === "business-card" ? "layout" : visualMode,
+            useTemplates: type === "business-card" ? true : useTemplates,
+            useAiVisual: type === "business-card" ? false : useAiVisual,
+            useProductImages:
+              type === "business-card" ? false : useProductImages,
             visualBrief:
-              type === "business-card" || visualMode === "layout"
-                ? ""
-                : visualBrief,
+              type === "business-card" || !useAiVisual ? "" : visualBrief,
             sourceRunId: sourceRunId ?? null,
           }),
         });
@@ -613,7 +609,16 @@ export default function DesignStudioSection({
         setMakingType(null);
       }
     },
-    [projectId, brief, visualMode, visualBrief, sourceRunId, waitForJob]
+    [
+      projectId,
+      brief,
+      useTemplates,
+      useAiVisual,
+      useProductImages,
+      visualBrief,
+      sourceRunId,
+      waitForJob,
+    ]
   );
 
   const removeAsset = useCallback(
@@ -1117,31 +1122,40 @@ export default function DesignStudioSection({
               placeholder="Optional copy brief — e.g. 'Instagram launch ad for monsoon hydration combo, 20% off'"
               className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
-            <div className="mb-2 flex flex-wrap gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-1">
-              {VISUAL_MODES.map((mode) => (
-                <button
-                  key={mode.id}
-                  type="button"
-                  onClick={() => setVisualMode(mode.id)}
-                  className={`rounded-md px-3 py-1.5 text-[11px] font-medium transition-colors ${
-                    visualMode === mode.id
-                      ? "bg-white text-neutral-900 shadow-sm"
-                      : "text-neutral-500 hover:text-neutral-800"
-                  }`}
-                >
-                  {mode.label}
-                </button>
-              ))}
+            <div className="mb-2 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={useTemplates}
+                  onChange={(e) => setUseTemplates(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                Templates
+              </label>
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={useAiVisual}
+                  onChange={(e) => setUseAiVisual(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                AI visual
+              </label>
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={useProductImages}
+                  onChange={(e) => setUseProductImages(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                Product images
+              </label>
             </div>
             <textarea
               value={visualBrief}
               onChange={(e) => setVisualBrief(e.target.value)}
-              disabled={visualMode === "layout"}
-              placeholder={
-                visualMode === "product"
-                  ? "Optional product-ref direction — e.g. 'show the uploaded bottle in a humid bathroom beauty scene, shiny hair, premium ad, no text'"
-                  : "AI visual brief for flyer/poster — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, no text'"
-              }
+              disabled={!useAiVisual}
+              placeholder="AI visual direction — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, use uploaded bottle as product reference, no text'"
               rows={3}
               className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400 disabled:bg-neutral-50 disabled:text-neutral-400"
             />

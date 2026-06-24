@@ -837,9 +837,13 @@ function socialAd(
   content: CollateralContent,
   fonts: { heading: string; body: string },
   variant: "portrait" | "square",
-  visualImageDataUrl?: string
+  visualImageDataUrl?: string,
+  useTemplateFrame = true
 ): SatoriNode {
   if (visualImageDataUrl) {
+    if (!useTemplateFrame) {
+      return fullBleedImageAd(tokens, content, fonts, variant, visualImageDataUrl);
+    }
     return imageLedAd(tokens, content, fonts, variant, visualImageDataUrl);
   }
   const layouts = [productHeroAd, editorialAd, offerBurstAd, proofChecklistAd];
@@ -967,19 +971,159 @@ function imageLedAd(
   ]);
 }
 
+function fullBleedImageAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square",
+  visualImageDataUrl: string
+): SatoriNode {
+  const { palette } = tokens;
+  const scale = socialScale(variant);
+  const portrait = variant === "portrait";
+  return el(
+    {
+      display: "flex",
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      backgroundColor: palette.neutralDark,
+      fontFamily: fonts.body,
+    },
+    [
+      el(
+        {
+          display: "flex",
+          height: portrait ? "68%" : "62%",
+          width: "100%",
+          backgroundColor: palette.primary,
+        },
+        [
+          imageEl(visualImageDataUrl, {
+            width: "100%",
+            height: "100%",
+            objectFit: "cover",
+          }),
+        ]
+      ),
+      el(
+        {
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+          flexGrow: 1,
+          padding: `${42 * scale}px ${52 * scale}px`,
+          backgroundColor: palette.neutralDark,
+        },
+        [
+          el(
+            {
+              display: "flex",
+              flexDirection: "row",
+              alignItems: "center",
+              justifyContent: "space-between",
+            },
+            [
+              el(
+                {
+                  display: "flex",
+                  fontFamily: fonts.heading,
+                  fontWeight: 700,
+                  fontSize: `${30 * scale}px`,
+                  color: palette.neutralLight,
+                },
+                content.brandName
+              ),
+              content.tagline
+                ? el(
+                    {
+                      display: "flex",
+                      fontSize: `${17 * scale}px`,
+                      color: palette.accent,
+                    },
+                    content.tagline
+                  )
+                : el({ display: "flex" }),
+            ]
+          ),
+          el(
+            { display: "flex", flexDirection: "column" },
+            [
+              el(
+                {
+                  display: "flex",
+                  fontFamily: fonts.heading,
+                  fontWeight: 700,
+                  fontSize: `${portrait ? 58 * scale : 46 * scale}px`,
+                  lineHeight: 1,
+                  color: palette.neutralLight,
+                },
+                content.headline || content.brandName
+              ),
+              content.subhead
+                ? el(
+                    {
+                      display: "flex",
+                      marginTop: `${16 * scale}px`,
+                      fontSize: `${22 * scale}px`,
+                      lineHeight: 1.22,
+                      color: palette.accent,
+                    },
+                    content.subhead
+                  )
+                : el({ display: "flex" }),
+            ]
+          ),
+          content.cta
+            ? el(
+                {
+                  display: "flex",
+                  alignSelf: "flex-start",
+                  borderRadius: `${999 * scale}px`,
+                  backgroundColor: palette.accent,
+                  padding: `${16 * scale}px ${24 * scale}px`,
+                  color: palette.neutralDark,
+                  fontFamily: fonts.heading,
+                  fontWeight: 700,
+                  fontSize: `${22 * scale}px`,
+                },
+                content.cta
+              )
+            : el({ display: "flex" }),
+        ]
+      ),
+    ]
+  );
+}
+
 
 function buildNode(
   type: CollateralType,
   tokens: DesignTokens,
   content: CollateralContent,
   fonts: { heading: string; body: string },
-  visualImageDataUrl?: string
+  visualImageDataUrl?: string,
+  useTemplateFrame = true
 ): SatoriNode {
   if (type === "business-card") return businessCard(tokens, content, fonts);
   if (type === "poster") {
-    return socialAd(tokens, content, fonts, "square", visualImageDataUrl);
+    return socialAd(
+      tokens,
+      content,
+      fonts,
+      "square",
+      visualImageDataUrl,
+      useTemplateFrame
+    );
   }
-  return socialAd(tokens, content, fonts, "portrait", visualImageDataUrl);
+  return socialAd(
+    tokens,
+    content,
+    fonts,
+    "portrait",
+    visualImageDataUrl,
+    useTemplateFrame
+  );
 }
 
 export type RenderedCollateral = {
@@ -997,17 +1141,24 @@ export async function renderCollateral(
   type: CollateralType,
   tokens: DesignTokens,
   content: CollateralContent,
-  options: { visualImageDataUrl?: string } = {}
+  options: { visualImageDataUrl?: string; useTemplateFrame?: boolean } = {}
 ): Promise<RenderedCollateral> {
   const { width, height } = DIMENSIONS[type];
   const fonts = await loadBrandFonts(
     tokens.typography.headingFamily,
     tokens.typography.bodyFamily
   );
-  const node = buildNode(type, tokens, content, {
-    heading: tokens.typography.headingFamily,
-    body: tokens.typography.bodyFamily,
-  }, options.visualImageDataUrl);
+  const node = buildNode(
+    type,
+    tokens,
+    content,
+    {
+      heading: tokens.typography.headingFamily,
+      body: tokens.typography.bodyFamily,
+    },
+    options.visualImageDataUrl,
+    options.useTemplateFrame ?? true
+  );
   const svg = await satori(node as never, { width, height, fonts });
   return { svg, width, height };
 }

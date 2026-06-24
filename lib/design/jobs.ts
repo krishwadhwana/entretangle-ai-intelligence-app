@@ -43,7 +43,9 @@ const LogoPayloadSchema = BasePayloadSchema.extend({
 const CollateralPayloadSchema = BasePayloadSchema.extend({
   type: CollateralTypeSchema,
   brief: z.string().trim().max(2000).default(""),
-  visualMode: z.enum(["layout", "ai", "product"]).default("layout"),
+  useTemplates: z.boolean().default(true),
+  useAiVisual: z.boolean().default(false),
+  useProductImages: z.boolean().default(false),
   visualBrief: z.string().trim().max(2000).default(""),
   content: CollateralContentSchema.optional(),
 });
@@ -185,12 +187,13 @@ export async function runDesignStudioJob(args: {
         payload.brief
       ));
     const shouldGenerateVisual =
-      payload.type !== "business-card" && payload.visualMode !== "layout";
+      payload.type !== "business-card" &&
+      (payload.useAiVisual || payload.useProductImages);
     const visualBrief =
       payload.visualBrief ||
-      (payload.visualMode === "product"
+      (payload.useProductImages
         ? "Use the uploaded product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
-        : "");
+        : "Create a polished campaign visual for this social ad.");
     const visual =
       shouldGenerateVisual
         ? await callAdVisualImage({
@@ -201,12 +204,12 @@ export async function runDesignStudioJob(args: {
             brandKit,
             visualBrief,
             copy: content,
-            productImages:
-              payload.visualMode === "product" ? productImages : undefined,
+            productImages: payload.useProductImages ? productImages : undefined,
           })
         : null;
     const { svg, width, height } = await renderCollateral(payload.type, tokens, content, {
       visualImageDataUrl: visual?.dataUrl,
+      useTemplateFrame: payload.useTemplates,
     });
     const asset = DesignAssetSchema.parse({
       id: assetId(payload.type, content.brandName),
