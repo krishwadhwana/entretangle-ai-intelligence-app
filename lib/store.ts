@@ -647,6 +647,17 @@ function sameWorkspaceWhere(scope: WorkspaceNodeScope, projectId?: string | null
     : { scope, projectId: null };
 }
 
+function workspaceSortOrder(date?: Date | string | number | null): number {
+  const millis =
+    date instanceof Date
+      ? date.getTime()
+      : typeof date === "string" || typeof date === "number"
+        ? new Date(date).getTime()
+        : Date.now();
+  const safeMillis = Number.isFinite(millis) ? millis : Date.now();
+  return Math.min(2_147_483_647, Math.floor(safeMillis / 1000));
+}
+
 async function assertWorkspaceParent(
   input: {
     scope: WorkspaceNodeScope;
@@ -784,7 +795,7 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
           kind: "folder",
           title: organizer.folderName || "Untitled folder",
           note: organizer.folderNote,
-          sortOrder: project.updatedAt.getTime(),
+          sortOrder: workspaceSortOrder(project.updatedAt),
         });
         parentId = folder.id;
       }
@@ -796,7 +807,7 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
       note: organizer.projectNote,
       parentId,
       refProjectId: project.id,
-      sortOrder: project.updatedAt.getTime(),
+      sortOrder: workspaceSortOrder(project.updatedAt),
     });
   }
 }
@@ -839,7 +850,7 @@ async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
       title: folder.name,
       note: folder.description,
       moduleId: folder.moduleId,
-      sortOrder: new Date(folder.createdAt).getTime() || 0,
+      sortOrder: workspaceSortOrder(folder.createdAt),
     });
   }
 }
@@ -894,7 +905,7 @@ export async function createWorkspaceNode(input: {
     note: input.note?.trim() ?? "",
     moduleId: input.moduleId ?? null,
     payload: input.payload,
-    sortOrder: Date.now(),
+    sortOrder: workspaceSortOrder(),
   });
   return workspaceNodeToWire(row);
 }
@@ -981,7 +992,7 @@ export async function moveWorkspaceProjects(input: {
         data: {
           title: project.name,
           parentId: input.parentId ?? null,
-          sortOrder: Date.now(),
+          sortOrder: workspaceSortOrder(),
         },
       });
       if (existing.length > 1) {
@@ -996,7 +1007,7 @@ export async function moveWorkspaceProjects(input: {
         title: project.name,
         refProjectId: project.id,
         parentId: input.parentId ?? null,
-        sortOrder: project.updatedAt.getTime(),
+        sortOrder: workspaceSortOrder(project.updatedAt),
       });
     }
     nodes.push(workspaceNodeToWire(row));
@@ -1033,7 +1044,7 @@ export async function saveProjectExportNode(
       dossier: input.dossier,
       savedAt: new Date().toISOString(),
     },
-    sortOrder: Date.now(),
+    sortOrder: workspaceSortOrder(),
   });
   return workspaceNodeToWire(row);
 }
