@@ -180,6 +180,7 @@ const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
 const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
 const FINANCIALS_COMPLETION_BUDGET = 6000;
 const PRODUCT_IMAGE_TIMEOUT_MS = 25_000;
+const DESIGN_IMAGE_TIMEOUT_MS = 120_000;
 
 function baseParams(
   model: string = config.model
@@ -1645,6 +1646,58 @@ export async function callSiteGenerator(
     requestTimeoutMs: DESIGN_SITE_TIMEOUT_MS,
     requestMaxRetries: 0,
   });
+}
+
+export async function callAdVisualImage(args: {
+  projectId: string;
+  type: CollateralType;
+  profile: ClientProfile;
+  tokens: DesignTokens;
+  brandKit: BrandKit | null;
+  visualBrief: string;
+  copy: CollateralContent;
+}): Promise<{ dataUrl: string; prompt: string }> {
+  const prompt = [
+    `Create the main advertising visual for a ${args.type} social ad.`,
+    `Founder visual brief: ${args.visualBrief}`,
+    `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
+    `Category: ${args.profile.category || "unknown"}.`,
+    args.brandKit?.brandIdentity?.positioning
+      ? `Positioning: ${args.brandKit.brandIdentity.positioning}.`
+      : "",
+    `Brand palette: primary ${args.tokens.palette.primary}, secondary ${args.tokens.palette.secondary}, accent ${args.tokens.palette.accent}, light ${args.tokens.palette.neutralLight}, dark ${args.tokens.palette.neutralDark}.`,
+    `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
+    "Do not include readable text, logos, watermarks, UI, packaging labels, or typography in the image. Leave clean areas for overlaid ad copy. Make it polished, commercial, and specific to the brief.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const response = await client().images.generate(
+    {
+      model: process.env.IMAGE_MODEL ?? "gpt-image-1",
+      prompt,
+      n: 1,
+      size: args.type === "flyer" ? "1024x1536" : "1024x1024",
+      quality: "medium",
+      output_format: "png",
+    },
+    { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
+  );
+
+  if (response.usage) {
+    await recordProjectOnlyUsage(
+      args.projectId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      0,
+      "design.collateral"
+    );
+  }
+
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) throw new Error("Image generation returned no image.");
+  return { dataUrl: `data:image/png;base64,${b64}`, prompt };
 }
 
 /**

@@ -7,11 +7,9 @@ import type {
 import { loadBrandFonts } from "./fonts";
 
 // ---------------------------------------------------------------------------
-// Deterministic collateral rendering. The LLM supplies only the COPY; layout +
-// brand styling come straight from the design tokens, so a business card, a
-// flyer, and a poster all read as one brand. Satori turns these node trees into
-// self-contained SVGs (glyphs shaped to vector paths), which are editable,
-// downloadable, and import cleanly into Figma.
+// Collateral rendering. The LLM supplies the copy, and social ads may also
+// include an AI-generated raster visual. Satori composes the final asset as a
+// self-contained SVG with brand typography, overlays, and downloadable output.
 // ---------------------------------------------------------------------------
 
 // Minimal hyperscript: Satori accepts the JSX-compiled VDOM shape directly, so
@@ -19,7 +17,7 @@ import { loadBrandFonts } from "./fonts";
 type SatoriStyle = Record<string, string | number>;
 type SatoriNode = {
   type: string;
-  props: { style: SatoriStyle; children?: SatoriNode[] | string };
+  props: { style: SatoriStyle; children?: SatoriNode[] | string; src?: string };
 };
 
 function el(
@@ -27,6 +25,10 @@ function el(
   children?: SatoriNode[] | string
 ): SatoriNode {
   return { type: "div", props: { style, ...(children !== undefined ? { children } : {}) } };
+}
+
+function imageEl(src: string, style: SatoriStyle): SatoriNode {
+  return { type: "img", props: { src, style } };
 }
 
 const DIMENSIONS: Record<CollateralType, { width: number; height: number }> = {
@@ -298,10 +300,123 @@ function productMockup(
   );
 }
 
-// Social-first poster/flyer layout: a campaign headline, a prominent visual
-// product zone, scannable benefit chips and a clear CTA. It stays deterministic
-// SVG, but reads like a feed ad instead of a text document.
-function socialAd(
+function socialScale(variant: "portrait" | "square"): number {
+  return variant === "portrait" ? 1 : 0.86;
+}
+
+function socialFrame(
+  tokens: DesignTokens,
+  fonts: { heading: string; body: string },
+  scale: number,
+  children: SatoriNode[]
+): SatoriNode {
+  return el(
+    {
+      display: "flex",
+      flexDirection: "column",
+      width: "100%",
+      height: "100%",
+      backgroundColor: tokens.palette.neutralLight,
+      fontFamily: fonts.body,
+      padding: `${48 * scale}px`,
+    },
+    children
+  );
+}
+
+function socialHeader(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  scale: number,
+  badge: string
+): SatoriNode {
+  const { palette } = tokens;
+  return el(
+    {
+      display: "flex",
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+    },
+    [
+      el(
+        {
+          display: "flex",
+          flexDirection: "column",
+          maxWidth: `${590 * scale}px`,
+        },
+        [
+          el(
+            {
+              display: "flex",
+              fontFamily: fonts.heading,
+              fontWeight: 700,
+              fontSize: `${34 * scale}px`,
+              letterSpacing: "0px",
+              color: palette.neutralDark,
+            },
+            content.brandName
+          ),
+          content.tagline
+            ? el(
+                {
+                  display: "flex",
+                  marginTop: `${6 * scale}px`,
+                  fontSize: `${18 * scale}px`,
+                  color: palette.secondary,
+                },
+                content.tagline
+              )
+            : el({ display: "flex" }),
+        ]
+      ),
+      el(
+        {
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: `${12 * scale}px ${18 * scale}px`,
+          borderRadius: `${999 * scale}px`,
+          backgroundColor: palette.primary,
+          color: palette.neutralLight,
+          fontWeight: 700,
+          fontSize: `${16 * scale}px`,
+        },
+        badge
+      ),
+    ]
+  );
+}
+
+function ctaBar(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  scale: number,
+  inverted = false
+): SatoriNode {
+  if (!content.cta) return el({ display: "flex", height: "0px" });
+  return el(
+    {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      marginTop: `${28 * scale}px`,
+      borderRadius: `${24 * scale}px`,
+      backgroundColor: inverted ? tokens.palette.neutralDark : tokens.palette.accent,
+      padding: `${24 * scale}px`,
+      color: inverted ? tokens.palette.neutralLight : tokens.palette.neutralDark,
+      fontFamily: fonts.heading,
+      fontWeight: 700,
+      fontSize: `${30 * scale}px`,
+    },
+    content.cta
+  );
+}
+
+// Product-forward feed ad: headline + prominent pack shot + scannable benefits.
+function productHeroAd(
   tokens: DesignTokens,
   content: CollateralContent,
   fonts: { heading: string; body: string },
@@ -312,30 +427,179 @@ function socialAd(
   const visualHeight = variant === "portrait" ? 520 : 390;
   const headlineSize = variant === "portrait" ? 78 : 62;
   const bodyLines = content.body.slice(0, 4);
-  return el(
-    {
-      display: "flex",
-      flexDirection: "column",
-      width: "100%",
-      height: "100%",
-      backgroundColor: palette.neutralLight,
-      fontFamily: fonts.body,
-      padding: `${48 * scale}px`,
-    },
-    [
-      el(
-        {
-          display: "flex",
-          flexDirection: "row",
-          alignItems: "center",
-          justifyContent: "space-between",
-        },
-        [
+  return socialFrame(tokens, fonts, scale, [
+    socialHeader(tokens, content, fonts, scale, "NEW"),
+    el(
+      {
+        display: "flex",
+        flexDirection: "column",
+        marginTop: `${46 * scale}px`,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            fontFamily: fonts.heading,
+            fontWeight: 700,
+            fontSize: `${headlineSize * scale}px`,
+            lineHeight: 1.05,
+            color: palette.neutralDark,
+          },
+          content.headline || content.brandName
+        ),
+        content.subhead
+          ? el(
+              {
+                display: "flex",
+                marginTop: `${20 * scale}px`,
+                maxWidth: `${790 * scale}px`,
+                fontSize: `${29 * scale}px`,
+                lineHeight: 1.25,
+                color: palette.secondary,
+              },
+              content.subhead
+            )
+          : el({ display: "flex" }),
+      ]
+    ),
+    el(
+      {
+        display: "flex",
+        flexDirection: "row",
+        flexGrow: 1,
+        marginTop: `${34 * scale}px`,
+        borderRadius: `${44 * scale}px`,
+        overflow: "hidden",
+        backgroundColor: palette.primary,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            width: "42%",
+            padding: `${36 * scale}px`,
+            backgroundColor: palette.neutralDark,
+          },
+          [
+            el(
+              {
+                display: "flex",
+                flexWrap: "wrap",
+              },
+              (bodyLines.length ? bodyLines : [content.subhead || content.headline])
+                .slice(0, 4)
+                .map((line) => benefitChip(line, tokens, scale))
+            ),
+            el(
+              {
+                display: "flex",
+                width: `${118 * scale}px`,
+                height: `${118 * scale}px`,
+                alignItems: "center",
+                justifyContent: "center",
+                borderRadius: `${999 * scale}px`,
+                backgroundColor: palette.accent,
+                color: palette.neutralDark,
+                fontFamily: fonts.heading,
+                fontWeight: 700,
+                fontSize: `${28 * scale}px`,
+                lineHeight: 1,
+              },
+              "AD"
+            ),
+          ]
+        ),
+        el(
+          {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexGrow: 1,
+            minHeight: `${visualHeight * scale}px`,
+            backgroundColor: palette.primary,
+            padding: `${24 * scale}px`,
+          },
+          [productMockup(tokens, content, fonts, scale)]
+        ),
+      ]
+    ),
+    ctaBar(tokens, content, fonts, scale),
+  ]);
+}
+
+function editorialAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square"
+): SatoriNode {
+  const { palette } = tokens;
+  const scale = socialScale(variant);
+  const headlineSize = variant === "portrait" ? 92 : 74;
+  return socialFrame(tokens, fonts, scale, [
+    socialHeader(tokens, content, fonts, scale, "GUIDE"),
+    el(
+      {
+        display: "flex",
+        flexDirection: "column",
+        justifyContent: "center",
+        flexGrow: 1,
+        marginTop: `${38 * scale}px`,
+        borderTop: `${6 * scale}px solid ${palette.primary}`,
+        borderBottom: `${6 * scale}px solid ${palette.primary}`,
+        paddingTop: `${52 * scale}px`,
+        paddingBottom: `${52 * scale}px`,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            fontFamily: fonts.heading,
+            fontWeight: 700,
+            fontSize: `${headlineSize * scale}px`,
+            lineHeight: 0.98,
+            color: palette.neutralDark,
+          },
+          content.headline || content.brandName
+        ),
+        content.subhead
+          ? el(
+              {
+                display: "flex",
+                marginTop: `${26 * scale}px`,
+                maxWidth: `${760 * scale}px`,
+                fontSize: `${32 * scale}px`,
+                lineHeight: 1.22,
+                color: palette.secondary,
+              },
+              content.subhead
+            )
+          : el({ display: "flex" }),
+      ]
+    ),
+    el(
+      {
+        display: "flex",
+        flexDirection: "row",
+        gap: `${18 * scale}px`,
+        marginTop: `${30 * scale}px`,
+      },
+      (content.body.length ? content.body : [content.cta || content.tagline])
+        .slice(0, 3)
+        .map((line, index) =>
           el(
             {
               display: "flex",
               flexDirection: "column",
-              maxWidth: `${590 * scale}px`,
+              flex: 1,
+              minHeight: `${150 * scale}px`,
+              borderRadius: `${28 * scale}px`,
+              backgroundColor:
+                index === 1 ? palette.primary : index === 2 ? palette.accent : palette.neutralDark,
+              padding: `${24 * scale}px`,
+              color: index === 2 ? palette.neutralDark : palette.neutralLight,
             },
             [
               el(
@@ -344,167 +608,378 @@ function socialAd(
                   fontFamily: fonts.heading,
                   fontWeight: 700,
                   fontSize: `${34 * scale}px`,
-                  letterSpacing: "0px",
-                  color: palette.neutralDark,
                 },
-                content.brandName
-              ),
-              content.tagline
-                ? el(
-                    {
-                      display: "flex",
-                      marginTop: `${6 * scale}px`,
-                      fontSize: `${18 * scale}px`,
-                      color: palette.secondary,
-                    },
-                    content.tagline
-                  )
-                : el({ display: "flex" }),
-            ]
-          ),
-          el(
-            {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: `${12 * scale}px ${18 * scale}px`,
-              borderRadius: `${999 * scale}px`,
-              backgroundColor: palette.primary,
-              color: palette.neutralLight,
-              fontWeight: 700,
-              fontSize: `${16 * scale}px`,
-            },
-            "NEW"
-          ),
-        ]
-      ),
-      el(
-        {
-          display: "flex",
-          flexDirection: "column",
-          marginTop: `${46 * scale}px`,
-        },
-        [
-          el(
-            {
-              display: "flex",
-              fontFamily: fonts.heading,
-              fontWeight: 700,
-              fontSize: `${headlineSize * scale}px`,
-              lineHeight: 1.05,
-              color: palette.neutralDark,
-            },
-            content.headline || content.brandName
-          ),
-          content.subhead
-            ? el(
-                {
-                  display: "flex",
-                  marginTop: `${20 * scale}px`,
-                  maxWidth: `${790 * scale}px`,
-                  fontSize: `${29 * scale}px`,
-                  lineHeight: 1.25,
-                  color: palette.secondary,
-                },
-                content.subhead
-              )
-            : el({ display: "flex" }),
-        ]
-      ),
-      el(
-        {
-          display: "flex",
-          flexDirection: "row",
-          flexGrow: 1,
-          marginTop: `${34 * scale}px`,
-          borderRadius: `${44 * scale}px`,
-          overflow: "hidden",
-          backgroundColor: palette.primary,
-        },
-        [
-          el(
-            {
-              display: "flex",
-              flexDirection: "column",
-              justifyContent: "space-between",
-              width: "42%",
-              padding: `${36 * scale}px`,
-              backgroundColor: palette.neutralDark,
-            },
-            [
-              el(
-                {
-                  display: "flex",
-                  flexWrap: "wrap",
-                },
-                (bodyLines.length ? bodyLines : [content.subhead || content.headline])
-                  .slice(0, 4)
-                  .map((line) => benefitChip(line, tokens, scale))
+                `0${index + 1}`
               ),
               el(
                 {
                   display: "flex",
-                  width: `${118 * scale}px`,
-                  height: `${118 * scale}px`,
-                  alignItems: "center",
-                  justifyContent: "center",
-                  borderRadius: `${999 * scale}px`,
-                  backgroundColor: palette.accent,
-                  color: palette.neutralDark,
-                  fontFamily: fonts.heading,
-                  fontWeight: 700,
-                  fontSize: `${28 * scale}px`,
-                  lineHeight: 1,
+                  marginTop: `${18 * scale}px`,
+                  fontSize: `${20 * scale}px`,
+                  lineHeight: 1.2,
                 },
-                "AD"
+                line
               ),
             ]
-          ),
-          el(
-            {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              flexGrow: 1,
-              minHeight: `${visualHeight * scale}px`,
-              backgroundColor: palette.primary,
-              padding: `${24 * scale}px`,
-            },
-            [productMockup(tokens, content, fonts, scale)]
-          ),
-        ]
-      ),
-      content.cta
-        ? el(
-            {
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              marginTop: `${28 * scale}px`,
-              borderRadius: `${24 * scale}px`,
-              backgroundColor: palette.accent,
-              padding: `${24 * scale}px`,
-              color: palette.neutralDark,
-              fontFamily: fonts.heading,
-              fontWeight: 700,
-              fontSize: `${30 * scale}px`,
-            },
-            content.cta
           )
-        : el({ display: "flex", height: "0px" }),
-    ]
-  );
+        )
+    ),
+    ctaBar(tokens, content, fonts, scale, true),
+  ]);
 }
+
+function offerBurstAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square"
+): SatoriNode {
+  const { palette } = tokens;
+  const scale = socialScale(variant);
+  return socialFrame(tokens, fonts, scale, [
+    socialHeader(tokens, content, fonts, scale, "OFFER"),
+    el(
+      {
+        display: "flex",
+        flexDirection: "row",
+        flexGrow: 1,
+        alignItems: "center",
+        marginTop: `${42 * scale}px`,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            flexDirection: "column",
+            width: "56%",
+          },
+          [
+            el(
+              {
+                display: "flex",
+                fontFamily: fonts.heading,
+                fontWeight: 700,
+                fontSize: `${84 * scale}px`,
+                lineHeight: 0.98,
+                color: palette.neutralDark,
+              },
+              content.headline || content.brandName
+            ),
+            content.subhead
+              ? el(
+                  {
+                    display: "flex",
+                    marginTop: `${24 * scale}px`,
+                    fontSize: `${28 * scale}px`,
+                    lineHeight: 1.25,
+                    color: palette.secondary,
+                  },
+                  content.subhead
+                )
+              : el({ display: "flex" }),
+          ]
+        ),
+        el(
+          {
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: "44%",
+            height: `${420 * scale}px`,
+            borderRadius: `${999 * scale}px`,
+            backgroundColor: palette.accent,
+            border: `${12 * scale}px solid ${palette.neutralDark}`,
+            padding: `${30 * scale}px`,
+          },
+          [
+            el(
+              {
+                display: "flex",
+                textAlign: "center",
+                fontFamily: fonts.heading,
+                fontWeight: 700,
+                fontSize: `${42 * scale}px`,
+                lineHeight: 1.05,
+                color: palette.neutralDark,
+              },
+              content.cta || "Shop now"
+            ),
+          ]
+        ),
+      ]
+    ),
+    el(
+      {
+        display: "flex",
+        flexDirection: "row",
+        flexWrap: "wrap",
+        marginTop: `${24 * scale}px`,
+      },
+      content.body.slice(0, 5).map((line) => benefitChip(line, tokens, scale))
+    ),
+  ]);
+}
+
+function proofChecklistAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square"
+): SatoriNode {
+  const { palette } = tokens;
+  const scale = socialScale(variant);
+  const lines = content.body.length
+    ? content.body.slice(0, 5)
+    : [content.subhead || content.headline, content.cta].filter(Boolean);
+  return socialFrame(tokens, fonts, scale, [
+    socialHeader(tokens, content, fonts, scale, "WHY IT WORKS"),
+    el(
+      {
+        display: "flex",
+        flexDirection: "row",
+        flexGrow: 1,
+        marginTop: `${42 * scale}px`,
+        borderRadius: `${44 * scale}px`,
+        overflow: "hidden",
+        backgroundColor: palette.neutralDark,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            width: "52%",
+            padding: `${42 * scale}px`,
+          },
+          [
+            el(
+              {
+                display: "flex",
+                fontFamily: fonts.heading,
+                fontWeight: 700,
+                fontSize: `${66 * scale}px`,
+                lineHeight: 1,
+                color: palette.neutralLight,
+              },
+              content.headline || content.brandName
+            ),
+            content.subhead
+              ? el(
+                  {
+                    display: "flex",
+                    marginTop: `${22 * scale}px`,
+                    fontSize: `${24 * scale}px`,
+                    lineHeight: 1.25,
+                    color: palette.accent,
+                  },
+                  content.subhead
+                )
+              : el({ display: "flex" }),
+            ctaBar(tokens, content, fonts, scale, false),
+          ]
+        ),
+        el(
+          {
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "center",
+            flexGrow: 1,
+            padding: `${40 * scale}px`,
+            backgroundColor: palette.primary,
+          },
+          lines.map((line) =>
+            el(
+              {
+                display: "flex",
+                flexDirection: "row",
+                alignItems: "center",
+                marginBottom: `${18 * scale}px`,
+              },
+              [
+                el(
+                  {
+                    display: "flex",
+                    width: `${34 * scale}px`,
+                    height: `${34 * scale}px`,
+                    marginRight: `${14 * scale}px`,
+                    alignItems: "center",
+                    justifyContent: "center",
+                    borderRadius: `${999 * scale}px`,
+                    backgroundColor: palette.accent,
+                    color: palette.neutralDark,
+                    fontWeight: 700,
+                    fontSize: `${18 * scale}px`,
+                  },
+                  "+"
+                ),
+                el(
+                  {
+                    display: "flex",
+                    flex: 1,
+                    fontSize: `${24 * scale}px`,
+                    lineHeight: 1.18,
+                    color: palette.neutralLight,
+                  },
+                  line
+                ),
+              ]
+            )
+          )
+        ),
+      ]
+    ),
+  ]);
+}
+
+function socialAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square",
+  visualImageDataUrl?: string
+): SatoriNode {
+  if (visualImageDataUrl) {
+    return imageLedAd(tokens, content, fonts, variant, visualImageDataUrl);
+  }
+  const layouts = [productHeroAd, editorialAd, offerBurstAd, proofChecklistAd];
+  const index = Math.floor(Math.random() * layouts.length);
+  return layouts[index](tokens, content, fonts, variant);
+}
+
+function imageLedAd(
+  tokens: DesignTokens,
+  content: CollateralContent,
+  fonts: { heading: string; body: string },
+  variant: "portrait" | "square",
+  visualImageDataUrl: string
+): SatoriNode {
+  const { palette } = tokens;
+  const scale = socialScale(variant);
+  const portrait = variant === "portrait";
+  return socialFrame(tokens, fonts, scale, [
+    socialHeader(tokens, content, fonts, scale, "AI VISUAL"),
+    el(
+      {
+        display: "flex",
+        flexDirection: portrait ? "column" : "row",
+        flexGrow: 1,
+        marginTop: `${34 * scale}px`,
+        borderRadius: `${42 * scale}px`,
+        overflow: "hidden",
+        backgroundColor: palette.neutralDark,
+      },
+      [
+        el(
+          {
+            display: "flex",
+            width: portrait ? "100%" : "58%",
+            height: portrait ? `${650 * scale}px` : "100%",
+            backgroundColor: palette.primary,
+          },
+          [
+            imageEl(visualImageDataUrl, {
+              width: "100%",
+              height: "100%",
+              objectFit: "cover",
+            }),
+          ]
+        ),
+        el(
+          {
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            flexGrow: 1,
+            padding: `${38 * scale}px`,
+            backgroundColor: palette.neutralDark,
+          },
+          [
+            el(
+              { display: "flex", flexDirection: "column" },
+              [
+                el(
+                  {
+                    display: "flex",
+                    fontFamily: fonts.heading,
+                    fontWeight: 700,
+                    fontSize: `${portrait ? 58 * scale : 46 * scale}px`,
+                    lineHeight: 1,
+                    color: palette.neutralLight,
+                  },
+                  content.headline || content.brandName
+                ),
+                content.subhead
+                  ? el(
+                      {
+                        display: "flex",
+                        marginTop: `${18 * scale}px`,
+                        fontSize: `${23 * scale}px`,
+                        lineHeight: 1.25,
+                        color: palette.accent,
+                      },
+                      content.subhead
+                    )
+                  : el({ display: "flex" }),
+              ]
+            ),
+            el(
+              {
+                display: "flex",
+                flexDirection: "column",
+                marginTop: `${26 * scale}px`,
+              },
+              content.body.slice(0, portrait ? 3 : 4).map((line) =>
+                el(
+                  {
+                    display: "flex",
+                    marginTop: `${10 * scale}px`,
+                    fontSize: `${19 * scale}px`,
+                    lineHeight: 1.22,
+                    color: palette.neutralLight,
+                  },
+                  line
+                )
+              )
+            ),
+            content.cta
+              ? el(
+                  {
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    marginTop: `${26 * scale}px`,
+                    borderRadius: `${18 * scale}px`,
+                    backgroundColor: palette.accent,
+                    padding: `${18 * scale}px`,
+                    color: palette.neutralDark,
+                    fontFamily: fonts.heading,
+                    fontWeight: 700,
+                    fontSize: `${24 * scale}px`,
+                  },
+                  content.cta
+                )
+              : el({ display: "flex" }),
+          ]
+        ),
+      ]
+    ),
+  ]);
+}
+
 
 function buildNode(
   type: CollateralType,
   tokens: DesignTokens,
   content: CollateralContent,
-  fonts: { heading: string; body: string }
+  fonts: { heading: string; body: string },
+  visualImageDataUrl?: string
 ): SatoriNode {
   if (type === "business-card") return businessCard(tokens, content, fonts);
-  if (type === "poster") return socialAd(tokens, content, fonts, "square");
-  return socialAd(tokens, content, fonts, "portrait");
+  if (type === "poster") {
+    return socialAd(tokens, content, fonts, "square", visualImageDataUrl);
+  }
+  return socialAd(tokens, content, fonts, "portrait", visualImageDataUrl);
 }
 
 export type RenderedCollateral = {
@@ -521,7 +996,8 @@ export type RenderedCollateral = {
 export async function renderCollateral(
   type: CollateralType,
   tokens: DesignTokens,
-  content: CollateralContent
+  content: CollateralContent,
+  options: { visualImageDataUrl?: string } = {}
 ): Promise<RenderedCollateral> {
   const { width, height } = DIMENSIONS[type];
   const fonts = await loadBrandFonts(
@@ -531,7 +1007,7 @@ export async function renderCollateral(
   const node = buildNode(type, tokens, content, {
     heading: tokens.typography.headingFamily,
     body: tokens.typography.bodyFamily,
-  });
+  }, options.visualImageDataUrl);
   const svg = await satori(node as never, { width, height, fonts });
   return { svg, width, height };
 }

@@ -428,6 +428,7 @@ export default function DesignStudioSection({
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
   const [brief, setBrief] = useState("");
+  const [visualBrief, setVisualBrief] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const refreshStudio = useCallback(async () => {
@@ -572,7 +573,12 @@ export default function DesignStudioSection({
         const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ type, brief, sourceRunId: sourceRunId ?? null }),
+          body: JSON.stringify({
+            type,
+            brief,
+            visualBrief: type === "business-card" ? "" : visualBrief,
+            sourceRunId: sourceRunId ?? null,
+          }),
         });
         const data = await readJsonResponse(res);
         if (!res.ok) {
@@ -595,7 +601,7 @@ export default function DesignStudioSection({
         setMakingType(null);
       }
     },
-    [projectId, brief, sourceRunId, waitForJob]
+    [projectId, brief, visualBrief, sourceRunId, waitForJob]
   );
 
   const removeAsset = useCallback(
@@ -1096,8 +1102,15 @@ export default function DesignStudioSection({
             <input
               value={brief}
               onChange={(e) => setBrief(e.target.value)}
-              placeholder="Optional social ad brief — e.g. 'Instagram launch ad for monsoon hydration combo, show premium product focus, 20% off'"
+              placeholder="Optional copy brief — e.g. 'Instagram launch ad for monsoon hydration combo, 20% off'"
               className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
+            <textarea
+              value={visualBrief}
+              onChange={(e) => setVisualBrief(e.target.value)}
+              placeholder="Optional AI visual brief for flyer/poster — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, no text'"
+              rows={3}
+              className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
             <div className="flex flex-wrap gap-2">
               {COLLATERAL_TYPES.map(({ type, label }) => (

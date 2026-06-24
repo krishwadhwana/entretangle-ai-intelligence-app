@@ -1,7 +1,13 @@
 import { z } from "zod";
 import { renderCollateral, COLLATERAL_LABELS } from "./collateral";
 import { buildLogoVariants } from "./logo";
-import { callCollateralCopy, callDesignTokens, callLogoMarks, callSiteGenerator } from "../llm";
+import {
+  callAdVisualImage,
+  callCollateralCopy,
+  callDesignTokens,
+  callLogoMarks,
+  callSiteGenerator,
+} from "../llm";
 import {
   CollateralContentSchema,
   CollateralTypeSchema,
@@ -34,6 +40,7 @@ const LogoPayloadSchema = BasePayloadSchema.extend({
 const CollateralPayloadSchema = BasePayloadSchema.extend({
   type: CollateralTypeSchema,
   brief: z.string().trim().max(2000).default(""),
+  visualBrief: z.string().trim().max(2000).default(""),
   content: CollateralContentSchema.optional(),
 });
 
@@ -138,7 +145,21 @@ export async function runDesignStudioJob(args: {
         brandKit,
         payload.brief
       ));
-    const { svg, width, height } = await renderCollateral(payload.type, tokens, content);
+    const visual =
+      payload.visualBrief && payload.type !== "business-card"
+        ? await callAdVisualImage({
+            projectId: args.projectId,
+            type: payload.type,
+            profile,
+            tokens,
+            brandKit,
+            visualBrief: payload.visualBrief,
+            copy: content,
+          })
+        : null;
+    const { svg, width, height } = await renderCollateral(payload.type, tokens, content, {
+      visualImageDataUrl: visual?.dataUrl,
+    });
     const asset = DesignAssetSchema.parse({
       id: assetId(payload.type, content.brandName),
       type: payload.type,
@@ -148,6 +169,7 @@ export async function runDesignStudioJob(args: {
       width,
       height,
       content,
+      ...(payload.visualBrief ? { visualBrief: payload.visualBrief } : {}),
       createdAt: new Date().toISOString(),
     });
     const studio = await saveDesignAsset(args.projectId, asset);

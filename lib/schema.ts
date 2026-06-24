@@ -1447,9 +1447,8 @@ export const DesignTokensSchema = z.object({
 });
 export type DesignTokens = z.infer<typeof DesignTokensSchema>;
 
-// One generated marketing-collateral piece. The LLM writes only the COPY
-// (content); the layout is rendered deterministically by lib/design from the
-// design tokens, so a card/flyer/poster all share the brand identity.
+// One generated marketing-collateral piece. The LLM writes the copy; social ads
+// can also include an AI-generated visual scene requested by the founder.
 export const CollateralTypeSchema = z.enum([
   "business-card",
   "flyer",
@@ -1487,6 +1486,7 @@ export const DesignAssetSchema = z.object({
   width: z.number(),
   height: z.number(),
   content: CollateralContentSchema,
+  visualBrief: z.string().optional(),
   createdAt: z.string(),
 });
 export type DesignAsset = z.infer<typeof DesignAssetSchema>;
