@@ -2351,7 +2351,12 @@ export async function callSiteGenerator(
   brief: string,
   productImages: ProductImageInput[] = [],
   websiteAnalysis: WebsiteAnalysis | null = null,
-  brandAssets: { brandName: string; logoSvg: string } | null = null
+  brandAssets: {
+    brandName: string;
+    logoSvg?: string;
+    logoImageDataUrl?: string;
+    logoSourceUrl?: string;
+  } | null = null
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${

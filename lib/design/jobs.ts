@@ -48,6 +48,7 @@ import type {
   ProductImageRef,
   SiteFile,
   WebsiteAnalysis,
+  WebsiteCollectedImage,
 } from "../schema";
 
 const BasePayloadSchema = z.object({
@@ -202,6 +203,74 @@ function websiteLogoSvg(logos: LogoAsset[] | undefined): string | null {
     logo.variants.find((variant) => variant.kind === "icon") ??
     null;
   return preferred ? sanitizeSvg(preferred.svg) : null;
+}
+
+type WebsiteLogoAsset = {
+  logoSvg: string | null;
+  logoImageDataUrl: string | null;
+  sourceUrl?: string;
+};
+
+function logoImageCandidates(
+  websiteAnalysis: WebsiteAnalysis | null
+): WebsiteCollectedImage[] {
+  const images = websiteAnalysis?.infoCollected?.productImages ?? [];
+  return images.filter((image) => {
+    const haystack = `${image.kind} ${image.alt ?? ""} ${image.caption ?? ""} ${
+      image.url
+    }`.toLowerCase();
+    return image.kind === "logo" || /\b(logo|wordmark|brandmark)\b/.test(haystack);
+  });
+}
+
+function logoMimeFromUrl(url: string): string | null {
+  const pathname = new URL(url).pathname.toLowerCase();
+  if (pathname.endsWith(".svg")) return "image/svg+xml";
+  if (pathname.endsWith(".png")) return "image/png";
+  if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) return "image/jpeg";
+  if (pathname.endsWith(".webp")) return "image/webp";
+  if (pathname.endsWith(".gif")) return "image/gif";
+  return null;
+}
+
+async function fetchWebsiteLogoAsset(
+  websiteAnalysis: WebsiteAnalysis | null
+): Promise<WebsiteLogoAsset | null> {
+  for (const image of logoImageCandidates(websiteAnalysis).slice(0, 4)) {
+    if (!/^https?:\/\//i.test(image.url)) continue;
+    try {
+      const response = await fetch(image.url, {
+        redirect: "follow",
+        headers: {
+          Accept: "image/svg+xml,image/png,image/jpeg,image/webp,image/gif,*/*",
+        },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) continue;
+      const mimeType =
+        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
+        logoMimeFromUrl(image.url) ||
+        "";
+      const buffer = Buffer.from(await response.arrayBuffer());
+      if (!buffer.length || buffer.length > 2 * 1024 * 1024) continue;
+
+      if (mimeType === "image/svg+xml" || image.url.toLowerCase().includes(".svg")) {
+        const logoSvg = sanitizeSvg(buffer.toString("utf8"));
+        if (logoSvg) return { logoSvg, logoImageDataUrl: null, sourceUrl: image.url };
+        continue;
+      }
+      if (/^image\/(?:png|jpe?g|webp|gif)$/i.test(mimeType)) {
+        return {
+          logoSvg: null,
+          logoImageDataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+          sourceUrl: image.url,
+        };
+      }
+    } catch {
+      // Try the next collected logo candidate.
+    }
+  }
+  return null;
 }
 
 function websiteHeroSubhead(
@@ -380,6 +449,7 @@ function normalizeSiteFiles(args: {
   brandName: string;
   heroSubhead: string;
   logoSvg: string | null;
+  logoImageDataUrl: string | null;
 }): SiteFile[] {
   const rawFiles = args.out.files.map((file, index) => ({
     ...file,
@@ -433,6 +503,7 @@ function normalizeSiteFiles(args: {
         {
           brandName: args.brandName,
           logoSvg: args.logoSvg,
+          logoImageDataUrl: args.logoImageDataUrl,
           heroSubhead: args.heroSubhead,
         }
       )
@@ -762,7 +833,19 @@ export async function runDesignStudioJob(args: {
   const siteProductImages = [websiteHeroVisual, ...productImages].slice(0, 6);
   const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
   const heroSubhead = websiteHeroSubhead(profile, project.name, websiteAnalysis);
-  const logoSvg = websiteLogoSvg(project.ownerDashboard?.designStudio?.logos);
+  const sourceLogo = await fetchWebsiteLogoAsset(websiteAnalysis);
+  const generatedLogoSvg = websiteLogoSvg(project.ownerDashboard?.designStudio?.logos);
+  const logoSvg = sourceLogo?.logoSvg ?? generatedLogoSvg;
+  const logoImageDataUrl = sourceLogo?.logoImageDataUrl ?? null;
+  if (sourceLogo) {
+    await appendJobProgress(args.jobId, {
+      label: "Using source-site logo",
+      detail:
+        "Found and embedded the actual logo collected from Overview, so the website header uses the brand's real mark.",
+      code: `brandAssets.logoSourceUrl = "${sourceLogo.sourceUrl ?? "overview"}";`,
+      status: "running",
+    });
+  }
   await appendJobProgress(args.jobId, {
     label: "GPT 5.5 is coding the site",
     detail:
@@ -780,7 +863,14 @@ export async function runDesignStudioJob(args: {
     payload.brief,
     siteProductImages,
     websiteAnalysis,
-    logoSvg ? { brandName, logoSvg } : null
+    logoSvg || logoImageDataUrl
+      ? {
+          brandName,
+          logoSvg: logoSvg ?? undefined,
+          logoImageDataUrl: logoImageDataUrl ?? undefined,
+          logoSourceUrl: sourceLogo?.sourceUrl,
+        }
+      : null
   );
   const productImagePlaceholders = siteProductImages.map((image, index) => ({
     placeholder: `PRODUCT_IMAGE_${index + 1}`,
@@ -795,6 +885,7 @@ export async function runDesignStudioJob(args: {
     brandName,
     heroSubhead,
     logoSvg,
+    logoImageDataUrl,
   });
   const html = files.find((file) => file.path === "index.html")?.content ?? files[0].content;
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");

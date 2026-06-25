@@ -1716,7 +1716,9 @@ Hard requirements:
   brand mark in the header: do not place a small all-caps brand label next to a
   second larger logo/wordmark, and do not repeat the same brand text twice in
   the top bar. If brandAssets.logoSvg is provided, use that exact inline SVG as
-  the sole header logo/wordmark instead of recreating the brand in text.
+  the sole header logo/wordmark instead of recreating the brand in text. If
+  brandAssets.logoImageDataUrl is provided, use that exact image as the sole
+  header logo/wordmark.
 - Use the token palette via CSS custom properties (:root { --primary: ... }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility. Avoid
   one-note palettes and avoid making the site mostly purple/blue gradients,
@@ -1783,7 +1785,12 @@ export function siteGenUser(
     availableForInlineEmbed: boolean;
   }> = [],
   websiteAnalysis: WebsiteAnalysis | null = null,
-  brandAssets: { brandName: string; logoSvg: string } | null = null
+  brandAssets: {
+    brandName: string;
+    logoSvg?: string;
+    logoImageDataUrl?: string;
+    logoSourceUrl?: string;
+  } | null = null
 ): string {
   return JSON.stringify(
     {

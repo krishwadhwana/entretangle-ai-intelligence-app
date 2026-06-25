@@ -44,6 +44,7 @@ type ProductImagePlaceholder = {
 type SitePolishOptions = {
   brandName?: string | null;
   logoSvg?: string | null;
+  logoImageDataUrl?: string | null;
   heroSubhead?: string | null;
 };
 
@@ -80,7 +81,7 @@ html,body{max-width:100%;overflow-x:hidden}
 body *{box-sizing:border-box}
 .et-site-header{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:clamp(18px,3vw,44px);min-height:82px;padding:clamp(18px,2.6vw,32px) clamp(22px,6vw,88px);color:#fff;background:linear-gradient(180deg,rgba(0,0,0,.28),rgba(0,0,0,0));pointer-events:auto}
 .et-site-logo{display:inline-flex;align-items:center;width:min(220px,34vw);height:52px;color:inherit;text-decoration:none}
-.et-site-logo svg{display:block;width:100%;height:100%;max-height:52px;overflow:visible}
+.et-site-logo svg,.et-site-logo img{display:block;width:100%;height:100%;max-height:52px;object-fit:contain;object-position:left center;overflow:visible}
 .et-site-header nav{display:flex;align-items:center;justify-content:flex-end;gap:clamp(18px,3vw,42px);margin-left:auto}
 .et-site-header nav a{color:inherit;text-decoration:none;font-size:12px;font-weight:850;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
 header,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0;min-height:72px}
@@ -174,15 +175,24 @@ function polishHeroSubhead(html: string, heroSubhead: string | null | undefined)
   );
 }
 
-function siteHeaderMarkup(brandName: string, logoSvg: string): string {
+function siteHeaderMarkup(brandName: string, logoMarkup: string): string {
   const label = escapeHtml(brandName || "Brand");
-  return `<header class="et-site-header"><a class="et-site-logo" href="#" aria-label="${label}">${logoSvg}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
+  return `<header class="et-site-header"><a class="et-site-logo" href="#" aria-label="${label}">${logoMarkup}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
 }
 
 function applyLogoHeader(html: string, options: SitePolishOptions): string {
   const logoSvg = options.logoSvg?.trim();
-  if (!logoSvg || !/<svg[\s>]/i.test(logoSvg)) return html;
-  const header = siteHeaderMarkup(options.brandName || "Brand", logoSvg);
+  const logoImageDataUrl = options.logoImageDataUrl?.trim();
+  const logoMarkup =
+    logoSvg && /<svg[\s>]/i.test(logoSvg)
+      ? logoSvg
+      : logoImageDataUrl && /^data:image\/(?:png|jpe?g|webp|gif|svg\+xml);/i.test(logoImageDataUrl)
+        ? `<img src="${escapeHtml(logoImageDataUrl)}" alt="${escapeHtml(
+            options.brandName || "Brand"
+          )} logo">`
+        : "";
+  if (!logoMarkup) return html;
+  const header = siteHeaderMarkup(options.brandName || "Brand", logoMarkup);
   if (/<header\b[\s\S]*?<\/header>/i.test(html)) {
     return html.replace(/<header\b[\s\S]*?<\/header>/i, header);
   }
