@@ -28,13 +28,19 @@ import {
   saveSiteAsset,
   saveWebsiteAnalysis,
 } from "../store";
-import { looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
+import { ensureProductImageryHtml, looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
 import {
   fetchScrapedProductImage,
   readProductImageFile,
   scrapedProductImageCandidates,
 } from "../productImages";
-import type { ProductImageRef, WebsiteAnalysis } from "../schema";
+import type {
+  BrandKit,
+  ClientProfile,
+  DesignTokens,
+  ProductImageRef,
+  WebsiteAnalysis,
+} from "../schema";
 
 const BasePayloadSchema = z.object({
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
@@ -221,6 +227,75 @@ function replaceProductImagePlaceholders(
   }, html);
 }
 
+function dataUrlByteSize(dataUrl: string): number {
+  const match = dataUrl.match(/^data:[^;,]+;base64,(.+)$/);
+  if (!match) return 0;
+  return Buffer.byteLength(match[1], "base64");
+}
+
+async function generateWebsiteHeroVisual(args: {
+  projectId: string;
+  profile: ClientProfile;
+  tokens: DesignTokens;
+  brandKit: BrandKit | null;
+  brief: string;
+  productImages: ProductImageInput[];
+}): Promise<ProductImageInput> {
+  const productName = args.profile.product || args.profile.category || "brand";
+  const heroProducts = args.profile.productDetails?.heroProducts?.length
+    ? ` Hero products: ${args.profile.productDetails.heroProducts.join(", ")}.`
+    : "";
+  const differentiation = args.profile.productDetails?.differentiation
+    ? ` Differentiation: ${args.profile.productDetails.differentiation}.`
+    : "";
+  const visual = await callAdVisualImage({
+    projectId: args.projectId,
+    type: "ad",
+    profile: args.profile,
+    tokens: args.tokens,
+    brandKit: args.brandKit,
+    visualBrief: [
+      "Create the main website hero campaign visual, not a social feed layout.",
+      "It should feel like the strongest ad creative expanded into a premium landing-page hero: product-first, editorial, commercial, immersive, with clean copy space and no readable text.",
+      args.brief ? `Founder website brief: ${args.brief}` : "",
+      heroProducts,
+      differentiation,
+    ]
+      .filter(Boolean)
+      .join(" "),
+    copy: {
+      brandName: productName,
+      tagline: args.profile.goal || args.profile.ambitions || "",
+      headline: productName,
+      subhead: args.profile.targetAudience || args.profile.priceBand || "",
+      body: [],
+      cta: "Shop now",
+      contact: {
+        name: "",
+        role: "",
+        email: "",
+        phone: "",
+        website: "",
+      },
+    },
+    productImages: args.productImages,
+  });
+  return {
+    ref: {
+      id: `website-hero-${Date.now().toString(36)}`,
+      name: "Generated website campaign hero",
+      url: "#generated-website-hero",
+      mimeType: "image/png",
+      size: dataUrlByteSize(visual.dataUrl),
+      uploadedAt: new Date().toISOString(),
+      visualSummary:
+        "Generated landing-page hero visual produced through the Midjourney scene, Gemini product-composite, and OpenAI fallback pipeline.",
+      tags: ["generated", "website", "hero", "midjourney", "gemini"],
+    },
+    dataUrl: visual.dataUrl,
+  };
+}
+
 export async function runDesignStudioJob(args: {
   type: "design_tokens" | "design_logo" | "design_collateral" | "design_site";
   projectId: string;
@@ -375,6 +450,15 @@ export async function runDesignStudioJob(args: {
     profile.productImages,
     websiteAnalysis
   );
+  const websiteHeroVisual = await generateWebsiteHeroVisual({
+    projectId: args.projectId,
+    profile,
+    tokens,
+    brandKit,
+    brief: payload.brief,
+    productImages,
+  });
+  const siteProductImages = [websiteHeroVisual, ...productImages].slice(0, 6);
   const out = await callSiteGenerator(
     payload.sourceRunId,
     args.projectId,
@@ -382,11 +466,27 @@ export async function runDesignStudioJob(args: {
     tokens,
     brandKit,
     payload.brief,
-    productImages,
+    siteProductImages,
     websiteAnalysis
   );
+  const productImagePlaceholders = siteProductImages.map((image, index) => ({
+    placeholder: `PRODUCT_IMAGE_${index + 1}`,
+    name: image.ref.name,
+    visualSummary: image.ref.visualSummary ?? "",
+    availableForInlineEmbed: Boolean(image.dataUrl),
+  }));
+  const imageLedHtml = ensureProductImageryHtml(out.html, productImagePlaceholders, {
+    brandName: profile.product || project.name,
+    tagline:
+      profile.productDetails?.differentiation ||
+      profile.targetAudience ||
+      profile.goal ||
+      profile.ambitions ||
+      profile.product ||
+      project.name,
+  });
   const html = sanitizeSiteHtml(
-    replaceProductImagePlaceholders(out.html, productImages)
+    replaceProductImagePlaceholders(imageLedHtml, siteProductImages)
   );
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");
   const site = SiteAssetSchema.parse({

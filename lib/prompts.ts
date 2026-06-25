@@ -1673,10 +1673,17 @@ Hard requirements:
 - ALL styling in one inline <style> block. NO external CSS, NO frameworks, NO
   build step. You MAY include ONE Google Fonts <link> for the token fonts.
 - NO JavaScript at all: no <script>, no inline on* handlers, no trackers, no
-  external images. If productImages are provided, you MAY use their exact
-  placeholders as <img src="PRODUCT_IMAGE_1">, etc.; otherwise use CSS
-  color/shape backgrounds or inline SVG only. Self-contained so it can be
-  deployed as a static index.html.
+  external images. If productImages are provided, you MUST use their exact
+  placeholders as <img src="PRODUCT_IMAGE_1">, etc. in visible product-led
+  layouts. Otherwise use CSS color/shape backgrounds or inline SVG only.
+  Self-contained so it can be deployed as a static index.html.
+- When productImages are provided, the first viewport must look like a campaign
+  creative or premium product page, not a generic SaaS landing page: include a
+  large hero product image/collage, at least one secondary product image below
+  the fold, and product-specific alt text from the image names/summaries.
+- Use photographic/product composition as a primary design material: layered
+  image panels, editorial crops, texture blocks, campaign badges, proof strips,
+  or product cards. Do not make the page mostly text cards with tiny images.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
@@ -1687,10 +1694,11 @@ Hard requirements:
   unsupported claims.
 
 Sections to include, written in the brand voice and specific to THIS venture:
-hero (headline + subhead + primary CTA), 3-4 value props / features, a short
-"how it works" or social-proof band, an email-capture CTA (a styled form that
-posts nowhere — action="#"), and a footer. Copy must be real and specific, not
-lorem ipsum.
+image-led hero (headline + subhead + primary CTA + product visual), 3-4 value
+props / features, a product/editorial showcase using available images when
+present, a short "how it works" or social-proof band, an email-capture CTA (a
+styled form that posts nowhere — action="#"), and a footer. Copy must be real
+and specific, not lorem ipsum.
 
 Output JSON ONLY, no markdown fences, matching exactly:
 {"title","html"}
