@@ -39,7 +39,7 @@ const DIMENSIONS: Record<CollateralType, { width: number; height: number }> = {
 };
 
 export const COLLATERAL_LABELS: Record<CollateralType, string> = {
-  ad: "Ad creative",
+  ad: "Ad campaign creative",
   "business-card": "Business card",
   flyer: "Flyer",
   poster: "Poster",

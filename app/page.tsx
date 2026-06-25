@@ -271,6 +271,7 @@ type BusinessModuleId =
   | "businessCard"
   | "website"
   | "social"
+  | "adCampaigns"
   | "adSpend"
   | "exportImport"
   | "manufacturing"
@@ -377,7 +378,13 @@ const MODULE_CATALOG: Array<{
     id: "social",
     label: "Social media",
     icon: Share2,
-    description: "Content pillars, platform plans, posts, and campaigns.",
+    description: "Content pillars, platform plans, organic posts, and cadence.",
+  },
+  {
+    id: "adCampaigns",
+    label: "Ad campaigns",
+    icon: Megaphone,
+    description: "Paid ad angles, launch offers, creatives, and test variants.",
   },
   {
     id: "adSpend",
@@ -511,6 +518,13 @@ function buildBusinessModules({
       reason = physical
         ? "Useful for sales, retail, supplier, and partnership conversations."
         : "Explain how you would like to use business cards, since this appears to be more digital than physical.";
+    }
+
+    if (module.id === "adCampaigns") {
+      relevance = hasProfile ? "likely" : "needs-context";
+      reason = hasProfile
+        ? "Ad campaign generation can use the profile, product references, source website, and brand direction."
+        : "Finish the project profile before ad campaign generation will be useful.";
     }
 
     if (module.id === "adSpend") {
@@ -2329,8 +2343,8 @@ function GenerationControls({
             Variant controls
           </h3>
           <p className="mt-1 text-xs leading-5 text-neutral-500">
-            Pick how many logo, website, social, or collateral versions a user
-            wants before generation starts.
+            Pick how many logo, website, ad campaign, or collateral versions a
+            user wants before generation starts.
           </p>
         </div>
         <Target className="h-4 w-4 text-neutral-400" />
@@ -2521,6 +2535,7 @@ function OperationsPanel({
   const [pixelNotes, setPixelNotes] = useState(metaPixel.notes);
   const operationIds: BusinessModuleId[] = [
     "social",
+    "adCampaigns",
     "adSpend",
     "exportImport",
     "manufacturing",
@@ -2531,7 +2546,8 @@ function OperationsPanel({
     logo: [],
     businessCard: [],
     website: [],
-    social: ["Campaign folders", "Post concepts", "Asset rating queue"],
+    social: ["Content calendar", "Post concepts", "Asset rating queue"],
+    adCampaigns: ["Campaign packs", "Creative variants", "Offer tests"],
     adSpend: ["Budget tests", "CAC assumptions", "Meta Pixel ready later"],
     exportImport: ["Market entry", "Duties and compliance", "Importer notes"],
     manufacturing: ["Suppliers", "MOQ and costing", "Packaging and QA"],
@@ -4908,7 +4924,7 @@ function IntakePageInner() {
       id: asset.id,
       title: asset.title,
       type: asset.type,
-      module: asset.type === "ad" ? "Ads" : "Collateral",
+      module: asset.type === "ad" ? "Ad campaigns" : "Collateral",
       description:
         asset.visualBrief ||
         asset.content.headline ||
@@ -5059,7 +5075,8 @@ function IntakePageInner() {
       module.id === "brand" ||
       module.id === "logo" ||
       module.id === "businessCard" ||
-      module.id === "website"
+      module.id === "website" ||
+      module.id === "adCampaigns"
     ) {
       setActiveWorkspaceSection("workspace-design");
       return;

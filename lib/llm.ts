@@ -2097,7 +2097,7 @@ export async function callAdVisualImage(args: {
     })
     .join("\n");
   const prompt = [
-    `Create the main advertising visual for a ${args.type} social ad.`,
+    `Create the main advertising visual for a ${args.type} paid ad campaign creative.`,
     `Founder visual brief: ${args.visualBrief}`,
     OHNEIS_AD_VISUAL_METHOD,
     `Venture: ${args.profile.product || args.profile.category || "brand"}.`,

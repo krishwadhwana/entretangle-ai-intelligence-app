@@ -28,6 +28,26 @@ import type {
 import { providerErrorMessage } from "@/lib/providerErrors";
 
 const AD_TYPE: CollateralType = "ad";
+const AD_CAMPAIGN_PACK_TYPE = "ad-campaign" as const;
+type CollateralRunType = CollateralType | typeof AD_CAMPAIGN_PACK_TYPE;
+
+const AD_CAMPAIGN_VARIANTS = [
+  {
+    name: "Prospecting hook",
+    angle: "lead with the sharpest new-customer problem, desire, or objection",
+    visual: "Hero product scene with broad appeal and room for headline overlay.",
+  },
+  {
+    name: "Offer test",
+    angle: "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
+    visual: "Offer-led composition with product, texture, and a clear focal area.",
+  },
+  {
+    name: "Proof retargeting",
+    angle: "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
+    visual: "Trust-building editorial/product visual that feels like the same campaign.",
+  },
+];
 
 function extractWebsiteUrl(value: string): string {
   const match = value.match(
@@ -251,7 +271,7 @@ function GeneratedAssetSection({
   type: CollateralType;
   label: string;
   assets: DesignAsset[];
-  makingType: CollateralType | null;
+  makingType: CollateralRunType | null;
   onGenerate: (type: CollateralType) => void;
   onDelete: (id: string) => void;
 }) {
@@ -487,7 +507,7 @@ export default function DesignStudioSection({
   const [deployEnabled, setDeployEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
-  const [makingType, setMakingType] = useState<CollateralType | null>(null);
+  const [makingType, setMakingType] = useState<CollateralRunType | null>(null);
   const [makingLogo, setMakingLogo] = useState(false);
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
@@ -671,56 +691,53 @@ export default function DesignStudioSection({
     }
   }, [projectId, sourceRunId, tokenDraft]);
 
-  const makeCollateral = useCallback(
-    async (type: CollateralType) => {
+  const generateCollateralAsset = useCallback(
+    async (
+      type: CollateralType,
+      options: {
+        brief?: string;
+        visualBrief?: string;
+        useTemplates?: boolean;
+        useAiVisual?: boolean;
+        useProductImages?: boolean;
+      } = {}
+    ) => {
       if (!projectId) return;
       const isSocial = type === AD_TYPE;
-      setMakingType(type);
-      setError(null);
-      try {
-        const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            type,
-            brief: isSocial ? socialBrief : collateralBrief,
-            useTemplates:
-              type === "business-card"
-                ? true
-                : isSocial
-                  ? useSocialTemplates
-                  : true,
-            useAiVisual: isSocial,
-            useProductImages:
-              type === "business-card"
-                ? false
-                : isSocial,
-            visualBrief: isSocial ? socialVisualBrief : "",
-            sourceRunId: sourceRunId ?? null,
-            sourceWebsiteUrl:
-              sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
-          }),
-        });
-        const data = await readJsonResponse(res);
-        if (!res.ok) {
-          setError(
-            providerErrorMessage(
-              data.error ?? data,
-              `Generation failed (${res.status}).`
-            )
-          );
-          return;
-        }
-        if (data.jobId) {
-          await waitForJob(String(data.jobId), "Collateral generation failed.");
-          return;
-        }
-        setAssets((data.assets as DesignAsset[]) ?? []);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Generation failed.");
-      } finally {
-        setMakingType(null);
+      const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          type,
+          brief: options.brief ?? (isSocial ? socialBrief : collateralBrief),
+          useTemplates:
+            options.useTemplates ??
+            (type === "business-card" ? true : isSocial ? useSocialTemplates : true),
+          useAiVisual: options.useAiVisual ?? isSocial,
+          useProductImages:
+            options.useProductImages ??
+            (type === "business-card" ? false : isSocial),
+          visualBrief:
+            options.visualBrief ?? (isSocial ? socialVisualBrief : ""),
+          sourceRunId: sourceRunId ?? null,
+          sourceWebsiteUrl:
+            sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
+        }),
+      });
+      const data = await readJsonResponse(res);
+      if (!res.ok) {
+        throw new Error(
+          providerErrorMessage(
+            data.error ?? data,
+            `Generation failed (${res.status}).`
+          )
+        );
       }
+      if (data.jobId) {
+        await waitForJob(String(data.jobId), "Collateral generation failed.");
+        return;
+      }
+      setAssets((data.assets as DesignAsset[]) ?? []);
     },
     [
       projectId,
@@ -734,6 +751,63 @@ export default function DesignStudioSection({
       waitForJob,
     ]
   );
+
+  const makeCollateral = useCallback(
+    async (type: CollateralType) => {
+      if (!projectId) return;
+      setMakingType(type);
+      setError(null);
+      try {
+        await generateCollateralAsset(type);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Generation failed.");
+      } finally {
+        setMakingType(null);
+      }
+    },
+    [generateCollateralAsset, projectId]
+  );
+
+  const makeAdCampaignPack = useCallback(async () => {
+    if (!projectId) return;
+    const baseBrief =
+      socialBrief.trim() ||
+      "Launch paid ad campaign using the current brand, product references, source website, and offer evidence.";
+    const baseVisualBrief =
+      socialVisualBrief.trim() ||
+      "Polished product-led campaign visual with no text in the image.";
+    setMakingType(AD_CAMPAIGN_PACK_TYPE);
+    setError(null);
+    try {
+      for (const variant of AD_CAMPAIGN_VARIANTS) {
+        await generateCollateralAsset(AD_TYPE, {
+          brief: [
+            baseBrief,
+            `Campaign variant: ${variant.name}.`,
+            `Angle: ${variant.angle}.`,
+            "Keep this as one distinct creative inside the same paid ad campaign pack.",
+          ].join("\n"),
+          useTemplates: useSocialTemplates,
+          useAiVisual: true,
+          useProductImages: true,
+          visualBrief: [
+            baseVisualBrief,
+            `Variant role: ${variant.name}. ${variant.visual}`,
+          ].join("\n"),
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Campaign generation failed.");
+    } finally {
+      setMakingType(null);
+    }
+  }, [
+    generateCollateralAsset,
+    projectId,
+    socialBrief,
+    socialVisualBrief,
+    useSocialTemplates,
+  ]);
 
   const removeAsset = useCallback(
     async (assetId: string) => {
@@ -1055,8 +1129,8 @@ export default function DesignStudioSection({
               <FileImage className="h-3.5 w-3.5" /> Product refs
             </p>
             <p className="mt-1 text-[12px] leading-relaxed text-neutral-500">
-              Scraped images from the source site that social generation can use
-              as Midjourney references and product-preservation inputs.
+              Scraped images from the source site that ad campaign generation
+              can use as Midjourney references and product-preservation inputs.
             </p>
           </div>
           <button
@@ -1367,29 +1441,43 @@ export default function DesignStudioSection({
             ) : null}
           </section>
 
-          {/* Social media generator */}
+          {/* Ad campaign generator */}
           <section className="rounded-xl border border-neutral-200 bg-white p-4">
             <div className="mb-2 flex items-center justify-between gap-3">
               <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                <Megaphone className="h-3.5 w-3.5" /> Social media
+                <Megaphone className="h-3.5 w-3.5" /> Ad campaigns
               </p>
-              <button
-                onClick={() => makeCollateral(AD_TYPE)}
-                disabled={makingType !== null}
-                className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
-              >
-                {makingType === AD_TYPE ? (
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-3.5 w-3.5" />
-                )}
-                {adAssets.length ? "Regenerate social" : "Generate social"}
-              </button>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  onClick={makeAdCampaignPack}
+                  disabled={makingType !== null}
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-900 bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
+                >
+                  {makingType === AD_CAMPAIGN_PACK_TYPE ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Rocket className="h-3.5 w-3.5" />
+                  )}
+                  Generate campaign pack
+                </button>
+                <button
+                  onClick={() => makeCollateral(AD_TYPE)}
+                  disabled={makingType !== null}
+                  className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  {makingType === AD_TYPE ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  )}
+                  Single creative
+                </button>
+              </div>
             </div>
             <input
               value={socialBrief}
               onChange={(e) => setSocialBrief(e.target.value)}
-              placeholder="Social brief — e.g. 'Instagram launch ad for barrier repair duo, 20% off'"
+              placeholder="Campaign brief — e.g. 'Instagram launch ads for barrier repair duo, 20% off'"
               className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
             <div className="mb-2 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
@@ -1424,7 +1512,7 @@ export default function DesignStudioSection({
               </div>
             ) : (
               <p className="text-[12px] text-neutral-400">
-                No social media creative yet.
+                No ad campaign creatives yet.
               </p>
             )}
           </section>

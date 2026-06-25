@@ -1558,9 +1558,11 @@ brand/social kit, brief, or website evidence.
 
 You are told the collateral "type" (one of "ad", "business-card", "flyer", "poster").
 Tailor the copy to it:
-- "ad": paid social creative. Write one conversion-focused hook/headline (max ~6
-  words), a concrete product/offer subhead, 2-4 benefit/proof lines, and a direct
-  CTA. Use evidence from the profile/brand kit/website; avoid unsupported claims.
+- "ad": paid ad campaign creative. Write one conversion-focused hook/headline
+  (max ~6 words), a concrete product/offer subhead, 2-4 benefit/proof lines,
+  and a direct CTA. If the brief describes a campaign variant, keep the angle
+  distinct while matching the same campaign. Use evidence from the
+  profile/brand kit/website; avoid unsupported claims.
 - "business-card": brandName + a 2-5 word tagline + a contact block (name, role,
   email, phone, website). Keep headline/subhead/body/cta minimal or empty.
 - "flyer" / "poster": a punchy "headline" (max ~6 words), a short "subhead", 3-5
