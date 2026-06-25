@@ -5989,7 +5989,17 @@ function IntakePageInner() {
                       return (
                         <article
                           key={p.id}
-                          className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm transition hover:border-neutral-300 hover:shadow-md"
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => switchProject(p.id)}
+                          onKeyDown={(event) => {
+                            if (event.target !== event.currentTarget) return;
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              switchProject(p.id);
+                            }
+                          }}
+                          className="cursor-pointer rounded-xl border border-neutral-200 bg-white p-3 shadow-sm transition hover:border-neutral-300 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-indigo-200"
                         >
                           <div className="flex items-start gap-3">
                             <ProjectMark project={p} />
@@ -6000,7 +6010,8 @@ function IntakePageInner() {
                                 </h3>
                                 <button
                                   type="button"
-                                  onClick={() => {
+                                  onClick={(event) => {
+                                    event.stopPropagation();
                                     if (placement) openWorkspaceNodeNote(placement);
                                     else openProjectNote(p);
                                   }}
@@ -6028,11 +6039,12 @@ function IntakePageInner() {
                                 {parentFolder || organizer.folderId ? (
                                   <button
                                     type="button"
-                                    onClick={() =>
+                                    onClick={(event) => {
+                                      event.stopPropagation();
                                       setDashboardFolderFilter(
                                         parentFolder?.id ?? organizer.folderId ?? "all",
-                                      )
-                                    }
+                                      );
+                                    }}
                                     className={`inline-flex max-w-[150px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
                                       "neutral",
                                     )}`}
@@ -6052,6 +6064,7 @@ function IntakePageInner() {
                               </div>
                             </div>
                             <label
+                              onClick={(event) => event.stopPropagation()}
                               className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-neutral-200 text-neutral-500"
                               title="Select project"
                             >
@@ -6089,7 +6102,10 @@ function IntakePageInner() {
                           <div className="mt-3 flex items-center justify-between gap-2 border-t border-neutral-100 pt-2">
                             <button
                               type="button"
-                              onClick={() => switchProject(p.id)}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                switchProject(p.id);
+                              }}
                               className="flex items-center gap-1.5 rounded-lg bg-neutral-950 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800"
                             >
                               Open
@@ -6098,7 +6114,10 @@ function IntakePageInner() {
                             <div className="flex items-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => promptRenameProject(p)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  promptRenameProject(p);
+                                }}
                                 title="Rename project"
                                 className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
                               >
@@ -6106,7 +6125,10 @@ function IntakePageInner() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => deleteProject(p.id)}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  deleteProject(p.id);
+                                }}
                                 title="Delete project"
                                 className="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
                               >
