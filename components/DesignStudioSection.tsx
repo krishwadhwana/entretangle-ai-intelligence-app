@@ -223,6 +223,22 @@ function downloadPng(asset: DesignAsset) {
   downloadPngString(asset.svg, asset.width, asset.height, asset.id);
 }
 
+function formatGeneratedAt(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown time";
+  return date.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function siteDownloadName(site: SiteAsset): string {
+  const stamp = site.createdAt.replace(/[:.]/g, "-").slice(0, 19);
+  return `index-${stamp || site.id}.html`;
+}
+
 function svgPreviewSrc(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
@@ -391,7 +407,7 @@ function LogoCard({
 }
 
 function downloadHtml(site: SiteAsset) {
-  downloadBlob(new Blob([site.html], { type: "text/html" }), "index.html");
+  downloadBlob(new Blob([site.html], { type: "text/html" }), siteDownloadName(site));
 }
 
 function openHtmlPreview(site: SiteAsset) {
@@ -402,12 +418,14 @@ function openHtmlPreview(site: SiteAsset) {
 
 function SiteCard({
   site,
+  isLatest,
   deployEnabled,
   deploying,
   onDeploy,
   onDelete,
 }: {
   site: SiteAsset;
+  isLatest: boolean;
   deployEnabled: boolean;
   deploying: boolean;
   onDeploy: (id: string) => void;
@@ -444,7 +462,23 @@ function SiteCard({
         )}
       </div>
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
-        <p className="truncate text-[11px] text-neutral-500">{site.title}</p>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span
+              className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                isLatest
+                  ? "bg-emerald-50 text-emerald-700"
+                  : "bg-neutral-100 text-neutral-500"
+              }`}
+            >
+              {isLatest ? "Latest" : "Older"}
+            </span>
+            <span className="text-[10px] text-neutral-400">
+              Generated {formatGeneratedAt(site.createdAt)}
+            </span>
+          </div>
+          <p className="mt-1 truncate text-[11px] text-neutral-500">{site.title}</p>
+        </div>
         <div className="flex shrink-0 items-center gap-1">
           {site.deployUrl ? (
             <a
@@ -459,7 +493,7 @@ function SiteCard({
           ) : null}
           <button
             onClick={() => downloadHtml(site)}
-            title="Download index.html"
+            title={`Download ${siteDownloadName(site)}`}
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
@@ -1436,10 +1470,11 @@ export default function DesignStudioSection({
             />
             {sites.length ? (
               <div className="space-y-3">
-                {sites.map((site) => (
+                {sites.map((site, index) => (
                   <SiteCard
                     key={site.id}
                     site={site}
+                    isLatest={index === 0}
                     deployEnabled={deployEnabled}
                     deploying={deployingId === site.id}
                     onDeploy={deploySite}
