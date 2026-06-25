@@ -1,4 +1,5 @@
 import OpenAI, { toFile } from "openai";
+import { File as NodeFile } from "node:buffer";
 import { z } from "zod";
 import { config } from "./config";
 import { publicProductImageReferenceUrl } from "./productImages";
@@ -77,6 +78,18 @@ import {
   GeneratedPlaybookSchema,
   type GeneratedPlaybook,
 } from "./schema";
+
+function ensureFileGlobal(): void {
+  if (typeof globalThis.File === "undefined") {
+    Object.defineProperty(globalThis, "File", {
+      value: NodeFile,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
+ensureFileGlobal();
 import {
   VENTURE_CONTEXT_SYSTEM,
   RESEARCH_PLANNER_SYSTEM,
@@ -501,6 +514,7 @@ async function callOpenAIAdVisualImage(args: {
   productImages: ProductImageInput[];
   sceneDataUrl?: string;
 }): Promise<string> {
+  ensureFileGlobal();
   const imageParams = {
     model: process.env.IMAGE_MODEL ?? "gpt-image-2",
     prompt: args.prompt,
