@@ -57,39 +57,70 @@ const AD_CAMPAIGN_VARIANTS = [
     name: "Prospecting hook",
     angle:
       "lead with the sharpest new-customer problem, desire, or objection",
-    visual:
-      "A model holding a bottle of shampoo or conditioner to her face, close-up.",
+    productTarget: "shampoo or conditioner bottle",
+    visuals: [
+      "A model holding a shampoo bottle against her cheek, close-up, wet hair, front of bottle angled toward camera.",
+      "A model pressing a conditioner bottle beside her jawline, close-up beauty pose, front mark visible.",
+      "A model holding a body wash bottle near her shoulder, close-up editorial pose, front of bottle visible.",
+    ],
     composition:
-      "close-up lifestyle portrait, shallow depth of field",
+      "close-up lifestyle portrait, shallow depth of field, no ingredient props",
   },
   {
     name: "Offer test",
     angle:
       "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
-    visual:
-      "A bottle of shampoo on a clean bathroom counter, close-up.",
+    productTarget: "body wash bottle",
+    visuals: [
+      "A model holding a body wash bottle at collarbone height, close-up, front label facing camera.",
+      "A model with wet hair holding a body wash bottle beside her face, close-up, soft natural light.",
+      "A model presenting a shower bottle near her neck in a minimal bathroom, close-up, front mark visible.",
+    ],
     composition:
-      "single-product bathroom counter scene, no model",
+      "model-led offer pose, clean bathroom background, no fruit or shell props",
   },
   {
     name: "Proof retargeting",
     angle:
       "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
-    visual:
-      "A hand holding a conditioner bottle with water droplets, close-up.",
+    productTarget: "conditioner bottle",
+    visuals: [
+      "A model in a shower holding a conditioner bottle against her wet shoulder, macro close-up, front mark visible.",
+      "A model holding a conditioner bottle beside her face, high-fashion beauty pose, shallow depth of field.",
+      "A model clasping a conditioner bottle against her collarbone, close-up, dewy skin, front label visible.",
+    ],
     composition:
-      "macro hand-and-product detail, wet texture",
+      "macro model-and-product detail, wet texture, no ingredient props",
   },
   {
     name: "Routine reminder",
     angle:
       "make the product feel like a repeatable everyday ritual instead of a one-off purchase",
-    visual:
-      "A bottle of body wash on a shower shelf in soft natural light.",
+    productTarget: "body wash or shampoo bottle",
+    visuals: [
+      "A model wrapped in a towel holding a shower bottle near her face, close-up, front label toward camera.",
+      "A model in soft morning bathroom light holding a shampoo bottle near her cheek, close-up, relaxed ritual pose.",
+      "A model holding a body wash bottle beside her face after a shower, close-up, no foam covering the bottle.",
+    ],
     composition:
-      "wider bathroom ritual still life",
+      "model-led bathroom ritual portrait, no product-only still life",
   },
 ];
+
+function seededIndex(seed: string, offset: number, length: number): number {
+  if (length <= 1) return 0;
+  let total = offset * 131;
+  for (const char of seed) total += char.charCodeAt(0);
+  return Math.abs(total) % length;
+}
+
+function campaignScenePrompt(
+  variant: (typeof AD_CAMPAIGN_VARIANTS)[number],
+  index: number,
+  runId: string
+): string {
+  return variant.visuals[seededIndex(runId, index, variant.visuals.length)];
+}
 
 function istParts(date: Date): Record<string, string> {
   return Object.fromEntries(
@@ -1151,7 +1182,7 @@ export default function DesignStudioSection({
   const [websiteBrief, setWebsiteBrief] = useState("");
   const [socialBrief, setSocialBrief] = useState("");
   const [collateralBrief, setCollateralBrief] = useState("");
-  const [useSocialTemplates, setUseSocialTemplates] = useState(true);
+  const [useSocialTemplates, setUseSocialTemplates] = useState(false);
   const [socialTemplateBrief, setSocialTemplateBrief] = useState("");
   const [socialVisualBrief, setSocialVisualBrief] = useState("");
   const [selectedAdRunId, setSelectedAdRunId] = useState("");
@@ -1472,8 +1503,13 @@ export default function DesignStudioSection({
           useProductImages: true,
           templateBrief: useSocialTemplates ? socialTemplateBrief : "",
           visualBrief: [
-            `Variant role: ${variant.name}. ${variant.visual}`,
-            baseVisualBrief,
+            `Variant role: ${variant.name}. ${campaignScenePrompt(
+              variant,
+              index,
+              runMeta.generationRunId
+            )}`,
+            `Product reference target: ${variant.productTarget}.`,
+            `Style note: ${baseVisualBrief}`,
             `Composition hint: ${variant.composition}.`,
           ].join("\n"),
         });

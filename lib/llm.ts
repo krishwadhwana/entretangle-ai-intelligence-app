@@ -280,6 +280,10 @@ function lineAfterVariantPrefix(value: string): string {
   return value.replace(/^Variant role:\s*[^.]+\.?\s*/i, "").trim();
 }
 
+function lineAfterLabeledPrefix(value: string): string {
+  return value.replace(/^[A-Za-z ]+:\s*/i, "").trim();
+}
+
 function scenePromptFromVisualBrief(
   visualBrief: string,
   productName: string
@@ -292,24 +296,27 @@ function scenePromptFromVisualBrief(
     (line) =>
       !/^Variant role:/i.test(line) &&
       !/^Composition hint:/i.test(line) &&
+      !/^Product reference target:/i.test(line) &&
+      !/^Style note:/i.test(line) &&
       !/^Required composition lane:/i.test(line) &&
       !/templates?\s+(are\s+)?(on|off)/i.test(line) &&
       !/do not render/i.test(line)
   );
   const variant = lines.find((line) => /^Variant role:/i.test(line));
-  const base =
-    !direct ||
-    /polished product-led|model-product|highly artistic|product-led campaign/i.test(
-      direct
-    )
-      ? variant
-        ? lineAfterVariantPrefix(variant)
-        : direct
-      : direct;
+  const style = lines.find((line) => /^Style note:/i.test(line));
+  const styleNote = style ? lineAfterLabeledPrefix(style) : "";
+  const styleIsUseful =
+    styleNote &&
+    !/polished product-led|model-product|highly artistic|product-led campaign|no readable text|no generated image text|captions?|typography|template|layout|logo/i.test(
+      styleNote
+    );
+  const base = variant ? lineAfterVariantPrefix(variant) : direct;
+  const withStyle =
+    variant && styleIsUseful ? `${base}, ${styleNote}` : base;
   const fallback = productName
     ? `A model holding a bottle of ${productName} to her face, close-up`
     : "A model holding a product bottle to her face, close-up";
-  return compactPromptLine(base || fallback).slice(0, 240);
+  return compactPromptLine(withStyle || fallback).slice(0, 240);
 }
 
 function promptTokens(value: string): Set<string> {
@@ -351,16 +358,43 @@ function isLogoReference(image: ProductImageInput): boolean {
   return /\blogo\b|wordmark|brand mark/.test(haystack);
 }
 
+function isWeakProductSwapReference(image: ProductImageInput): boolean {
+  const haystack = [
+    image.ref.name,
+    image.ref.url,
+    image.ref.sourceUrl,
+    image.ref.sourcePageUrl,
+    image.ref.visualSummary,
+    ...(image.ref.tags ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /ingredient|texture|carton|packaging|combo|bundle|with packaging|hero ingredient|fresh figs|coconut, the hero|fruit|shell|overview/.test(
+    haystack
+  );
+}
+
+function productTargetHint(visualBrief: string): string {
+  const match = visualBrief.match(/^Product reference target:\s*(.+)$/im);
+  return compactPromptLine(match?.[1] ?? "");
+}
+
 function selectProductReference(args: {
   productImages?: ProductImageInput[];
   visualBrief: string;
   copy: CollateralContent;
   profile: ClientProfile;
 }): ProductImageInput | null {
-  const candidates = (args.productImages ?? []).filter(
+  const allCandidates = (args.productImages ?? []).filter(
     (image) => (image.dataUrl || image.buffer) && !isLogoReference(image)
   );
+  const cleanCandidates = allCandidates.filter(
+    (image) => !isWeakProductSwapReference(image)
+  );
+  const candidates = cleanCandidates.length ? cleanCandidates : allCandidates;
   if (!candidates.length) return null;
+  const targetHint = productTargetHint(args.visualBrief).toLowerCase();
   const query = [
     args.visualBrief,
     args.copy.headline,
@@ -378,6 +412,26 @@ function selectProductReference(args: {
       .join(" ")
       .toLowerCase();
     let score = image.ref.sourceKind === "uploaded" ? 100 : 0;
+    if (/\/assets\/(?:shampoo|conditioner|bodywash)-\d+ml\.png/i.test(image.ref.url || "")) {
+      score += 80;
+    }
+    if (/\bpng\b|\.png/i.test(image.ref.url || image.ref.mimeType || "")) {
+      score += 10;
+    }
+    if (targetHint) {
+      if (/conditioner/.test(targetHint) && /conditioner|fig/.test(haystack)) {
+        score += 120;
+      }
+      if (/shampoo/.test(targetHint) && /shampoo|scalp/.test(haystack)) {
+        score += 120;
+      }
+      if (/body\s*wash|bodywash/.test(targetHint) && /body\s*wash|bodywash|kokum/.test(haystack)) {
+        score += 120;
+      }
+      if (/two|bundle|hair and body/.test(targetHint) && /combo|body\s*wash|bodywash|conditioner|shampoo/.test(haystack)) {
+        score += 60;
+      }
+    }
     for (const token of tokens) {
       if (haystack.includes(token)) score += 8;
     }
@@ -417,8 +471,8 @@ function buildMidjourneyScenePrompt(
 ): string {
   const params =
     surface === "website"
-      ? "--ar 16:9 --v 7 --raw --s 50 --c 8 --no text typography logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider"
-      : "--ar 1:1 --v 7 --raw --s 50 --c 10 --no text typography logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider";
+      ? "--ar 16:9 --v 7 --raw --s 50 --c 8 --no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider ingredient props coconut shells fruit slices figs product-only still-life carton packaging"
+      : "--ar 1:1 --v 7 --raw --s 50 --c 10 --no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider ingredient props coconut shells fruit slices figs product-only still-life carton packaging";
   return `${scenePrompt}\n${params}`;
 }
 
@@ -435,7 +489,10 @@ function buildGeminiProductSwapPrompt(
     "Keep the model, face, pose, crop, background, lighting, shadows, hand placement, and camera angle from Image 1.",
     "Match the product perspective, scale, occlusion, reflections, and shadows so it looks physically present in the scene.",
     "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions exactly as visible in Image 2.",
-    "Do not add or create any headline, CTA, caption, poster, black panel, template, frame, UI, watermark, extra label text, or graphic design.",
+    "The final bottle must show the real front mark/logo from Image 2; do not omit, blur, hide, simplify, or invent it.",
+    "If the scene angle hides the product front, rotate or place the replacement bottle just enough to keep the real mark visible while preserving believable hand placement.",
+    "Do not add ingredient props such as coconuts, figs, fruit slices, shells, loose botanicals, cartons, or texture swatches.",
+    "Do not add or create any headline, CTA, caption, poster, black panel, template, frame, UI, watermark, fake logo, extra label text, or graphic design.",
     `Scene intent: ${scenePrompt}.`,
   ].join("\n");
 }
@@ -453,7 +510,9 @@ function buildOpenAIProductSwapPrompt(
           : "Create the product scene from the prompt.",
         scenePrompt,
         "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions when a product reference is provided.",
-        "No headline, CTA, caption, poster, black panel, template, frame, UI, watermark, or graphic design.",
+        "Keep the real front product mark visible. Do not omit, blur, hide, simplify, or invent it.",
+        "No ingredient props such as coconuts, figs, fruit slices, shells, loose botanicals, cartons, or texture swatches.",
+        "No headline, CTA, caption, poster, black panel, template, frame, UI, watermark, fake logo, or graphic design.",
       ].join("\n");
 }
 
