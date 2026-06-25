@@ -31,6 +31,48 @@ function imageEl(src: string, style: SatoriStyle): SatoriNode {
   return { type: "img", props: { src, style } };
 }
 
+function cleanDisplayText(value: string | undefined): string {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function truncateDisplayText(value: string | undefined, maxChars: number): string {
+  const text = cleanDisplayText(value);
+  if (text.length <= maxChars) return text;
+  const soft = text.slice(0, Math.max(0, maxChars - 1)).trimEnd();
+  const lastSpace = soft.lastIndexOf(" ");
+  const base =
+    lastSpace >= Math.floor(maxChars * 0.55) ? soft.slice(0, lastSpace) : soft;
+  return `${base.trimEnd()}...`;
+}
+
+function safeBodyLines(lines: string[], maxItems: number, maxChars: number): string[] {
+  return lines
+    .map((line) => truncateDisplayText(line, maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
+}
+
+function safeHeadline(
+  content: CollateralContent,
+  variant: "portrait" | "square"
+): string {
+  return truncateDisplayText(
+    content.headline || content.brandName,
+    variant === "portrait" ? 42 : 30
+  );
+}
+
+function safeSubhead(
+  content: CollateralContent,
+  variant: "portrait" | "square"
+): string {
+  return truncateDisplayText(content.subhead, variant === "portrait" ? 72 : 54);
+}
+
+function safeCta(content: CollateralContent, variant: "portrait" | "square"): string {
+  return truncateDisplayText(content.cta, variant === "portrait" ? 30 : 22);
+}
+
 const DIMENSIONS: Record<CollateralType, { width: number; height: number }> = {
   ad: { width: 1080, height: 1080 }, // square paid social ad / feed creative
   "business-card": { width: 1050, height: 600 }, // 3.5"×2" @ 300dpi
@@ -153,6 +195,7 @@ function benefitChip(
   tokens: DesignTokens,
   scale: number
 ): SatoriNode {
+  const displayLabel = truncateDisplayText(label, 34);
   return el(
     {
       display: "flex",
@@ -165,8 +208,10 @@ function benefitChip(
       color: tokens.palette.neutralDark,
       fontSize: `${18 * scale}px`,
       fontWeight: 600,
+      maxWidth: "100%",
+      overflow: "hidden",
     },
-    label
+    displayLabel
   );
 }
 
@@ -398,7 +443,8 @@ function ctaBar(
   scale: number,
   inverted = false
 ): SatoriNode {
-  if (!content.cta) return el({ display: "flex", height: "0px" });
+  const cta = truncateDisplayText(content.cta, 26);
+  if (!cta) return el({ display: "flex", height: "0px" });
   return el(
     {
       display: "flex",
@@ -412,8 +458,9 @@ function ctaBar(
       fontFamily: fonts.heading,
       fontWeight: 700,
       fontSize: `${30 * scale}px`,
+      overflow: "hidden",
     },
-    content.cta
+    cta
   );
 }
 
@@ -428,7 +475,8 @@ function productHeroAd(
   const scale = variant === "portrait" ? 1 : 0.86;
   const visualHeight = variant === "portrait" ? 520 : 390;
   const headlineSize = variant === "portrait" ? 78 : 62;
-  const bodyLines = content.body.slice(0, 4);
+  const bodyLines = safeBodyLines(content.body, 4, 38);
+  const subhead = safeSubhead(content, variant);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "NEW"),
     el(
@@ -446,10 +494,12 @@ function productHeroAd(
             fontSize: `${headlineSize * scale}px`,
             lineHeight: 1.05,
             color: palette.neutralDark,
+            maxWidth: "100%",
+            overflow: "hidden",
           },
-          content.headline || content.brandName
+          safeHeadline(content, variant)
         ),
-        content.subhead
+        subhead
           ? el(
               {
                 display: "flex",
@@ -458,8 +508,9 @@ function productHeroAd(
                 fontSize: `${29 * scale}px`,
                 lineHeight: 1.25,
                 color: palette.secondary,
+                overflow: "hidden",
               },
-              content.subhead
+              subhead
             )
           : el({ display: "flex" }),
       ]
@@ -540,6 +591,7 @@ function editorialAd(
   const { palette } = tokens;
   const scale = socialScale(variant);
   const headlineSize = variant === "portrait" ? 92 : 74;
+  const subhead = safeSubhead(content, variant);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "GUIDE"),
     el(
@@ -563,10 +615,12 @@ function editorialAd(
             fontSize: `${headlineSize * scale}px`,
             lineHeight: 0.98,
             color: palette.neutralDark,
+            maxWidth: "100%",
+            overflow: "hidden",
           },
-          content.headline || content.brandName
+          safeHeadline(content, variant)
         ),
-        content.subhead
+        subhead
           ? el(
               {
                 display: "flex",
@@ -575,8 +629,9 @@ function editorialAd(
                 fontSize: `${32 * scale}px`,
                 lineHeight: 1.22,
                 color: palette.secondary,
+                overflow: "hidden",
               },
-              content.subhead
+              subhead
             )
           : el({ display: "flex" }),
       ]
@@ -588,7 +643,7 @@ function editorialAd(
         gap: `${18 * scale}px`,
         marginTop: `${30 * scale}px`,
       },
-      (content.body.length ? content.body : [content.cta || content.tagline])
+      (content.body.length ? safeBodyLines(content.body, 3, 44) : [truncateDisplayText(content.cta || content.tagline, 44)])
         .slice(0, 3)
         .map((line, index) =>
           el(
@@ -638,6 +693,7 @@ function offerBurstAd(
 ): SatoriNode {
   const { palette } = tokens;
   const scale = socialScale(variant);
+  const subhead = safeSubhead(content, variant);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "OFFER"),
     el(
@@ -664,10 +720,12 @@ function offerBurstAd(
                 fontSize: `${84 * scale}px`,
                 lineHeight: 0.98,
                 color: palette.neutralDark,
+                maxWidth: "100%",
+                overflow: "hidden",
               },
-              content.headline || content.brandName
+              safeHeadline(content, variant)
             ),
-            content.subhead
+            subhead
               ? el(
                   {
                     display: "flex",
@@ -675,8 +733,9 @@ function offerBurstAd(
                     fontSize: `${28 * scale}px`,
                     lineHeight: 1.25,
                     color: palette.secondary,
+                    overflow: "hidden",
                   },
-                  content.subhead
+                  subhead
                 )
               : el({ display: "flex" }),
           ]
@@ -703,8 +762,10 @@ function offerBurstAd(
                 fontSize: `${42 * scale}px`,
                 lineHeight: 1.05,
                 color: palette.neutralDark,
+                maxWidth: "100%",
+                overflow: "hidden",
               },
-              content.cta || "Shop now"
+              safeCta(content, variant) || "Shop now"
             ),
           ]
         ),
@@ -731,8 +792,11 @@ function proofChecklistAd(
   const { palette } = tokens;
   const scale = socialScale(variant);
   const lines = content.body.length
-    ? content.body.slice(0, 5)
-    : [content.subhead || content.headline, content.cta].filter(Boolean);
+    ? safeBodyLines(content.body, 5, 44)
+    : [content.subhead || content.headline, content.cta]
+        .map((line) => truncateDisplayText(line, 44))
+        .filter(Boolean);
+  const subhead = safeSubhead(content, variant);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "WHY IT WORKS"),
     el(
@@ -763,10 +827,12 @@ function proofChecklistAd(
                 fontSize: `${66 * scale}px`,
                 lineHeight: 1,
                 color: palette.neutralLight,
+                maxWidth: "100%",
+                overflow: "hidden",
               },
-              content.headline || content.brandName
+              safeHeadline(content, variant)
             ),
-            content.subhead
+            subhead
               ? el(
                   {
                     display: "flex",
@@ -774,8 +840,9 @@ function proofChecklistAd(
                     fontSize: `${24 * scale}px`,
                     lineHeight: 1.25,
                     color: palette.accent,
+                    overflow: "hidden",
                   },
-                  content.subhead
+                  subhead
                 )
               : el({ display: "flex" }),
             ctaBar(tokens, content, fonts, scale, false),
@@ -863,6 +930,14 @@ function imageLedAd(
   const { palette } = tokens;
   const scale = socialScale(variant);
   const portrait = variant === "portrait";
+  const headline = safeHeadline(content, variant);
+  const subhead = safeSubhead(content, variant);
+  const bodyLines = safeBodyLines(
+    content.body,
+    portrait ? 3 : 4,
+    portrait ? 58 : 46
+  );
+  const cta = safeCta(content, variant);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "AI VISUAL"),
     el(
@@ -896,9 +971,10 @@ function imageLedAd(
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            flexGrow: 1,
-            padding: `${38 * scale}px`,
+            width: portrait ? "100%" : "42%",
+            padding: `${portrait ? 38 * scale : 34 * scale}px`,
             backgroundColor: palette.neutralDark,
+            overflow: "hidden",
           },
           [
             el(
@@ -909,22 +985,26 @@ function imageLedAd(
                     display: "flex",
                     fontFamily: fonts.heading,
                     fontWeight: 700,
-                    fontSize: `${portrait ? 58 * scale : 46 * scale}px`,
+                    fontSize: `${portrait ? 56 * scale : 38 * scale}px`,
                     lineHeight: 1,
                     color: palette.neutralLight,
+                    maxWidth: "100%",
+                    overflow: "hidden",
                   },
-                  content.headline || content.brandName
+                  headline
                 ),
-                content.subhead
+                subhead
                   ? el(
                       {
                         display: "flex",
                         marginTop: `${18 * scale}px`,
-                        fontSize: `${23 * scale}px`,
+                        fontSize: `${portrait ? 23 * scale : 19 * scale}px`,
                         lineHeight: 1.25,
                         color: palette.accent,
+                        maxWidth: "100%",
+                        overflow: "hidden",
                       },
-                      content.subhead
+                      subhead
                     )
                   : el({ display: "flex" }),
               ]
@@ -935,20 +1015,22 @@ function imageLedAd(
                 flexDirection: "column",
                 marginTop: `${26 * scale}px`,
               },
-              content.body.slice(0, portrait ? 3 : 4).map((line) =>
+              bodyLines.map((line) =>
                 el(
                   {
                     display: "flex",
                     marginTop: `${10 * scale}px`,
-                    fontSize: `${19 * scale}px`,
+                    fontSize: `${portrait ? 19 * scale : 16 * scale}px`,
                     lineHeight: 1.22,
                     color: palette.neutralLight,
+                    maxWidth: "100%",
+                    overflow: "hidden",
                   },
                   line
                 )
               )
             ),
-            content.cta
+            cta
               ? el(
                   {
                     display: "flex",
@@ -957,13 +1039,15 @@ function imageLedAd(
                     marginTop: `${26 * scale}px`,
                     borderRadius: `${18 * scale}px`,
                     backgroundColor: palette.accent,
-                    padding: `${18 * scale}px`,
+                    padding: `${16 * scale}px ${18 * scale}px`,
                     color: palette.neutralDark,
                     fontFamily: fonts.heading,
                     fontWeight: 700,
-                    fontSize: `${24 * scale}px`,
+                    fontSize: `${portrait ? 24 * scale : 18 * scale}px`,
+                    maxWidth: "100%",
+                    overflow: "hidden",
                   },
-                  content.cta
+                  cta
                 )
               : el({ display: "flex" }),
           ]
@@ -983,6 +1067,9 @@ function fullBleedImageAd(
   const { palette } = tokens;
   const scale = socialScale(variant);
   const portrait = variant === "portrait";
+  const headline = safeHeadline(content, variant);
+  const subhead = safeSubhead(content, variant);
+  const cta = safeCta(content, variant);
   return el(
     {
       display: "flex",
@@ -1059,10 +1146,12 @@ function fullBleedImageAd(
                   fontSize: `${portrait ? 58 * scale : 46 * scale}px`,
                   lineHeight: 1,
                   color: palette.neutralLight,
+                  maxWidth: "100%",
+                  overflow: "hidden",
                 },
-                content.headline || content.brandName
+                headline
               ),
-              content.subhead
+              subhead
                 ? el(
                     {
                       display: "flex",
@@ -1070,13 +1159,15 @@ function fullBleedImageAd(
                       fontSize: `${22 * scale}px`,
                       lineHeight: 1.22,
                       color: palette.accent,
+                      maxWidth: "100%",
+                      overflow: "hidden",
                     },
-                    content.subhead
+                    subhead
                   )
                 : el({ display: "flex" }),
             ]
           ),
-          content.cta
+          cta
             ? el(
                 {
                   display: "flex",
@@ -1088,8 +1179,10 @@ function fullBleedImageAd(
                   fontFamily: fonts.heading,
                   fontWeight: 700,
                   fontSize: `${22 * scale}px`,
+                  maxWidth: "100%",
+                  overflow: "hidden",
                 },
-                content.cta
+                cta
               )
             : el({ display: "flex" }),
         ]
