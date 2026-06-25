@@ -2,7 +2,6 @@ import { randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
 import {
   claimNextRunJob,
-  isJobSupersededError,
   isRunCancelledError,
   LEASE_RENEW_MS,
   markJobCancelled,
@@ -11,7 +10,6 @@ import {
   markJobSucceededWithResult,
   markRunCancelled,
   renewJobLease,
-  throwIfJobSuperseded,
   throwIfRunCancelled,
   type ClaimedRunJob,
 } from "../lib/jobs";
@@ -26,20 +24,6 @@ let shuttingDown = false;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function requestedCommit(payload: Prisma.JsonValue | null): string | null {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
-  const requestedDeploy = (payload as Record<string, unknown>).requestedDeploy;
-  if (
-    !requestedDeploy ||
-    typeof requestedDeploy !== "object" ||
-    Array.isArray(requestedDeploy)
-  ) {
-    return null;
-  }
-  const commitSha = (requestedDeploy as Record<string, unknown>).commitSha;
-  return typeof commitSha === "string" && commitSha.trim() ? commitSha : null;
 }
 
 async function runJob(job: ClaimedRunJob): Promise<void> {
@@ -57,26 +41,6 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
   try {
     if (job.type.startsWith("design_")) {
       if (!job.projectId) throw new Error(`${job.type} job missing projectId`);
-      if (job.cancelRequested) {
-        await markJobCancelled(job.id);
-        console.log(`[worker ${workerId}] cancelled superseded ${job.type} ${job.id}`);
-        return;
-      }
-      const workerDeploy = currentDeployInfo("worker");
-      const requestCommit = requestedCommit(job.payload);
-      if (
-        requestCommit &&
-        workerDeploy.commitSha &&
-        requestCommit !== workerDeploy.commitSha
-      ) {
-        throw new Error(
-          `worker deploy mismatch for ${job.type}: request ${requestCommit.slice(
-            0,
-            12
-          )}, worker ${workerDeploy.commitSha.slice(0, 12)}`
-        );
-      }
-      await throwIfJobSuperseded(job.id);
       const result = await runDesignStudioJob({
         type: job.type as "design_tokens" | "design_logo" | "design_collateral" | "design_site",
         projectId: job.projectId,
@@ -169,11 +133,6 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       if (job.runId) await markRunCancelled(job.runId);
       await markJobCancelled(job.id);
       console.log(`[worker ${workerId}] cancelled ${job.runId}`);
-      return;
-    }
-    if (isJobSupersededError(error)) {
-      await markJobCancelled(job.id);
-      console.log(`[worker ${workerId}] cancelled superseded ${job.type} ${job.id}`);
       return;
     }
     await markJobFailed(job, error);

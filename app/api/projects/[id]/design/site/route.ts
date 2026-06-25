@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { deployStaticSite, vercelDeployEnabled } from "@/lib/deploy/vercel";
-import { currentDeployInfo } from "@/lib/deployInfo";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -101,9 +100,8 @@ export async function POST(
         sourceRunId: body.data.sourceRunId,
         sourceWebsiteUrl: body.data.sourceWebsiteUrl,
         brief: body.data.brief,
-        requestedDeploy: currentDeployInfo("web"),
       },
-      { dedupe: false, cancelQueued: true, cancelRunning: true }
+      { dedupe: false, cancelQueued: true }
     );
     return NextResponse.json(
       { jobId: job.id, alreadyQueued: job.alreadyQueued },

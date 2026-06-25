@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { currentDeployInfo } from "@/lib/deployInfo";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { DesignTokensSchema } from "@/lib/schema";
@@ -138,9 +137,8 @@ export async function POST(
           sourceRunId: body.data.sourceRunId,
           sourceWebsiteUrl: body.data.sourceWebsiteUrl,
           guidance: body.data.guidance,
-          requestedDeploy: currentDeployInfo("web"),
         },
-        { dedupe: false, cancelQueued: true, cancelRunning: true }
+        { dedupe: false, cancelQueued: true }
       );
       return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
     }

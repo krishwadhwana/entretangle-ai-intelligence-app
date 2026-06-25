@@ -51,17 +51,6 @@ export function isRunCancelledError(error: unknown): error is RunCancelledError 
   return error instanceof RunCancelledError;
 }
 
-export class JobSupersededError extends Error {
-  constructor(public readonly jobId: string) {
-    super(`job ${jobId} was superseded by a newer request`);
-    this.name = "JobSupersededError";
-  }
-}
-
-export function isJobSupersededError(error: unknown): error is JobSupersededError {
-  return error instanceof JobSupersededError;
-}
-
 export async function enqueueRunJob(
   runId: string,
   type: Extract<RunJobType, "execute" | "resume" | "add_cohort">
@@ -108,7 +97,6 @@ export async function enqueueProjectJob(
     priority?: number;
     dedupe?: boolean;
     cancelQueued?: boolean;
-    cancelRunning?: boolean;
   } = {}
 ): Promise<{ id: string; alreadyQueued: boolean }> {
   await prisma.runJob.updateMany({
@@ -133,16 +121,6 @@ export async function enqueueProjectJob(
         status: "cancelled",
         cancelRequested: true,
         finishedAt: new Date(),
-        error: "superseded by a newer design generation request",
-      },
-    });
-  }
-
-  if (opts.cancelRunning) {
-    await prisma.runJob.updateMany({
-      where: { projectId, type, status: "running" },
-      data: {
-        cancelRequested: true,
         error: "superseded by a newer design generation request",
       },
     });
@@ -279,7 +257,19 @@ export async function claimNextRunJob(
             AND candidate.attempts < ${MAX_RECLAIM_ATTEMPTS}
           )
         )
-        AND candidate.cancel_requested = false
+        AND (
+          candidate.cancel_requested = false
+          OR (
+            candidate.status = 'running'
+            AND candidate.type IN (
+              'design_tokens',
+              'design_logo',
+              'design_collateral',
+              'design_site'
+            )
+            AND candidate.locked_at < now() - interval '120 seconds'
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM run_jobs AS active
@@ -316,16 +306,6 @@ export async function claimNextRunJob(
     cancelRequested: row.cancel_requested,
     payload: row.payload,
   };
-}
-
-export async function throwIfJobSuperseded(jobId: string): Promise<void> {
-  const job = await prisma.runJob.findUnique({
-    where: { id: jobId },
-    select: { status: true, cancelRequested: true },
-  });
-  if (!job || job.cancelRequested || job.status !== "running") {
-    throw new JobSupersededError(jobId);
-  }
 }
 
 // Keep a running job's lease fresh so the reclaim path doesn't steal it from a

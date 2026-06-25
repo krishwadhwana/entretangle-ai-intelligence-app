@@ -39,7 +39,6 @@ import {
   readProductImageFile,
   scrapedProductImageCandidates,
 } from "../productImages";
-import { throwIfJobSuperseded } from "../jobs";
 import type {
   BrandKit,
   ClientProfile,
@@ -356,7 +355,6 @@ export async function runDesignStudioJob(args: {
       payload.guidance,
       websiteAnalysis
     );
-    if (args.jobId) await throwIfJobSuperseded(args.jobId);
     const designStudio = await saveDesignTokens(
       args.projectId,
       tokens,
@@ -400,7 +398,6 @@ export async function runDesignStudioJob(args: {
       variants: await buildLogoVariants(brandName, tokens, marks),
       createdAt: new Date().toISOString(),
     });
-    if (args.jobId) await throwIfJobSuperseded(args.jobId);
     const studio = await saveLogoAsset(args.projectId, logo);
     return { logo, logos: studio.logos };
   }
@@ -497,7 +494,6 @@ export async function runDesignStudioJob(args: {
       templateFrameEnabled: payload.useTemplates,
       createdAt: new Date().toISOString(),
     });
-    if (args.jobId) await throwIfJobSuperseded(args.jobId);
     const studio = await saveDesignAsset(args.projectId, asset);
     return { asset, assets: studio.assets };
   }
@@ -561,7 +557,6 @@ export async function runDesignStudioJob(args: {
     deployUrl: null,
     createdAt: new Date().toISOString(),
   });
-  if (args.jobId) await throwIfJobSuperseded(args.jobId);
   const studio = await saveSiteAsset(args.projectId, site);
   return { site, sites: studio.sites };
 }
