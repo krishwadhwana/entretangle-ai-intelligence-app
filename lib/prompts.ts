@@ -1681,9 +1681,20 @@ Hard requirements:
   creative or premium product page, not a generic SaaS landing page: include a
   large hero product image/collage, at least one secondary product image below
   the fold, and product-specific alt text from the image names/summaries.
+- PRODUCT_IMAGE_1 is a generated campaign hero visual. Use it as the dominant
+  first-viewport image, preferably full-bleed or nearly full-bleed with text
+  over the image. Do not make it a tiny card, thumbnail, mockup frame, browser
+  preview, or secondary image.
 - Use photographic/product composition as a primary design material: layered
   image panels, editorial crops, texture blocks, campaign badges, proof strips,
   or product cards. Do not make the page mostly text cards with tiny images.
+- Avoid amateur landing-page tropes: no oversized rounded cards, no nested
+  cards, no generic icon grids, no gradient/orb decoration, no SaaS-style hero,
+  no "premium quality" filler. Use confident whitespace, editorial scale, and
+  product-specific copy.
+- The hero must show the brand/product as the first signal and hint at the next
+  section below the fold on both mobile and desktop. Do not center everything in
+  a generic card.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
@@ -1694,11 +1705,11 @@ Hard requirements:
   unsupported claims.
 
 Sections to include, written in the brand voice and specific to THIS venture:
-image-led hero (headline + subhead + primary CTA + product visual), 3-4 value
-props / features, a product/editorial showcase using available images when
-present, a short "how it works" or social-proof band, an email-capture CTA (a
-styled form that posts nowhere — action="#"), and a footer. Copy must be real
-and specific, not lorem ipsum.
+full-bleed image-led hero (headline + subhead + primary CTA over/alongside
+PRODUCT_IMAGE_1), 3-4 product-specific reasons to believe, an editorial
+product/detail showcase using available images when present, a short proof or
+usage band, an email-capture CTA (a styled form that posts nowhere —
+action="#"), and a footer. Copy must be real and specific, not lorem ipsum.
 
 Output JSON ONLY, no markdown fences, matching exactly:
 {"title","html"}

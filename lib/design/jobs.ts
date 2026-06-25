@@ -256,7 +256,7 @@ async function generateWebsiteHeroVisual(args: {
     brandKit: args.brandKit,
     visualBrief: [
       "Create the main website hero campaign visual, not a social feed layout.",
-      "It should feel like the strongest ad creative expanded into a premium landing-page hero: product-first, editorial, commercial, immersive, with clean copy space and no readable text.",
+      "It should feel like the strongest ad creative expanded into a premium full-bleed landing-page hero: product-first, editorial, commercial, immersive, crop-safe for desktop/mobile, with natural clean copy space and no readable text.",
       args.brief ? `Founder website brief: ${args.brief}` : "",
       heroProducts,
       differentiation,
@@ -279,6 +279,7 @@ async function generateWebsiteHeroVisual(args: {
       },
     },
     productImages: args.productImages,
+    surface: "website",
   });
   return {
     ref: {

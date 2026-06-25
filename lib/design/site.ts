@@ -51,28 +51,29 @@ function escapeHtml(value: string): string {
 
 function siteImageCss(): string {
   return `
-.et-product-hero{min-height:76vh;display:grid;grid-template-columns:minmax(0,0.92fr) minmax(280px,1.08fr);gap:clamp(24px,5vw,72px);align-items:center;padding:clamp(72px,9vw,128px) clamp(20px,6vw,88px);background:linear-gradient(135deg,var(--neutral-light,#f8f5ef),rgba(255,255,255,.72));color:var(--neutral-dark,#121212);overflow:hidden}
-.et-product-hero__copy{max-width:660px;position:relative;z-index:1}
-.et-product-hero__eyebrow{display:inline-flex;margin:0 0 18px;padding:8px 12px;border:1px solid currentColor;border-radius:999px;font-size:12px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;opacity:.78}
-.et-product-hero h1{margin:0;font-family:var(--heading-font,inherit);font-size:clamp(44px,8vw,112px);line-height:.94;letter-spacing:0}
-.et-product-hero p{max-width:560px;margin:22px 0 0;font-size:clamp(16px,2vw,21px);line-height:1.55}
-.et-product-hero__actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:30px}
-.et-product-hero__actions a{display:inline-flex;align-items:center;justify-content:center;min-height:46px;padding:0 18px;border-radius:999px;text-decoration:none;font-weight:800}
-.et-product-hero__actions a:first-child{background:var(--primary,#111);color:var(--neutral-light,#fff)}
-.et-product-hero__actions a:last-child{border:1px solid currentColor;color:inherit}
-.et-product-hero__gallery{display:grid;grid-template-columns:1fr .72fr;grid-template-rows:1fr 1fr;gap:clamp(10px,1.6vw,18px);min-height:min(620px,68vh)}
-.et-product-hero__frame{position:relative;overflow:hidden;border-radius:clamp(18px,2.5vw,32px);background:var(--secondary,#e9e1d5);box-shadow:0 28px 80px rgba(0,0,0,.18)}
-.et-product-hero__frame:first-child{grid-row:1 / span 2}
-.et-product-hero__frame img{width:100%;height:100%;object-fit:cover;display:block}
-.et-product-hero__frame:first-child img{object-fit:cover}
-.et-product-hero__label{position:absolute;left:14px;right:14px;bottom:14px;padding:10px 12px;border-radius:999px;background:rgba(255,255,255,.82);color:#111;font-size:12px;font-weight:800;backdrop-filter:blur(16px);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.et-product-showcase{padding:clamp(48px,8vw,104px) clamp(20px,6vw,88px);background:var(--neutral-dark,#111);color:var(--neutral-light,#fff)}
-.et-product-showcase h2{margin:0 0 24px;font-family:var(--heading-font,inherit);font-size:clamp(32px,5vw,70px);line-height:1}
-.et-product-showcase__grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-.et-product-showcase__card{overflow:hidden;border-radius:24px;background:rgba(255,255,255,.08)}
-.et-product-showcase__card img{width:100%;aspect-ratio:4/5;object-fit:cover;display:block}
-.et-product-showcase__card p{margin:0;padding:14px 16px;font-size:13px;line-height:1.4;opacity:.86}
-@media (max-width:860px){.et-product-hero{grid-template-columns:1fr;min-height:auto}.et-product-hero__gallery{min-height:430px}.et-product-showcase__grid{grid-template-columns:1fr}}`;
+.et-product-hero{position:relative;min-height:min(92vh,920px);display:flex;align-items:flex-end;overflow:hidden;background:var(--neutral-dark,#101010);color:var(--neutral-light,#fff)}
+.et-product-hero__image{position:absolute;inset:0;margin:0}
+.et-product-hero__image img{width:100%;height:100%;object-fit:cover;display:block;filter:saturate(1.04) contrast(1.03)}
+.et-product-hero__image:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.74) 0%,rgba(0,0,0,.42) 42%,rgba(0,0,0,.08) 100%),linear-gradient(0deg,rgba(0,0,0,.52) 0%,rgba(0,0,0,0) 48%)}
+.et-product-hero__nav{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:clamp(18px,3vw,34px) clamp(20px,6vw,84px);font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
+.et-product-hero__nav a{color:inherit;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.55);padding-bottom:4px}
+.et-product-hero__copy{position:relative;z-index:1;width:min(760px,100%);padding:clamp(120px,16vw,210px) clamp(20px,6vw,84px) clamp(52px,8vw,92px)}
+.et-product-hero__eyebrow{margin:0 0 18px;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;opacity:.78}
+.et-product-hero h1{margin:0;font-family:var(--heading-font,inherit);font-size:clamp(52px,10vw,132px);line-height:.9;letter-spacing:0;max-width:11ch}
+.et-product-hero p{max-width:610px;margin:24px 0 0;font-size:clamp(17px,2vw,23px);line-height:1.45;color:rgba(255,255,255,.9)}
+.et-product-hero__actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}
+.et-product-hero__actions a{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 20px;border-radius:2px;text-decoration:none;font-weight:850;letter-spacing:.02em}
+.et-product-hero__actions a:first-child{background:var(--neutral-light,#fff);color:var(--neutral-dark,#111)}
+.et-product-hero__actions a:last-child{border:1px solid rgba(255,255,255,.62);color:var(--neutral-light,#fff)}
+.et-product-proof{display:grid;grid-template-columns:1.05fr .95fr;gap:clamp(24px,5vw,72px);align-items:start;padding:clamp(52px,8vw,96px) clamp(20px,6vw,84px);background:var(--neutral-light,#faf8f2);color:var(--neutral-dark,#101010)}
+.et-product-proof__intro{position:sticky;top:24px}
+.et-product-proof h2{margin:0;font-family:var(--heading-font,inherit);font-size:clamp(34px,5vw,76px);line-height:.98;letter-spacing:0;max-width:10ch}
+.et-product-proof__intro p{max-width:520px;margin:18px 0 0;font-size:16px;line-height:1.6;color:color-mix(in srgb,var(--neutral-dark,#111) 72%,transparent)}
+.et-product-proof__grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.et-product-proof__item{position:relative;overflow:hidden;background:color-mix(in srgb,var(--secondary,#d9cec0) 32%,white);min-height:260px}
+.et-product-proof__item img{width:100%;height:100%;aspect-ratio:4/5;object-fit:cover;display:block}
+.et-product-proof__item span{position:absolute;left:12px;right:12px;bottom:12px;padding:9px 10px;background:rgba(255,255,255,.84);color:#111;font-size:11px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:860px){.et-product-hero{min-height:86vh}.et-product-hero__nav{padding:18px 20px}.et-product-hero__copy{padding:120px 20px 42px}.et-product-proof{grid-template-columns:1fr}.et-product-proof__intro{position:static}.et-product-proof__grid{grid-template-columns:1fr 1fr}.et-product-proof__item{min-height:190px}}`;
 }
 
 function insertStyle(html: string): string {
@@ -113,40 +114,32 @@ export function ensureProductImageryHtml(
     .filter((image) => image.availableForInlineEmbed !== false)
     .slice(0, 6);
   if (!usable.length) return rawHtml;
-  if (rawHtml.includes(usable[0].placeholder)) return rawHtml;
+  if (rawHtml.includes("et-product-hero")) return rawHtml;
 
-  const heroImages = usable.slice(0, 3);
-  const showcaseImages = usable.slice(3, 6);
+  const heroImage = usable[0];
+  const showcaseImages = usable.slice(1, 5);
   const brandName = escapeHtml(options.brandName || "Brand");
   const tagline = escapeHtml(
     options.tagline || "Product-led essentials, styled for launch."
   );
-  const imageFrames = heroImages
-    .map(
-      (image) => `<figure class="et-product-hero__frame"><img src="${image.placeholder}" alt="${escapeHtml(
-        image.name
-      )}"><figcaption class="et-product-hero__label">${escapeHtml(
-        image.name
-      )}</figcaption></figure>`
-    )
-    .join("");
   const showcase = showcaseImages.length
-    ? `<section class="et-product-showcase" aria-label="Product showcase"><h2>Product details worth seeing</h2><div class="et-product-showcase__grid">${showcaseImages
+    ? `<section class="et-product-proof" aria-label="Product details"><div class="et-product-proof__intro"><h2>Built around the product, not filler.</h2><p>${tagline}</p></div><div class="et-product-proof__grid">${showcaseImages
         .map(
-          (image) => `<article class="et-product-showcase__card"><img src="${image.placeholder}" alt="${escapeHtml(
+          (image) => `<figure class="et-product-proof__item"><img src="${image.placeholder}" alt="${escapeHtml(
             image.name
-          )}"><p>${escapeHtml(image.visualSummary || image.name)}</p></article>`
+          )}"><span>${escapeHtml(image.name)}</span></figure>`
         )
         .join("")}</div></section>`
     : "";
   const injected = `<section class="et-product-hero" aria-label="${brandName} product campaign">
+  <figure class="et-product-hero__image"><img src="${heroImage.placeholder}" alt="${escapeHtml(heroImage.name)}"></figure>
+  <div class="et-product-hero__nav"><span>${brandName}</span><a href="#shop">Shop</a></div>
   <div class="et-product-hero__copy">
-    <p class="et-product-hero__eyebrow">Product campaign</p>
+    <p class="et-product-hero__eyebrow">New campaign</p>
     <h1>${brandName}</h1>
     <p>${tagline}</p>
-    <div class="et-product-hero__actions"><a href="#shop">Shop the edit</a><a href="#details">See details</a></div>
+    <div class="et-product-hero__actions"><a href="#shop">Shop now</a><a href="#details">See the product</a></div>
   </div>
-  <div class="et-product-hero__gallery">${imageFrames}</div>
 </section>${showcase}`;
 
   const withStyle = insertStyle(rawHtml);

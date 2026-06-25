@@ -2157,6 +2157,7 @@ export async function callAdVisualImage(args: {
   visualBrief: string;
   copy: CollateralContent;
   productImages?: ProductImageInput[];
+  surface?: "ad" | "website";
 }): Promise<{ dataUrl: string; prompt: string }> {
   const usableRefs = (args.productImages ?? [])
     .filter((image) => image.dataUrl || image.buffer)
@@ -2173,7 +2174,9 @@ export async function callAdVisualImage(args: {
     })
     .join("\n");
   const prompt = [
-    `Create the main advertising visual for a ${args.type} paid ad campaign creative.`,
+    args.surface === "website"
+      ? "Create the main website hero visual for a premium product landing page."
+      : `Create the main advertising visual for a ${args.type} paid ad campaign creative.`,
     `Founder visual brief: ${args.visualBrief}`,
     OHNEIS_AD_VISUAL_METHOD,
     `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
@@ -2183,21 +2186,27 @@ export async function callAdVisualImage(args: {
       ? `Positioning: ${args.brandKit.brandIdentity.positioning}.`
       : "",
     `Brand palette: primary ${args.tokens.palette.primary}, secondary ${args.tokens.palette.secondary}, accent ${args.tokens.palette.accent}, light ${args.tokens.palette.neutralLight}, dark ${args.tokens.palette.neutralDark}.`,
-    `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
+    args.surface === "website"
+      ? `Landing-page headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`
+      : `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
     "Create a product-in-scene art direction that matches the visual brief: composition, model pose, lighting, props, background, camera/lens, mood, and copy space.",
     "Midjourney is only responsible for the artistic scene and may use a plausible placeholder product based on the product description. Exact product fidelity happens later in Gemini with the real product and overview images.",
     "Do not create readable text, logos, watermarks, UI, sliders, captions, labels, or typography inside the generated image unless the founder explicitly asked for in-image text. If text is explicitly requested, reserve it for the final Gemini edit, not the Midjourney scene. Leave clean areas for separately overlaid ad copy.",
-    "Make it polished, commercial, photorealistic, and specific to this exact campaign variant.",
+    args.surface === "website"
+      ? "Make it polished, commercial, photorealistic, crop-safe for desktop and mobile hero use, and specific to this exact product page. Keep at least one natural clean area for overlaid landing-page copy."
+      : "Make it polished, commercial, photorealistic, and specific to this exact campaign variant.",
   ]
     .filter(Boolean)
     .join("\n");
 
   if (args.type === "ad") {
     const midjourneyPrompt = [
-      "Midjourney task: generate only the art-direction scene for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
+      args.surface === "website"
+        ? "Midjourney task: generate only the full-bleed art-direction scene for a premium website hero. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage."
+        : "Midjourney task: generate only the art-direction scene for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
       prompt,
       "No readable text, UI, sliders, captions, watermarks, or typography in the scene.",
-      "--ar 1:1 --style raw",
+      args.surface === "website" ? "--ar 16:9 --style raw" : "--ar 1:1 --style raw",
     ]
       .filter(Boolean)
       .join("\n");
