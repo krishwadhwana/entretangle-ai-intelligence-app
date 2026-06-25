@@ -69,7 +69,10 @@ function assetId(type: string, seed: string): string {
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 24);
-  return `${type}-${slug || "asset"}-${Date.now().toString(36)}`;
+  const suffix = `${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+  return `${type}-${slug || "asset"}-${suffix}`;
 }
 
 async function projectOrThrow(projectId: string) {

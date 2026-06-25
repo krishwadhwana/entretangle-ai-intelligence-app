@@ -211,6 +211,10 @@ function downloadPng(asset: DesignAsset) {
   downloadPngString(asset.svg, asset.width, asset.height, asset.id);
 }
 
+function svgPreviewSrc(svg: string): string {
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
 function AssetCard({
   asset,
   onDelete,
@@ -220,16 +224,13 @@ function AssetCard({
 }) {
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-      <div
-        className="flex items-center justify-center bg-neutral-50 p-3"
-        // The SVG is self-contained; scale it to fit the card width.
-        dangerouslySetInnerHTML={{
-          __html: asset.svg.replace(
-            "<svg ",
-            '<svg style="max-width:100%;height:auto;" '
-          ),
-        }}
-      />
+      <div className="flex items-center justify-center bg-neutral-50 p-3">
+        <img
+          src={svgPreviewSrc(asset.svg)}
+          alt={asset.title}
+          className="h-auto max-w-full"
+        />
+      </div>
       <div className="flex items-center justify-between gap-2 border-t border-neutral-100 px-3 py-2">
         <p className="truncate text-[11px] text-neutral-500">{asset.title}</p>
         <div className="flex shrink-0 items-center gap-1">

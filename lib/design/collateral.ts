@@ -31,6 +31,35 @@ function imageEl(src: string, style: SatoriStyle): SatoriNode {
   return { type: "img", props: { src, style } };
 }
 
+function uniqueSvgIdPrefix(): string {
+  return `asset-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}-`;
+}
+
+function prefixSvgIds(svg: string): string {
+  const prefix = uniqueSvgIdPrefix();
+  const ids = new Map<string, string>();
+  const withIds = svg.replace(/\bid="([^"]+)"/g, (match, id: string) => {
+    const next = `${prefix}${id}`;
+    ids.set(id, next);
+    return match.replace(id, next);
+  });
+
+  let out = withIds;
+  for (const [oldId, nextId] of ids) {
+    const escaped = oldId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    out = out
+      .replace(new RegExp(`url\\(#${escaped}\\)`, "g"), `url(#${nextId})`)
+      .replace(new RegExp(`href="#${escaped}"`, "g"), `href="#${nextId}"`)
+      .replace(
+        new RegExp(`xlink:href="#${escaped}"`, "g"),
+        `xlink:href="#${nextId}"`
+      );
+  }
+  return out;
+}
+
 function cleanDisplayText(value: string | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
@@ -71,6 +100,63 @@ function safeSubhead(
 
 function safeCta(content: CollateralContent, variant: "portrait" | "square"): string {
   return truncateDisplayText(content.cta, variant === "portrait" ? 30 : 22);
+}
+
+function lineBreakText(
+  value: string | undefined,
+  maxCharsPerLine: number,
+  maxLines: number
+): string[] {
+  const words = cleanDisplayText(value).split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let current = "";
+
+  for (const word of words) {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxCharsPerLine) {
+      current = next;
+      continue;
+    }
+
+    if (current) lines.push(current);
+    current = word;
+
+    if (lines.length === maxLines) break;
+  }
+
+  if (current && lines.length < maxLines) lines.push(current);
+
+  if (lines.length === 0) return [];
+  const original = cleanDisplayText(value);
+  const rendered = lines.join(" ");
+  if (rendered.length < original.length) {
+    lines[lines.length - 1] = truncateDisplayText(
+      lines[lines.length - 1],
+      Math.max(4, maxCharsPerLine)
+    );
+  }
+  return lines;
+}
+
+function textStack(
+  lines: string[],
+  style: SatoriStyle,
+  gap: number
+): SatoriNode {
+  return el(
+    { display: "flex", flexDirection: "column", width: "100%" },
+    lines.map((line, index) =>
+      el(
+        {
+          ...style,
+          display: "flex",
+          marginTop: index === 0 ? "0px" : `${gap}px`,
+          width: "100%",
+        },
+        line
+      )
+    )
+  );
 }
 
 const DIMENSIONS: Record<CollateralType, { width: number; height: number }> = {
@@ -932,12 +1018,15 @@ function imageLedAd(
   const portrait = variant === "portrait";
   const headline = safeHeadline(content, variant);
   const subhead = safeSubhead(content, variant);
+  const headlineLines = lineBreakText(headline, portrait ? 22 : 16, 2);
+  const subheadLines = lineBreakText(subhead, portrait ? 34 : 28, 2);
   const bodyLines = safeBodyLines(
     content.body,
     portrait ? 3 : 4,
     portrait ? 58 : 46
   );
   const cta = safeCta(content, variant);
+  const ctaLines = lineBreakText(cta, portrait ? 22 : 18, 1);
   return socialFrame(tokens, fonts, scale, [
     socialHeader(tokens, content, fonts, scale, "AI VISUAL"),
     el(
@@ -980,31 +1069,35 @@ function imageLedAd(
             el(
               { display: "flex", flexDirection: "column" },
               [
-                el(
+                textStack(
+                  headlineLines,
                   {
-                    display: "flex",
                     fontFamily: fonts.heading,
                     fontWeight: 700,
-                    fontSize: `${portrait ? 56 * scale : 38 * scale}px`,
+                    fontSize: `${portrait ? 48 * scale : 29 * scale}px`,
                     lineHeight: 1,
                     color: palette.neutralLight,
-                    maxWidth: "100%",
-                    overflow: "hidden",
                   },
-                  headline
+                  4 * scale
                 ),
-                subhead
+                subheadLines.length
                   ? el(
                       {
                         display: "flex",
+                        flexDirection: "column",
                         marginTop: `${18 * scale}px`,
-                        fontSize: `${portrait ? 23 * scale : 19 * scale}px`,
-                        lineHeight: 1.25,
-                        color: palette.accent,
-                        maxWidth: "100%",
-                        overflow: "hidden",
                       },
-                      subhead
+                      [
+                        textStack(
+                          subheadLines,
+                          {
+                            fontSize: `${portrait ? 22 * scale : 16 * scale}px`,
+                            lineHeight: 1.18,
+                            color: palette.accent,
+                          },
+                          3 * scale
+                        ),
+                      ]
                     )
                   : el({ display: "flex" }),
               ]
@@ -1039,15 +1132,24 @@ function imageLedAd(
                     marginTop: `${26 * scale}px`,
                     borderRadius: `${18 * scale}px`,
                     backgroundColor: palette.accent,
-                    padding: `${16 * scale}px ${18 * scale}px`,
+                    padding: `${14 * scale}px ${16 * scale}px`,
                     color: palette.neutralDark,
                     fontFamily: fonts.heading,
                     fontWeight: 700,
-                    fontSize: `${portrait ? 24 * scale : 18 * scale}px`,
-                    maxWidth: "100%",
-                    overflow: "hidden",
+                    width: "100%",
                   },
-                  cta
+                  [
+                    textStack(
+                      ctaLines,
+                      {
+                        textAlign: "center",
+                        fontSize: `${portrait ? 22 * scale : 15 * scale}px`,
+                        lineHeight: 1,
+                        color: palette.neutralDark,
+                      },
+                      0
+                    ),
+                  ]
                 )
               : el({ display: "flex" }),
           ]
@@ -1254,6 +1356,6 @@ export async function renderCollateral(
     options.visualImageDataUrl,
     options.useTemplateFrame ?? true
   );
-  const svg = await satori(node as never, { width, height, fonts });
+  const svg = prefixSvgIds(await satori(node as never, { width, height, fonts }));
   return { svg, width, height };
 }
