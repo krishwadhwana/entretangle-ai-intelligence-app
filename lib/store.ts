@@ -1576,7 +1576,10 @@ export async function getDesignStudio(
   id: string,
 ): Promise<DesignStudioSection | null> {
   const owner = await readOwnerDashboard(id);
-  return owner.designStudio.tokens || owner.designStudio.assets.length
+  return owner.designStudio.tokens ||
+    owner.designStudio.assets.length ||
+    owner.designStudio.logos.length ||
+    owner.designStudio.sites.length
     ? owner.designStudio
     : null;
 }

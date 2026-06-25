@@ -40,6 +40,14 @@ export type ClaimedRunJob = {
   payload: Prisma.JsonValue | null;
 };
 
+export type DesignJobProgressEntry = {
+  at: string;
+  label: string;
+  detail?: string;
+  code?: string;
+  status?: "queued" | "running" | "done" | "failed";
+};
+
 export class RunCancelledError extends Error {
   constructor(public readonly runId: string) {
     super(`run ${runId} was cancelled`);
@@ -332,13 +340,63 @@ export async function markJobSucceededWithResult(
   jobId: string,
   result: Prisma.InputJsonValue
 ): Promise<void> {
+  const currentJob = await prisma.runJob.findUnique({
+    where: { id: jobId },
+    select: { result: true },
+  });
+  const current =
+    currentJob?.result &&
+    typeof currentJob.result === "object" &&
+    !Array.isArray(currentJob.result)
+      ? (currentJob.result as Record<string, unknown>)
+      : {};
+  const nextResult =
+    result && typeof result === "object" && !Array.isArray(result)
+      ? ({
+          ...current,
+          ...(result as Record<string, unknown>),
+        } as Prisma.InputJsonValue)
+      : result;
   await prisma.runJob.update({
     where: { id: jobId },
     data: {
       status: "succeeded",
-      result,
+      result: nextResult,
       finishedAt: new Date(),
       lockedBy: null,
+    },
+  });
+}
+
+export async function appendJobProgress(
+  jobId: string | undefined,
+  entry: Omit<DesignJobProgressEntry, "at">
+): Promise<void> {
+  if (!jobId) return;
+  const job = await prisma.runJob.findUnique({
+    where: { id: jobId },
+    select: { result: true },
+  });
+  const current =
+    job?.result && typeof job.result === "object" && !Array.isArray(job.result)
+      ? (job.result as Record<string, unknown>)
+      : {};
+  const prior = Array.isArray(current.progress) ? current.progress : [];
+  const progress = [
+    ...prior,
+    {
+      at: new Date().toISOString(),
+      ...entry,
+    },
+  ].slice(-80);
+  await prisma.runJob.update({
+    where: { id: jobId },
+    data: {
+      result: {
+        ...current,
+        progress,
+        progressUpdatedAt: new Date().toISOString(),
+      } as Prisma.InputJsonValue,
     },
   });
 }

@@ -1656,27 +1656,36 @@ export function logoMarksUser(
 
 // ---------------------------------------------------------------------------
 // Owner Dashboard › Design Studio › Website. The model authors a complete,
-// self-contained one-page landing site (inline CSS, Google-Fonts link allowed,
-// NO scripts) styled from the design tokens. Output is sanitized before use and
-// before any deploy, so the prompt forbids scripts/tracking outright.
+// self-contained static website (inline CSS, Google-Fonts link allowed, NO
+// scripts) styled from the design tokens. Output is sanitized before preview,
+// ZIP export, or deploy, so the prompt forbids scripts/tracking outright.
 // ---------------------------------------------------------------------------
 
-export const SITE_GEN_SYSTEM = `You are a senior brand web designer. Produce a COMPLETE, self-contained,
-responsive one-page landing site for the venture, styled strictly from its
-design tokens so it matches the rest of the brand's assets.
+export const SITE_GEN_SYSTEM = `You are a senior brand web designer and production front-end engineer.
+Produce a COMPLETE, self-contained, responsive static website for the venture,
+styled strictly from its design tokens so it matches the rest of the brand's
+assets. The output should feel like a high-end custom build, not a generic AI
+landing-page template.
 If an Ohneis method block is provided in the user payload, use it as the
 conversion/content operating method for the page. Adapt it silently; do not
 mention Ohneis in the output.
 
 Hard requirements:
-- A single full HTML document: <!DOCTYPE html> … </html>.
-- ALL styling in one inline <style> block. NO external CSS, NO frameworks, NO
-  build step. You MAY include ONE Google Fonts <link> for the token fonts.
+- Return a static file tree. Simple ventures may use 1 page; product brands,
+  editorial brands, brands with press/news/social evidence, multiple product
+  lines, or richer proof MUST use 3-5 pages. Useful pages include index.html,
+  products.html, story.html, press.html, stockists.html, journal.html, or
+  contact.html. Do not make every project a one-page landing page.
+- Each HTML file must be a complete document: <!DOCTYPE html> … </html>.
+- ALL styling must live in each page's inline <style> block. NO external CSS,
+  NO frameworks, NO build step. You MAY include ONE Google Fonts <link> for the
+  token fonts in each page. Repeat the core styles across pages so every file
+  opens by itself from a ZIP.
 - NO JavaScript at all: no <script>, no inline on* handlers, no trackers, no
   external images. If productImages are provided, you MUST use their exact
   placeholders as <img src="PRODUCT_IMAGE_1">, etc. in visible product-led
-  layouts. Otherwise use CSS color/shape backgrounds or inline SVG only.
-  Self-contained so it can be deployed as a static index.html.
+  layouts. Otherwise use CSS color/shape backgrounds or inline SVG only. The
+  ZIP must be self-contained.
 - When productImages are provided, the first viewport must look like a campaign
   creative or premium product page, not a generic SaaS landing page: include a
   large hero product image/collage, at least one secondary product image below
@@ -1702,14 +1711,16 @@ Hard requirements:
   The hero h1 must fit in 1-3 lines at desktop and mobile widths without
   overlapping the nav, product image, buttons, or next section.
 - Header/nav must be compact and non-overlapping: use a short brand wordmark,
-  2-4 nav links max, and no long product names in the nav. If the scraped
+  2-5 nav links max, and no long product names in the nav. If the scraped
   evidence has a brandName, use that for the wordmark/chrome. Use EXACTLY ONE
   brand mark in the header: do not place a small all-caps brand label next to a
   second larger logo/wordmark, and do not repeat the same brand text twice in
   the top bar. If brandAssets.logoSvg is provided, use that exact inline SVG as
   the sole header logo/wordmark instead of recreating the brand in text.
-- Use the token palette via CSS custom properties (:root { --primary: … }) and
-  the token heading/body fonts. Ensure strong contrast and AA legibility.
+- Use the token palette via CSS custom properties (:root { --primary: ... }) and
+  the token heading/body fonts. Ensure strong contrast and AA legibility. Avoid
+  one-note palettes and avoid making the site mostly purple/blue gradients,
+  beige/tan, dark slate, or brown/orange unless the tokens truly demand it.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
   HTML (header/nav, main, sections, footer; alt text on any inline SVG via
   role/aria-label).
@@ -1719,6 +1730,16 @@ Hard requirements:
   inspected:", "Collected site evidence", source URLs, or semicolon-separated
   scrape summaries in visible page copy; translate evidence into clean consumer
   copy.
+- If websiteEvidence is NOT provided, supply polished site information from the
+  clientProfile, brand voice, positioning, founder brief, and productImages.
+  Never leave placeholder copy, lorem ipsum, generic category filler, fake
+  claims, fake press, fake reviews, or "coming soon" sections unless the brief
+  explicitly asks for them.
+- Treat overview evidence as source material for a real brand site: product
+  photographs, product/SKU names, prices, stockists, social/Instagram links,
+  news/press features, facts, and customer sentiment should become useful page
+  content when available. If Instagram/social evidence exists, include it as a
+  footer/social link or editorial proof cue without inventing follower counts.
 - Hero subhead/body copy must read like finished consumer-facing marketing
   copy. Never paste scraped page titles such as "Collections", "Shop", page
   names, product listing breadcrumbs, or repeated brand/product strings into the
@@ -1727,16 +1748,27 @@ Hard requirements:
   the section below it; do not let colored bands visually touch unless they are
   intentionally the same module.
 
-Sections to include, written in the brand voice and specific to THIS venture:
-full-bleed image-led hero (headline + subhead + primary CTA over/alongside
-PRODUCT_IMAGE_1), 3-4 product-specific reasons to believe, an editorial
-product/detail showcase using available images when present, a short proof or
-usage band, an email-capture CTA (a styled form that posts nowhere —
-action="#"), and a footer. Copy must be real and specific, not lorem ipsum.
+Site content expectations:
+- index.html: full-bleed or near full-bleed image-led hero (headline + subhead
+  + primary CTA over/alongside PRODUCT_IMAGE_1 when present), strong category
+  clarity, 3-4 product-specific reasons to believe, editorial product/detail
+  showcase, proof/usage band, email-capture CTA (styled form with action="#"),
+  and footer.
+- Multi-page sites: every page needs a distinct job. Products pages should
+  compare real products/SKUs or product lines. Story pages should use founder,
+  origin, craft, or brand facts. Press/journal pages should use real news,
+  features, social cues, or category education from the overview. Contact or
+  stockist pages should use real links/facts if available.
+- Navigation links must point to the returned filenames, e.g. products.html,
+  story.html, press.html. The home CTA may link to the most relevant page.
+- Copy must be real and specific, not lorem ipsum. Design every page enough
+  that a client could send the ZIP to a developer or upload it as a static site.
 
 Output JSON ONLY, no markdown fences, matching exactly:
-{"title","html"}
-where "title" is the page <title> text and "html" is the full document string.`;
+{"title","html","files"}
+where "title" is the site title, "html" is the full index.html document string,
+and "files" is an array of {"path","content","contentType"}. Include index.html
+in files and set its content equal to html.`;
 
 export function siteGenUser(
   profile: ClientProfile,
@@ -1761,11 +1793,15 @@ export function siteGenUser(
       positioning: brandKit?.brandIdentity?.positioning ?? null,
       contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
       websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
+      contentSourcePolicy: websiteAnalysis
+        ? "Use websiteEvidence as the primary brand overview source for products, press/news, social links, prices, product photos, facts, and proof. Do not ignore it."
+        : "No Overview/websiteEvidence has been supplied. Build complete polished site copy from clientProfile, founder brief, brand voice, positioning, and productImages without placeholders or invented proof.",
       productImages,
       brandAssets,
       brief: brief || null,
       ohneisMethod: OHNEIS_WEBSITE_METHOD,
-      task: "Design and write the one-page landing site as specified.",
+      task:
+        "Design, write, and code the static website file tree as specified. Decide the right number of pages from the evidence and brief.",
     },
     null,
     2

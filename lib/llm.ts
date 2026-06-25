@@ -196,7 +196,7 @@ const OWNER_FALLBACK_TIMEOUT_MS = 25_000;
 const OWNER_QA_TIMEOUT_MS = 45_000;
 const WEBSITE_ANALYSIS_WEB_TIMEOUT_MS = 75_000;
 const WEBSITE_ANALYSIS_FALLBACK_TIMEOUT_MS = 35_000;
-const DESIGN_SITE_TIMEOUT_MS = 120_000;
+const DESIGN_SITE_TIMEOUT_MS = 240_000;
 const MARKET_DATA_TIMEOUT_MS = 90_000;
 const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
 const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
@@ -2278,10 +2278,10 @@ export async function callLogoMarks(
 }
 
 /**
- * Generate a complete, self-contained one-page landing site (HTML + inline CSS,
- * no scripts) styled from the design tokens. The HTML is sanitized by the
- * caller before preview/deploy. Larger token budget since it returns a full
- * document; throws on provider/parse failure (the route surfaces it).
+ * Generate a complete, self-contained static website (HTML + inline CSS, no
+ * scripts) styled from the design tokens. The HTML/files are sanitized by the
+ * caller before preview/export/deploy. Larger token budget since rich brands
+ * can return a multi-page file tree.
  */
 export async function callSiteGenerator(
   runId: string | null,
@@ -2295,15 +2295,17 @@ export async function callSiteGenerator(
   brandAssets: { brandName: string; logoSvg: string } | null = null
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${
+      profile.product || "Brand"
+    }</title></head><body style="font-family:system-ui;padding:48px;background:${
+      tokens.palette.neutralLight
+    };color:${tokens.palette.neutralDark}"><h1 style="color:${
+      tokens.palette.primary
+    }">${profile.product || "Brand"}</h1><p>(mock) static website.</p></body></html>`;
     return SiteGenOutputSchema.parse({
       title: `${profile.product || "Brand"} — mock site`,
-      html: `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${
-        profile.product || "Brand"
-      }</title></head><body style="font-family:system-ui;padding:48px;background:${
-        tokens.palette.neutralLight
-      };color:${tokens.palette.neutralDark}"><h1 style="color:${
-        tokens.palette.primary
-      }">${profile.product || "Brand"}</h1><p>(mock) landing site.</p></body></html>`,
+      html,
+      files: [{ path: "index.html", content: html, contentType: "text/html" }],
     });
   }
   return callJson({
@@ -2328,7 +2330,7 @@ export async function callSiteGenerator(
       brandAssets
     ),
     schema: SiteGenOutputSchema,
-    maxCompletionTokens: 12000,
+    maxCompletionTokens: 26000,
     requestTimeoutMs: DESIGN_SITE_TIMEOUT_MS,
     requestMaxRetries: 0,
   });

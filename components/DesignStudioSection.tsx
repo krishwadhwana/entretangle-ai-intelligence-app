@@ -3,9 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
+  Archive,
+  Clock,
+  Code2,
   Download,
   ExternalLink,
+  FileCode2,
   FileImage,
+  FolderTree,
   Globe,
   Hexagon,
   Info,
@@ -25,6 +30,7 @@ import type {
   DesignTokens,
   LogoAsset,
   SiteAsset,
+  SiteFile,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
@@ -162,6 +168,7 @@ type JobStatus = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   error?: string | null;
+  result?: unknown;
 };
 
 type WebsiteImageRef = {
@@ -170,6 +177,14 @@ type WebsiteImageRef = {
   kind: string;
   sourceUrl?: string;
   summary?: string;
+};
+
+type DesignJobProgressEntry = {
+  at: string;
+  label: string;
+  detail?: string;
+  code?: string;
+  status?: "queued" | "running" | "done" | "failed";
 };
 
 // A readable text color (black/white) for a given hex background, so swatch
@@ -229,6 +244,34 @@ async function readJsonResponse(res: Response): Promise<Record<string, unknown>>
   } catch {
     return { error: text };
   }
+}
+
+function jobProgressFromResult(result: unknown): DesignJobProgressEntry[] {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return [];
+  const progress = (result as { progress?: unknown }).progress;
+  if (!Array.isArray(progress)) return [];
+  return progress
+    .map((entry): DesignJobProgressEntry | null => {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        return null;
+      }
+      const item = entry as Record<string, unknown>;
+      if (typeof item.label !== "string") return null;
+      return {
+        at: typeof item.at === "string" ? item.at : new Date().toISOString(),
+        label: item.label,
+        detail: typeof item.detail === "string" ? item.detail : undefined,
+        code: typeof item.code === "string" ? item.code : undefined,
+        status:
+          item.status === "queued" ||
+          item.status === "running" ||
+          item.status === "done" ||
+          item.status === "failed"
+            ? item.status
+            : undefined,
+      };
+    })
+    .filter((entry): entry is DesignJobProgressEntry => Boolean(entry));
 }
 
 function Field({
@@ -334,13 +377,155 @@ function formatGeneratedAt(value: string): string {
   });
 }
 
+function formatGeneratedAtIst(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown IST time";
+  const p = istParts(date);
+  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second} IST`;
+}
+
+function siteGenerationStamp(site: SiteAsset): string {
+  if (site.generationRunStamp) return site.generationRunStamp;
+  const date = new Date(site.createdAt);
+  if (Number.isNaN(date.getTime())) return site.id;
+  const p = istParts(date);
+  return `${p.year}-${p.month}-${p.day}_${p.hour}-${p.minute}-${p.second}_IST`;
+}
+
+function siteFolderName(site: SiteAsset): string {
+  return `website-${siteGenerationStamp(site)}`;
+}
+
+function siteFiles(site: SiteAsset): SiteFile[] {
+  return site.files?.length
+    ? site.files
+    : [{ path: "index.html", content: site.html, contentType: "text/html" }];
+}
+
 function siteDownloadName(site: SiteAsset): string {
   const stamp = site.createdAt.replace(/[:.]/g, "-").slice(0, 19);
   return `index-${stamp || site.id}.html`;
 }
 
+function siteFileDownloadName(site: SiteAsset, file: SiteFile): string {
+  const clean = file.path.split("/").filter(Boolean).join("-");
+  return `${siteFolderName(site)}-${clean || siteDownloadName(site)}`;
+}
+
+function siteZipDownloadName(site: SiteAsset): string {
+  return `${siteFolderName(site)}.zip`;
+}
+
 function svgPreviewSrc(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function createCrc32Table(): Uint32Array {
+  const table = new Uint32Array(256);
+  for (let i = 0; i < 256; i += 1) {
+    let c = i;
+    for (let j = 0; j < 8; j += 1) {
+      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    }
+    table[i] = c >>> 0;
+  }
+  return table;
+}
+
+const CRC32_TABLE = createCrc32Table();
+
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (let i = 0; i < bytes.length; i += 1) {
+    crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function zipDosDateTime(date: Date): { time: number; date: number } {
+  const year = Math.max(1980, date.getFullYear());
+  const month = date.getMonth() + 1;
+  return {
+    time:
+      (date.getHours() << 11) |
+      (date.getMinutes() << 5) |
+      Math.floor(date.getSeconds() / 2),
+    date: ((year - 1980) << 9) | (month << 5) | date.getDate(),
+  };
+}
+
+function zipHeader(size: number): { bytes: Uint8Array; view: DataView } {
+  const bytes = new Uint8Array(size);
+  return { bytes, view: new DataView(bytes.buffer) };
+}
+
+function zipBlobPart(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.length);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
+function makeZipBlob(files: SiteFile[], createdAt: string): Blob {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+  const central: Uint8Array[] = [];
+  const created = new Date(createdAt);
+  const stamp = zipDosDateTime(
+    Number.isNaN(created.getTime()) ? new Date() : created
+  );
+  let offset = 0;
+
+  for (const file of files) {
+    const name = encoder.encode(file.path);
+    const data = encoder.encode(file.content);
+    const crc = crc32(data);
+    const local = zipHeader(30);
+    local.view.setUint32(0, 0x04034b50, true);
+    local.view.setUint16(4, 20, true);
+    local.view.setUint16(6, 0x0800, true);
+    local.view.setUint16(8, 0, true);
+    local.view.setUint16(10, stamp.time, true);
+    local.view.setUint16(12, stamp.date, true);
+    local.view.setUint32(14, crc, true);
+    local.view.setUint32(18, data.length, true);
+    local.view.setUint32(22, data.length, true);
+    local.view.setUint16(26, name.length, true);
+    local.view.setUint16(28, 0, true);
+    chunks.push(local.bytes, name, data);
+
+    const centralHeader = zipHeader(46);
+    centralHeader.view.setUint32(0, 0x02014b50, true);
+    centralHeader.view.setUint16(4, 20, true);
+    centralHeader.view.setUint16(6, 20, true);
+    centralHeader.view.setUint16(8, 0x0800, true);
+    centralHeader.view.setUint16(10, 0, true);
+    centralHeader.view.setUint16(12, stamp.time, true);
+    centralHeader.view.setUint16(14, stamp.date, true);
+    centralHeader.view.setUint32(16, crc, true);
+    centralHeader.view.setUint32(20, data.length, true);
+    centralHeader.view.setUint32(24, data.length, true);
+    centralHeader.view.setUint16(28, name.length, true);
+    centralHeader.view.setUint16(30, 0, true);
+    centralHeader.view.setUint16(32, 0, true);
+    centralHeader.view.setUint16(34, 0, true);
+    centralHeader.view.setUint16(36, 0, true);
+    centralHeader.view.setUint32(38, 0, true);
+    centralHeader.view.setUint32(42, offset, true);
+    central.push(centralHeader.bytes, name);
+    offset += local.bytes.length + name.length + data.length;
+  }
+
+  const centralSize = central.reduce((sum, part) => sum + part.length, 0);
+  const end = zipHeader(22);
+  end.view.setUint32(0, 0x06054b50, true);
+  end.view.setUint16(8, files.length, true);
+  end.view.setUint16(10, files.length, true);
+  end.view.setUint32(12, centralSize, true);
+  end.view.setUint32(16, offset, true);
+  end.view.setUint16(20, 0, true);
+  return new Blob([...chunks, ...central, end.bytes].map(zipBlobPart), {
+    type: "application/zip",
+  });
 }
 
 function PipelineStep({
@@ -543,12 +728,23 @@ function LogoCard({
   );
 }
 
-function downloadHtml(site: SiteAsset) {
-  downloadBlob(new Blob([site.html], { type: "text/html" }), siteDownloadName(site));
+function downloadHtml(site: SiteAsset, file?: SiteFile) {
+  const target = file ?? siteFiles(site)[0];
+  downloadBlob(
+    new Blob([target.content], { type: target.contentType || "text/html" }),
+    file ? siteFileDownloadName(site, file) : siteDownloadName(site)
+  );
 }
 
-function openHtmlPreview(site: SiteAsset) {
-  const url = URL.createObjectURL(new Blob([site.html], { type: "text/html" }));
+function downloadSiteZip(site: SiteAsset) {
+  downloadBlob(makeZipBlob(siteFiles(site), site.createdAt), siteZipDownloadName(site));
+}
+
+function openHtmlPreview(site: SiteAsset, file?: SiteFile) {
+  const target = file ?? siteFiles(site)[0];
+  const url = URL.createObjectURL(
+    new Blob([target.content], { type: target.contentType || "text/html" })
+  );
   window.open(url, "_blank", "noopener,noreferrer");
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
@@ -671,6 +867,258 @@ function SiteCard({
   );
 }
 
+function WebsiteCodingConsole({
+  progress,
+  running,
+}: {
+  progress: DesignJobProgressEntry[];
+  running: boolean;
+}) {
+  if (!running && !progress.length) return null;
+  const entries = progress.length
+    ? progress
+    : [
+        {
+          at: new Date().toISOString(),
+          label: "Queued",
+          detail: "Waiting for the design worker to start the website build.",
+          code: "await worker.claim('design_site');",
+          status: "queued" as const,
+        },
+      ];
+  return (
+    <div className="mb-3 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950 text-neutral-100">
+      <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-300">
+          <Code2 className="h-3.5 w-3.5" />
+          {running ? "GPT 5.5 live coding" : "Last website build log"}
+        </p>
+        {running ? (
+          <span className="flex items-center gap-1 rounded-full bg-emerald-400/10 px-2 py-0.5 text-[10px] font-medium text-emerald-200">
+            <Loader2 className="h-3 w-3 animate-spin" /> Running
+          </span>
+        ) : null}
+      </div>
+      <div className="max-h-64 space-y-3 overflow-auto px-3 py-3">
+        {entries.map((entry, index) => (
+          <div key={`${entry.at}-${index}`} className="grid gap-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-[11px] font-semibold text-white">
+                {entry.label}
+              </span>
+              <span className="text-[10px] text-neutral-500">
+                {formatGeneratedAtIst(entry.at)}
+              </span>
+            </div>
+            {entry.detail ? (
+              <p className="text-[11px] leading-relaxed text-neutral-300">
+                {entry.detail}
+              </p>
+            ) : null}
+            {entry.code ? (
+              <pre className="overflow-x-auto rounded-md bg-black/40 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-emerald-200">
+                {entry.code}
+              </pre>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SiteHistoryBrowser({
+  sites,
+  selectedSiteId,
+  selectedPath,
+  deployEnabled,
+  deployingId,
+  onSelectSite,
+  onSelectPath,
+  onDeploy,
+  onDelete,
+}: {
+  sites: SiteAsset[];
+  selectedSiteId: string;
+  selectedPath: string;
+  deployEnabled: boolean;
+  deployingId: string | null;
+  onSelectSite: (id: string) => void;
+  onSelectPath: (path: string) => void;
+  onDeploy: (id: string) => void;
+  onDelete: (id: string) => void;
+}) {
+  const activeSite =
+    sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
+  const files = activeSite ? siteFiles(activeSite) : [];
+  const activeFile =
+    files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    setLoaded(false);
+  }, [activeSite?.id, activeFile?.path]);
+
+  useEffect(() => {
+    if (activeFile && activeFile.path !== selectedPath) {
+      onSelectPath(activeFile.path);
+    }
+  }, [activeFile, onSelectPath, selectedPath]);
+
+  if (!activeSite || !activeFile) {
+    return (
+      <p className="text-[12px] text-neutral-400">No website design yet.</p>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
+      <div className="grid min-h-[520px] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="border-b border-neutral-200 bg-neutral-50 p-3 lg:border-b-0 lg:border-r">
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+            <FolderTree className="h-3.5 w-3.5" /> Website history
+          </p>
+          <div className="space-y-2">
+            {sites.map((site, index) => {
+              const selected = site.id === activeSite.id;
+              return (
+                <button
+                  key={site.id}
+                  onClick={() => {
+                    onSelectSite(site.id);
+                    onSelectPath(siteFiles(site)[0]?.path ?? "index.html");
+                  }}
+                  className={`w-full rounded-lg border px-3 py-2 text-left transition-colors ${
+                    selected
+                      ? "border-neutral-900 bg-white text-neutral-900 shadow-sm"
+                      : "border-neutral-200 bg-white text-neutral-500 hover:border-indigo-200 hover:text-neutral-800"
+                  }`}
+                >
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="truncate text-[11px] font-semibold">
+                      {index === 0 ? "Latest" : "Generation"}
+                    </span>
+                    <span className="shrink-0 text-[10px] text-neutral-400">
+                      {siteFiles(site).length} file
+                      {siteFiles(site).length === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                  <span className="mt-1 flex items-center gap-1 text-[10px] text-neutral-400">
+                    <Clock className="h-3 w-3" />
+                    {formatGeneratedAtIst(
+                      site.generationRunCreatedAt || site.createdAt
+                    )}
+                  </span>
+                  <span className="mt-1 block truncate font-mono text-[10px] text-neutral-400">
+                    /{siteFolderName(site)}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </aside>
+
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
+            <div className="min-w-0">
+              <p className="truncate text-[12px] font-semibold text-neutral-800">
+                {activeSite.title}
+              </p>
+              <p className="mt-0.5 truncate font-mono text-[10px] text-neutral-400">
+                /{siteFolderName(activeSite)}/{activeFile.path}
+              </p>
+            </div>
+            <div className="flex shrink-0 flex-wrap items-center justify-end gap-1">
+              <select
+                value={activeFile.path}
+                onChange={(e) => onSelectPath(e.target.value)}
+                className="h-7 rounded-md border border-neutral-200 bg-white px-2 text-[11px] outline-none focus:border-indigo-400"
+                title="Preview file"
+              >
+                {files.map((file) => (
+                  <option key={file.path} value={file.path}>
+                    {file.path}
+                  </option>
+                ))}
+              </select>
+              {activeSite.deployUrl ? (
+                <a
+                  href={activeSite.deployUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="Open live site"
+                  className="rounded p-1 text-emerald-600 hover:bg-emerald-50"
+                >
+                  <ExternalLink className="h-3.5 w-3.5" />
+                </a>
+              ) : null}
+              <button
+                onClick={() => downloadHtml(activeSite, activeFile)}
+                title={`Download ${activeFile.path}`}
+                className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <FileCode2 className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => downloadSiteZip(activeSite)}
+                title={`Download ${siteZipDownloadName(activeSite)}`}
+                className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <Archive className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => openHtmlPreview(activeSite, activeFile)}
+                title="Open selected file in a new tab"
+                className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+              >
+                <ExternalLink className="h-3.5 w-3.5" />
+              </button>
+              {deployEnabled ? (
+                <button
+                  onClick={() => onDeploy(activeSite.id)}
+                  disabled={deployingId === activeSite.id}
+                  title="Publish static site to Vercel"
+                  className="flex items-center gap-1 rounded px-1.5 py-1 text-[10px] font-medium text-indigo-600 hover:bg-indigo-50 disabled:opacity-50"
+                >
+                  {deployingId === activeSite.id ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  ) : (
+                    <Rocket className="h-3.5 w-3.5" />
+                  )}
+                  {activeSite.deployUrl ? "Redeploy" : "Publish"}
+                </button>
+              ) : null}
+              <button
+                onClick={() => onDelete(activeSite.id)}
+                title="Delete generation"
+                className="rounded p-1 text-neutral-400 hover:bg-red-50 hover:text-red-600"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+          <div className="relative h-[460px] bg-neutral-50">
+            <iframe
+              key={`${activeSite.id}-${activeFile.path}`}
+              title={`${activeSite.title} ${activeFile.path}`}
+              srcDoc={activeFile.content}
+              sandbox="allow-forms allow-popups"
+              onLoad={() => setLoaded(true)}
+              className="block h-full w-full border-0 bg-white"
+            />
+            {!loaded ? (
+              <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white text-[11px] text-neutral-400">
+                <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+                Loading preview…
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function DesignStudioSection({
   projectId,
   sourceRunId,
@@ -684,6 +1132,11 @@ export default function DesignStudioSection({
   const [assets, setAssets] = useState<DesignAsset[]>([]);
   const [logos, setLogos] = useState<LogoAsset[]>([]);
   const [sites, setSites] = useState<SiteAsset[]>([]);
+  const [selectedSiteId, setSelectedSiteId] = useState("");
+  const [selectedSitePath, setSelectedSitePath] = useState("index.html");
+  const [websiteBuildProgress, setWebsiteBuildProgress] = useState<
+    DesignJobProgressEntry[]
+  >([]);
   const [tokenDraft, setTokenDraft] = useState<DesignTokens | null>(null);
   const [tokenGuidance, setTokenGuidance] = useState("");
   const [sourceWebsiteUrl, setSourceWebsiteUrl] = useState("");
@@ -719,7 +1172,14 @@ export default function DesignStudioSection({
       setStudio(designStudio);
       setAssets(designStudio?.assets ?? []);
       setLogos(designStudio?.logos ?? []);
-      setSites(designStudio?.sites ?? []);
+      const nextSites = designStudio?.sites ?? [];
+      setSites(nextSites);
+      setSelectedSiteId((current) =>
+        current && nextSites.some((site) => site.id === current)
+          ? current
+          : nextSites[0]?.id ?? ""
+      );
+      setSelectedSitePath((current) => current || "index.html");
       setTokenDraft(designStudio?.tokens ?? null);
       setSourceWebsiteUrl((current) => current || data.sourceWebsiteUrl || "");
       setWebsiteImageRefs(data.websiteImageRefs ?? []);
@@ -734,7 +1194,11 @@ export default function DesignStudioSection({
   }, [projectId]);
 
   const waitForJob = useCallback(
-    async (jobId: string, fallback: string) => {
+    async (
+      jobId: string,
+      fallback: string,
+      onJobUpdate?: (job: JobStatus) => void
+    ): Promise<JobStatus> => {
       const deadline = Date.now() + 10 * 60_000;
       while (Date.now() < deadline) {
         await new Promise((resolve) => setTimeout(resolve, 1500));
@@ -746,9 +1210,10 @@ export default function DesignStudioSection({
         if (!res.ok) {
           throw new Error(providerErrorMessage(data.error ?? data, fallback));
         }
+        if (data.job) onJobUpdate?.(data.job);
         if (data.job?.status === "succeeded") {
           await refreshStudio();
-          return;
+          return data.job;
         }
         if (data.job?.status === "failed" || data.job?.status === "cancelled") {
           throw new Error(data.job.error || fallback);
@@ -1100,6 +1565,16 @@ export default function DesignStudioSection({
     if (!projectId) return;
     setMakingSite(true);
     setError(null);
+    setWebsiteBuildProgress([
+      {
+        at: new Date().toISOString(),
+        label: "Queued website build",
+        detail:
+          "Waiting for the worker to start GPT 5.5 website generation and static file packaging.",
+        code: "enqueueProjectJob(projectId, 'design_site', payload);",
+        status: "queued",
+      },
+    ]);
     try {
       const res = await fetch(`/api/projects/${projectId}/design/site`, {
         method: "POST",
@@ -1120,10 +1595,35 @@ export default function DesignStudioSection({
         return;
       }
       if (data.jobId) {
-        await waitForJob(String(data.jobId), "Website generation failed.");
+        const job = await waitForJob(
+          String(data.jobId),
+          "Website generation failed.",
+          (jobUpdate) => {
+            const progress = jobProgressFromResult(jobUpdate.result);
+            if (progress.length) setWebsiteBuildProgress(progress);
+          }
+        );
+        const progress = jobProgressFromResult(job.result);
+        if (progress.length) setWebsiteBuildProgress(progress);
+        if (
+          job.result &&
+          typeof job.result === "object" &&
+          !Array.isArray(job.result)
+        ) {
+          const site = (job.result as { site?: SiteAsset }).site;
+          if (site?.id) {
+            setSelectedSiteId(site.id);
+            setSelectedSitePath(siteFiles(site)[0]?.path ?? "index.html");
+          }
+        }
         return;
       }
-      setSites((data.sites as SiteAsset[]) ?? []);
+      const nextSites = (data.sites as SiteAsset[]) ?? [];
+      setSites(nextSites);
+      setSelectedSiteId(nextSites[0]?.id ?? "");
+      setSelectedSitePath(
+        nextSites[0] ? siteFiles(nextSites[0])[0]?.path ?? "index.html" : "index.html"
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : "Generation failed.");
     } finally {
@@ -1173,7 +1673,14 @@ export default function DesignStudioSection({
     async (siteId: string) => {
       if (!projectId) return;
       const prev = sites;
-      setSites((s) => s.filter((x) => x.id !== siteId)); // optimistic
+      const optimistic = sites.filter((x) => x.id !== siteId);
+      setSites(optimistic); // optimistic
+      if (selectedSiteId === siteId) {
+        setSelectedSiteId(optimistic[0]?.id ?? "");
+        setSelectedSitePath(
+          optimistic[0] ? siteFiles(optimistic[0])[0]?.path ?? "index.html" : "index.html"
+        );
+      }
       try {
         const res = await fetch(
           `/api/projects/${projectId}/design/site?siteId=${encodeURIComponent(
@@ -1181,12 +1688,16 @@ export default function DesignStudioSection({
           )}`,
           { method: "DELETE" }
         );
-        if (!res.ok) setSites(prev);
+        if (!res.ok) {
+          setSites(prev);
+          if (selectedSiteId === siteId) setSelectedSiteId(siteId);
+        }
       } catch {
         setSites(prev);
+        if (selectedSiteId === siteId) setSelectedSiteId(siteId);
       }
     },
-    [projectId, sites]
+    [projectId, selectedSiteId, sites]
   );
 
   const updatePalette = useCallback(
@@ -1660,23 +2171,25 @@ export default function DesignStudioSection({
             <input
               value={websiteBrief}
               onChange={(e) => setWebsiteBrief(e.target.value)}
-              placeholder="Homepage brief — e.g. 'launch page for hydration cleanser, emphasize subscription and bundles'"
+              placeholder="Website brief — e.g. 'multi-page product site for hydration cleanser, emphasize bundles, press, stockists, and Instagram'"
               className="mb-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
+            <WebsiteCodingConsole
+              progress={websiteBuildProgress}
+              running={makingSite}
+            />
             {sites.length ? (
-              <div className="space-y-3">
-                {sites.map((site, index) => (
-                  <SiteCard
-                    key={site.id}
-                    site={site}
-                    isLatest={index === 0}
-                    deployEnabled={deployEnabled}
-                    deploying={deployingId === site.id}
-                    onDeploy={deploySite}
-                    onDelete={removeSite}
-                  />
-                ))}
-              </div>
+              <SiteHistoryBrowser
+                sites={sites}
+                selectedSiteId={selectedSiteId}
+                selectedPath={selectedSitePath}
+                deployEnabled={deployEnabled}
+                deployingId={deployingId}
+                onSelectSite={setSelectedSiteId}
+                onSelectPath={setSelectedSitePath}
+                onDeploy={deploySite}
+                onDelete={removeSite}
+              />
             ) : (
               <p className="text-[12px] text-neutral-400">
                 No website design yet.

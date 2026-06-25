@@ -1741,15 +1741,29 @@ export const LogoAssetSchema = z.object({
 });
 export type LogoAsset = z.infer<typeof LogoAssetSchema>;
 
-// A generated one-page website: a self-contained HTML document (inline CSS,
-// Google-Fonts <link> allowed, no scripts) built from the design tokens + venture
-// copy. deployUrl is set once the founder publishes it to Vercel.
+export const SiteFileSchema = z.object({
+  path: z.string().min(1).max(180),
+  content: z.string(),
+  contentType: z.string().max(80).default("text/html"),
+});
+export type SiteFile = z.infer<typeof SiteFileSchema>;
+
+// A generated website: the home page is stored in html for legacy preview and
+// deploy paths, while files contains the complete static export for multi-page
+// client downloads. deployUrl is set once the founder publishes it to Vercel.
 export const SiteAssetSchema = z.object({
   id: z.string(),
   title: z.string(),
   brandName: z.string(),
   html: z.string(),
+  files: z.array(SiteFileSchema).default([]),
   deployUrl: z.string().nullable().default(null),
+  generationRunId: z.string().optional(),
+  generationRunLabel: z.string().optional(),
+  generationRunCreatedAt: z.string().optional(),
+  generationRunStamp: z.string().optional(),
+  sourceWebsiteUrl: z.string().optional(),
+  brief: z.string().optional(),
   createdAt: z.string(),
 });
 export type SiteAsset = z.infer<typeof SiteAssetSchema>;
@@ -1757,7 +1771,8 @@ export type SiteAsset = z.infer<typeof SiteAssetSchema>;
 // What the site-generator LLM call returns (the HTML is sanitized before use).
 export const SiteGenOutputSchema = z.object({
   title: z.string(),
-  html: z.string(),
+  html: z.string().default(""),
+  files: z.array(SiteFileSchema).default([]),
 });
 export type SiteGenOutput = z.infer<typeof SiteGenOutputSchema>;
 

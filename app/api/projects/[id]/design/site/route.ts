@@ -68,7 +68,12 @@ export async function POST(
     try {
       const { url } = await deployStaticSite(
         `${project.name}-${site.brandName}`,
-        site.html
+        site.files.length
+          ? site.files.map((file) => ({
+              path: file.path,
+              content: file.content,
+            }))
+          : site.html
       );
       const updated = await setSiteDeployUrl(params.id, site.id, url);
       return NextResponse.json({ site: updated });

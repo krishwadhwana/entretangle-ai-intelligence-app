@@ -1,8 +1,7 @@
 // Optional one-click publish of a generated static site to Vercel. Gated on a
 // VERCEL_TOKEN (and optional VERCEL_TEAM_ID) so the feature lights up only when
 // the founder has connected a Vercel account; without it, the UI still offers
-// preview + HTML download. We deploy a single static index.html (no build), so
-// the Vercel deployment is a plain static page.
+// preview + ZIP download. We deploy plain static files with no build step.
 
 export function vercelDeployEnabled(): boolean {
   return Boolean(process.env.VERCEL_TOKEN);
@@ -19,14 +18,15 @@ function safeProjectName(name: string): string {
 }
 
 export type VercelDeployResult = { url: string };
+export type StaticDeployFile = { path: string; content: string };
 
 /**
- * Create a static deployment of `html` as index.html. Returns the public URL
- * (https://…). Throws with a readable message on misconfig/API failure.
+ * Create a static deployment. Returns the public URL (https://…). Throws with a
+ * readable message on misconfig/API failure.
  */
 export async function deployStaticSite(
   projectName: string,
-  html: string
+  site: string | StaticDeployFile[]
 ): Promise<VercelDeployResult> {
   const token = process.env.VERCEL_TOKEN;
   if (!token) {
@@ -38,6 +38,12 @@ export async function deployStaticSite(
   const name = safeProjectName(projectName);
   const endpoint = new URL("https://api.vercel.com/v13/deployments");
   if (teamId) endpoint.searchParams.set("teamId", teamId);
+  const files = Array.isArray(site)
+    ? site.map((file) => ({
+        file: file.path.replace(/^\/+/, "") || "index.html",
+        data: file.content,
+      }))
+    : [{ file: "index.html", data: site }];
 
   const res = await fetch(endpoint.toString(), {
     method: "POST",
@@ -48,8 +54,8 @@ export async function deployStaticSite(
     body: JSON.stringify({
       name,
       target: "production",
-      // Inline file content — no build step for a single static document.
-      files: [{ file: "index.html", data: html }],
+      // Inline file content — no build step for static documents.
+      files,
       projectSettings: { framework: null },
     }),
   });

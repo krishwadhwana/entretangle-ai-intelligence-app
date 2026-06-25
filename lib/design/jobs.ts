@@ -2,6 +2,7 @@ import { z } from "zod";
 import { createHash } from "crypto";
 import { renderCollateral, COLLATERAL_LABELS } from "./collateral";
 import { buildLogoVariants, sanitizeSvg } from "./logo";
+import { appendJobProgress } from "../jobs";
 import {
   callAdVisualImage,
   callCollateralCopy,
@@ -45,6 +46,7 @@ import type {
   DesignTokens,
   LogoAsset,
   ProductImageRef,
+  SiteFile,
   WebsiteAnalysis,
 } from "../schema";
 
@@ -333,6 +335,115 @@ function replaceProductImagePlaceholders(
   }, html);
 }
 
+function isHtmlSiteFile(file: Pick<SiteFile, "path" | "contentType">): boolean {
+  return (
+    file.contentType.toLowerCase().includes("html") ||
+    /\.html?$/i.test(file.path)
+  );
+}
+
+function sanitizeSiteFilePath(value: string, index: number): string {
+  let path = value.trim().replace(/\\/g, "/").replace(/^\/+/, "");
+  path = path
+    .split("/")
+    .filter((part) => part && part !== "." && part !== "..")
+    .join("/");
+  if (!path) path = index === 0 ? "index.html" : `page-${index + 1}.html`;
+  if (!/\.[a-z0-9]{1,8}$/i.test(path)) path = `${path}.html`;
+  return path;
+}
+
+function uniqueSitePath(path: string, used: Set<string>): string {
+  if (!used.has(path)) {
+    used.add(path);
+    return path;
+  }
+  const extMatch = path.match(/(\.[a-z0-9]{1,8})$/i);
+  const ext = extMatch?.[1] ?? ".html";
+  const base = extMatch ? path.slice(0, -ext.length) : path;
+  let suffix = 2;
+  while (used.has(`${base}-${suffix}${ext}`)) suffix += 1;
+  const next = `${base}-${suffix}${ext}`;
+  used.add(next);
+  return next;
+}
+
+function normalizeSiteFiles(args: {
+  out: { html: string; files: SiteFile[] };
+  productImages: ProductImageInput[];
+  productImagePlaceholders: {
+    placeholder: string;
+    name: string;
+    visualSummary?: string | null;
+    availableForInlineEmbed?: boolean;
+  }[];
+  brandName: string;
+  heroSubhead: string;
+  logoSvg: string | null;
+}): SiteFile[] {
+  const rawFiles = args.out.files.map((file, index) => ({
+    ...file,
+    path: sanitizeSiteFilePath(file.path, index),
+    contentType: file.contentType || "text/html",
+  }));
+  const indexFileIndex = rawFiles.findIndex((file) => file.path === "index.html");
+  if (args.out.html.trim()) {
+    if (indexFileIndex >= 0) {
+      rawFiles[indexFileIndex] = {
+        ...rawFiles[indexFileIndex],
+        content: args.out.html,
+        contentType: "text/html",
+      };
+    } else {
+      rawFiles.unshift({
+        path: "index.html",
+        content: args.out.html,
+        contentType: "text/html",
+      });
+    }
+  }
+  if (!rawFiles.length) {
+    throw new Error("The generated site did not include any files.");
+  }
+  if (!rawFiles.some((file) => file.path === "index.html")) {
+    rawFiles[0] = { ...rawFiles[0], path: "index.html", contentType: "text/html" };
+  }
+
+  const used = new Set<string>();
+  return rawFiles.map((file) => {
+    const path = uniqueSitePath(file.path, used);
+    const htmlFile = isHtmlSiteFile({ ...file, path });
+    if (!htmlFile) {
+      return {
+        path,
+        content: replaceProductImagePlaceholders(file.content, args.productImages),
+        contentType: file.contentType,
+      };
+    }
+    const withImages =
+      path === "index.html"
+        ? ensureProductImageryHtml(file.content, args.productImagePlaceholders, {
+            brandName: args.brandName,
+            tagline: args.heroSubhead,
+          })
+        : file.content;
+    const content = sanitizeSiteHtml(
+      polishGeneratedSiteHtmlWithAssets(
+        replaceProductImagePlaceholders(withImages, args.productImages),
+        {
+          brandName: args.brandName,
+          logoSvg: args.logoSvg,
+          heroSubhead: args.heroSubhead,
+        }
+      )
+    );
+    if (!looksLikeHtmlDoc(content)) {
+      throw new Error(`The generated site file ${path} was malformed.`);
+    }
+    return { path, content, contentType: "text/html" };
+  });
+}
+
 function dataUrlByteSize(dataUrl: string): number {
   const match = dataUrl.match(/^data:[^;,]+;base64,(.+)$/);
   if (!match) return 0;
@@ -596,16 +707,43 @@ export async function runDesignStudioJob(args: {
   }
 
   const payload = SitePayloadSchema.parse(args.payload ?? {});
+  await appendJobProgress(args.jobId, {
+    label: "Reading brand context",
+    detail:
+      "Loading the venture profile, design tokens, overview evidence, product photographs, and saved logo assets.",
+    code: "const context = { profile, tokens, overviewEvidence, productImages, logo };",
+    status: "running",
+  });
   const websiteAnalysis = await resolveWebsiteAnalysis(
     args.projectId,
     project.websiteAnalysis,
     payload.sourceWebsiteUrl
   );
+  await appendJobProgress(args.jobId, {
+    label: websiteAnalysis ? "Overview evidence ready" : "Supplying brand info",
+    detail: websiteAnalysis
+      ? "Using the Overview section as source material for products, press, social links, prices, facts, and imagery."
+      : "No overview evidence is saved, so GPT will build from the founder profile, brief, brand kit, and available references.",
+    code: websiteAnalysis
+      ? "source = compactWebsiteEvidence(project.websiteAnalysis);"
+      : "source = { clientProfile, founderBrief, brandVoice, positioning };",
+    status: "running",
+  });
   const productImages = await loadProductImageInputs(
     args.projectId,
     profile.productImages,
     websiteAnalysis
   );
+  await appendJobProgress(args.jobId, {
+    label: "Preparing visual assets",
+    detail: `Loaded ${productImages.length} product or overview image reference${
+      productImages.length === 1 ? "" : "s"
+    } for the website build.`,
+    code: `const productImages = [${productImages
+      .map((image) => `"${image.ref.name}"`)
+      .join(", ")}];`,
+    status: "running",
+  });
   const websiteHeroVisual = await generateWebsiteHeroVisual({
     projectId: args.projectId,
     profile,
@@ -614,10 +752,25 @@ export async function runDesignStudioJob(args: {
     brief: payload.brief,
     productImages,
   });
+  await appendJobProgress(args.jobId, {
+    label: "Hero campaign visual generated",
+    detail:
+      "Created a website-scale campaign image so the first viewport is image-led rather than a generic text block.",
+    code: "PRODUCT_IMAGE_1 = generatedHeroVisual.dataUrl;",
+    status: "running",
+  });
   const siteProductImages = [websiteHeroVisual, ...productImages].slice(0, 6);
   const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
   const heroSubhead = websiteHeroSubhead(profile, project.name, websiteAnalysis);
   const logoSvg = websiteLogoSvg(project.ownerDashboard?.designStudio?.logos);
+  await appendJobProgress(args.jobId, {
+    label: "GPT 5.5 is coding the site",
+    detail:
+      "Generating a static website file tree. Richer brands can become multi-page sites instead of one landing page.",
+    code:
+      "return { files: ['index.html', 'products.html', 'story.html', ...], html: indexHtml };",
+    status: "running",
+  });
   const out = await callSiteGenerator(
     payload.sourceRunId,
     args.projectId,
@@ -635,25 +788,53 @@ export async function runDesignStudioJob(args: {
     visualSummary: image.ref.visualSummary ?? "",
     availableForInlineEmbed: Boolean(image.dataUrl),
   }));
-  const imageLedHtml = ensureProductImageryHtml(out.html, productImagePlaceholders, {
+  const files = normalizeSiteFiles({
+    out,
+    productImages: siteProductImages,
+    productImagePlaceholders,
     brandName,
-    tagline: heroSubhead,
+    heroSubhead,
+    logoSvg,
   });
-  const html = sanitizeSiteHtml(
-    polishGeneratedSiteHtmlWithAssets(
-      replaceProductImagePlaceholders(imageLedHtml, siteProductImages),
-      { brandName, logoSvg, heroSubhead }
-    )
-  );
+  const html = files.find((file) => file.path === "index.html")?.content ?? files[0].content;
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");
+  const createdAt = new Date();
+  const stamp = istStamp(createdAt);
+  const generationRunId = `site-run-${stamp}-${Math.random()
+    .toString(36)
+    .slice(2, 7)}`;
+  await appendJobProgress(args.jobId, {
+    label: "Packaging static files",
+    detail: `Prepared ${files.length} website file${
+      files.length === 1 ? "" : "s"
+    } for preview history and ZIP download.`,
+    code: files.map((file) => `/${file.path}`).join("\n"),
+    status: "running",
+  });
   const site = SiteAssetSchema.parse({
     id: `site-${Date.now().toString(36)}`,
     title: out.title,
     brandName,
     html,
+    files,
     deployUrl: null,
-    createdAt: new Date().toISOString(),
+    generationRunId,
+    generationRunLabel: `Website build · ${stamp.replace(/_/g, " ")}`,
+    generationRunCreatedAt: createdAt.toISOString(),
+    generationRunStamp: stamp,
+    sourceWebsiteUrl: websiteAnalysis?.url ?? payload.sourceWebsiteUrl,
+    brief: payload.brief,
+    createdAt: createdAt.toISOString(),
   });
   const studio = await saveSiteAsset(args.projectId, site);
+  await appendJobProgress(args.jobId, {
+    label: "Saved to website history",
+    detail:
+      "The generation is now available in the timestamped history, file browser, preview, and client ZIP export.",
+    code: `history.add("${site.generationRunStamp}", ${JSON.stringify(
+      files.map((file) => file.path)
+    )});`,
+    status: "done",
+  });
   return { site, sites: studio.sites };
 }
