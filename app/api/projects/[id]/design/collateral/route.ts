@@ -95,17 +95,22 @@ export async function POST(
       return NextResponse.json(result);
     }
 
-    const job = await enqueueProjectJob(params.id, "design_collateral", {
-      type: body.data.type,
-      brief: body.data.brief,
-      useTemplates: body.data.useTemplates,
-      useAiVisual: body.data.useAiVisual,
-      useProductImages: body.data.useProductImages,
-      visualBrief: body.data.visualBrief,
-      sourceRunId: body.data.sourceRunId,
-      sourceWebsiteUrl: body.data.sourceWebsiteUrl,
-      ...(body.data.content ? { content: body.data.content } : {}),
-    });
+    const job = await enqueueProjectJob(
+      params.id,
+      "design_collateral",
+      {
+        type: body.data.type,
+        brief: body.data.brief,
+        useTemplates: body.data.useTemplates,
+        useAiVisual: body.data.useAiVisual,
+        useProductImages: body.data.useProductImages,
+        visualBrief: body.data.visualBrief,
+        sourceRunId: body.data.sourceRunId,
+        sourceWebsiteUrl: body.data.sourceWebsiteUrl,
+        ...(body.data.content ? { content: body.data.content } : {}),
+      },
+      { dedupe: false, cancelQueued: true }
+    );
     return NextResponse.json(
       { jobId: job.id, alreadyQueued: job.alreadyQueued },
       { status: 202 }

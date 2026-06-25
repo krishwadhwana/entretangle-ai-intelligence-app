@@ -93,11 +93,16 @@ export async function POST(
     );
   }
   try {
-    const job = await enqueueProjectJob(params.id, "design_site", {
-      sourceRunId: body.data.sourceRunId,
-      sourceWebsiteUrl: body.data.sourceWebsiteUrl,
-      brief: body.data.brief,
-    });
+    const job = await enqueueProjectJob(
+      params.id,
+      "design_site",
+      {
+        sourceRunId: body.data.sourceRunId,
+        sourceWebsiteUrl: body.data.sourceWebsiteUrl,
+        brief: body.data.brief,
+      },
+      { dedupe: false, cancelQueued: true }
+    );
     return NextResponse.json(
       { jobId: job.id, alreadyQueued: job.alreadyQueued },
       { status: 202 }

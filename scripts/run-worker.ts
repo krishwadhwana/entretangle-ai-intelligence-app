@@ -16,6 +16,7 @@ import {
 import { prisma } from "../lib/db";
 import { executeRun, resumeRun, addPendingCohorts } from "../lib/orchestrator";
 import { runDesignStudioJob } from "../lib/design/jobs";
+import { currentDeployInfo, deployInfoLabel } from "../lib/deployInfo";
 
 const workerId = process.env.WORKER_ID ?? `run-worker-${randomUUID()}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "2000", 10);
@@ -142,6 +143,7 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
 
 async function main(): Promise<void> {
   console.log(`[worker ${workerId}] polling every ${pollMs}ms`);
+  console.log(`[worker ${workerId}] ${deployInfoLabel(currentDeployInfo("worker"))}`);
   while (!shuttingDown) {
     // A transient DB error while claiming must NOT kill the loop — that exits
     // the process, and after restartPolicyMaxRetries Railway stops restarting

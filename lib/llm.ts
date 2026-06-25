@@ -324,7 +324,14 @@ async function runMidjourneyActor(prompt: string): Promise<string | null> {
     process.env.APIFY_MIDJOURNEY_ACTOR_ID?.trim() ||
     "igolaizola~midjourney-automation";
   const cookies = parseJsonArrayEnv("APIFY_MIDJOURNEY_COOKIES");
-  if (!token || !cookies.length) return null;
+  if (!token || !cookies.length) {
+    console.warn(
+      `[design] Midjourney skipped: ${
+        !token ? "APIFY_TOKEN missing" : "APIFY_MIDJOURNEY_COOKIES empty"
+      }.`
+    );
+    return null;
+  }
 
   const input = {
     cookies,
@@ -391,7 +398,13 @@ async function runMidjourneyActor(prompt: string): Promise<string | null> {
   }
 
   const urls = collectStringUrls(items);
-  return urls.find(isLikelyImageUrl) ?? urls[0] ?? null;
+  const imageUrl = urls.find(isLikelyImageUrl) ?? urls[0] ?? null;
+  console.info(
+    imageUrl
+      ? "[design] Midjourney scene generated."
+      : "[design] Midjourney actor succeeded but returned no image URL."
+  );
+  return imageUrl;
 }
 
 async function callGeminiImageComposite(args: {
@@ -498,6 +511,7 @@ async function callGeminiImageComposite(args: {
             ? (part.inline_data as { mimeType?: string; data?: string })
             : null;
       if (inlineData?.data) {
+        console.info("[design] Gemini product composite generated.");
         return `data:${inlineData.mimeType || "image/png"};base64,${
           inlineData.data
         }`;
@@ -568,6 +582,11 @@ async function callOpenAIAdVisualImage(args: {
 
   const b64 = response.data?.[0]?.b64_json;
   if (!b64) throw new Error("Image generation returned no image.");
+  console.info(
+    imageFiles.length
+      ? "[design] OpenAI image edit generated visual."
+      : "[design] OpenAI image generation produced visual."
+  );
   return `data:image/png;base64,${b64}`;
 }
 

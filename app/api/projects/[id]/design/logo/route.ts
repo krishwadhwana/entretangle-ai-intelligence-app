@@ -59,10 +59,15 @@ export async function POST(
   }
 
   try {
-    const job = await enqueueProjectJob(params.id, "design_logo", {
-      sourceRunId: body.data.sourceRunId,
-      brief: body.data.brief,
-    });
+    const job = await enqueueProjectJob(
+      params.id,
+      "design_logo",
+      {
+        sourceRunId: body.data.sourceRunId,
+        brief: body.data.brief,
+      },
+      { dedupe: false, cancelQueued: true }
+    );
     return NextResponse.json(
       { jobId: job.id, alreadyQueued: job.alreadyQueued },
       { status: 202 }

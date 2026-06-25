@@ -130,11 +130,16 @@ export async function POST(
 
   try {
     if (!body.data.tokens) {
-      const job = await enqueueProjectJob(params.id, "design_tokens", {
-        sourceRunId: body.data.sourceRunId,
-        sourceWebsiteUrl: body.data.sourceWebsiteUrl,
-        guidance: body.data.guidance,
-      });
+      const job = await enqueueProjectJob(
+        params.id,
+        "design_tokens",
+        {
+          sourceRunId: body.data.sourceRunId,
+          sourceWebsiteUrl: body.data.sourceWebsiteUrl,
+          guidance: body.data.guidance,
+        },
+        { dedupe: false, cancelQueued: true }
+      );
       return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });
     }
     const generatedAt = new Date().toISOString();

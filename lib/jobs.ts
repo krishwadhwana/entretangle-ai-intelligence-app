@@ -93,7 +93,7 @@ export async function enqueueProjectJob(
   projectId: string,
   type: Exclude<RunJobType, "execute" | "resume" | "add_cohort">,
   payload: Prisma.InputJsonValue,
-  opts: { priority?: number } = {}
+  opts: { priority?: number; dedupe?: boolean; cancelQueued?: boolean } = {}
 ): Promise<{ id: string; alreadyQueued: boolean }> {
   await prisma.runJob.updateMany({
     where: {
@@ -110,16 +110,30 @@ export async function enqueueProjectJob(
     },
   });
 
-  const existing = await prisma.runJob.findFirst({
-    where: {
-      projectId,
-      type,
-      status: { in: ["queued", "running"] },
-    },
-    orderBy: { createdAt: "desc" },
-    select: { id: true },
-  });
-  if (existing) return { id: existing.id, alreadyQueued: true };
+  if (opts.cancelQueued) {
+    await prisma.runJob.updateMany({
+      where: { projectId, type, status: "queued" },
+      data: {
+        status: "cancelled",
+        cancelRequested: true,
+        finishedAt: new Date(),
+        error: "superseded by a newer design generation request",
+      },
+    });
+  }
+
+  if (opts.dedupe !== false) {
+    const existing = await prisma.runJob.findFirst({
+      where: {
+        projectId,
+        type,
+        status: { in: ["queued", "running"] },
+      },
+      orderBy: { createdAt: "desc" },
+      select: { id: true },
+    });
+    if (existing) return { id: existing.id, alreadyQueued: true };
+  }
 
   const job = await prisma.runJob.create({
     data: {
