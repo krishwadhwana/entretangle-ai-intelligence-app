@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Download,
@@ -8,6 +8,7 @@ import {
   FileImage,
   Globe,
   Hexagon,
+  Info,
   Link2,
   Loader2,
   Megaphone,
@@ -30,6 +31,20 @@ import { providerErrorMessage } from "@/lib/providerErrors";
 const AD_TYPE: CollateralType = "ad";
 const AD_CAMPAIGN_PACK_TYPE = "ad-campaign" as const;
 type CollateralRunType = CollateralType | typeof AD_CAMPAIGN_PACK_TYPE;
+type GenerationRunMeta = {
+  generationRunId: string;
+  generationRunLabel: string;
+  generationRunCreatedAt: string;
+  generationRunStamp: string;
+};
+type AdRunFolder = {
+  id: string;
+  label: string;
+  createdAtMs: number;
+  stamp?: string;
+  templateFrameEnabled?: boolean;
+  assets: DesignAsset[];
+};
 
 const AD_CAMPAIGN_VARIANTS = [
   {
@@ -60,6 +75,72 @@ const AD_CAMPAIGN_VARIANTS = [
       "macro/editorial proof scene, close product detail, distinct from the other campaign posts",
   },
 ];
+
+function istParts(date: Date): Record<string, string> {
+  return Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value])
+  );
+}
+
+function createGenerationRunMeta(
+  kind: "Campaign pack" | "Single creative",
+  useTemplates: boolean
+): GenerationRunMeta {
+  const now = new Date();
+  const p = istParts(now);
+  const stamp = `${p.year}-${p.month}-${p.day}_${p.hour}-${p.minute}-${p.second}_IST`;
+  const suffix = Math.random().toString(36).slice(2, 7);
+  return {
+    generationRunId: `ad-run-${stamp}-${suffix}`,
+    generationRunLabel: `${kind} · ${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second} IST · ${
+      useTemplates ? "Template" : "No template"
+    }`,
+    generationRunCreatedAt: now.toISOString(),
+    generationRunStamp: stamp,
+  };
+}
+
+function buildAdRunFolders(adAssets: DesignAsset[]): AdRunFolder[] {
+  const byId = new Map<string, AdRunFolder>();
+  for (const asset of adAssets) {
+    const id = asset.generationRunId || "legacy-ad-assets";
+    const createdAt = Date.parse(asset.generationRunCreatedAt || asset.createdAt);
+    const prior = byId.get(id);
+    if (prior) {
+      prior.assets.push(asset);
+      prior.createdAtMs = Math.max(
+        prior.createdAtMs,
+        Number.isFinite(createdAt) ? createdAt : 0
+      );
+      if (asset.templateFrameEnabled !== undefined) {
+        prior.templateFrameEnabled = asset.templateFrameEnabled;
+      }
+      continue;
+    }
+    byId.set(id, {
+      id,
+      label:
+        asset.generationRunLabel ||
+        "Previous assets · before run folders were added",
+      createdAtMs: Number.isFinite(createdAt) ? createdAt : 0,
+      stamp: asset.generationRunStamp,
+      templateFrameEnabled: asset.templateFrameEnabled,
+      assets: [asset],
+    });
+  }
+  return [...byId.values()].sort((a, b) => b.createdAtMs - a.createdAtMs);
+}
 
 function extractWebsiteUrl(value: string): string {
   const match = value.match(
@@ -241,6 +322,34 @@ function siteDownloadName(site: SiteAsset): string {
 
 function svgPreviewSrc(svg: string): string {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+function PipelineStep({
+  label,
+  info,
+}: {
+  label: string;
+  info: string;
+}) {
+  return (
+    <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+      <input
+        type="checkbox"
+        checked
+        disabled
+        readOnly
+        aria-label={`${label} always enabled`}
+        className="h-3.5 w-3.5 accent-neutral-900"
+      />
+      <span className="truncate">{label}</span>
+      <span className="group relative ml-auto flex h-4 w-4 shrink-0 items-center justify-center text-neutral-400">
+        <Info className="h-3.5 w-3.5" aria-hidden="true" />
+        <span className="pointer-events-none absolute bottom-full right-0 z-10 mb-2 hidden w-64 rounded-md border border-neutral-200 bg-white p-2 text-[11px] font-normal leading-snug text-neutral-600 shadow-lg group-hover:block">
+          {info}
+        </span>
+      </span>
+    </span>
+  );
 }
 
 function AssetCard({
@@ -562,7 +671,9 @@ export default function DesignStudioSection({
   const [socialBrief, setSocialBrief] = useState("");
   const [collateralBrief, setCollateralBrief] = useState("");
   const [useSocialTemplates, setUseSocialTemplates] = useState(true);
+  const [socialTemplateBrief, setSocialTemplateBrief] = useState("");
   const [socialVisualBrief, setSocialVisualBrief] = useState("");
+  const [selectedAdRunId, setSelectedAdRunId] = useState("");
   const [websiteImageRefs, setWebsiteImageRefs] = useState<WebsiteImageRef[]>([]);
   const [pullingRefs, setPullingRefs] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -744,6 +855,11 @@ export default function DesignStudioSection({
       options: {
         brief?: string;
         visualBrief?: string;
+        templateBrief?: string;
+        generationRunId?: string;
+        generationRunLabel?: string;
+        generationRunCreatedAt?: string;
+        generationRunStamp?: string;
         useTemplates?: boolean;
         useAiVisual?: boolean;
         useProductImages?: boolean;
@@ -766,6 +882,13 @@ export default function DesignStudioSection({
             (type === "business-card" ? false : isSocial),
           visualBrief:
             options.visualBrief ?? (isSocial ? socialVisualBrief : ""),
+          templateBrief:
+            options.templateBrief ??
+            (isSocial && useSocialTemplates ? socialTemplateBrief : ""),
+          generationRunId: options.generationRunId ?? "",
+          generationRunLabel: options.generationRunLabel ?? "",
+          generationRunCreatedAt: options.generationRunCreatedAt ?? "",
+          generationRunStamp: options.generationRunStamp ?? "",
           sourceRunId: sourceRunId ?? null,
           sourceWebsiteUrl:
             sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
@@ -791,6 +914,7 @@ export default function DesignStudioSection({
       socialBrief,
       collateralBrief,
       useSocialTemplates,
+      socialTemplateBrief,
       socialVisualBrief,
       sourceRunId,
       sourceWebsiteUrl,
@@ -805,14 +929,19 @@ export default function DesignStudioSection({
       setMakingType(type);
       setError(null);
       try {
-        await generateCollateralAsset(type);
+        const runMeta =
+          type === AD_TYPE
+            ? createGenerationRunMeta("Single creative", useSocialTemplates)
+            : null;
+        if (runMeta) setSelectedAdRunId(runMeta.generationRunId);
+        await generateCollateralAsset(type, runMeta ?? {});
       } catch (e) {
         setError(e instanceof Error ? e.message : "Generation failed.");
       } finally {
         setMakingType(null);
       }
     },
-    [generateCollateralAsset, projectId]
+    [generateCollateralAsset, projectId, useSocialTemplates]
   );
 
   const makeAdCampaignPack = useCallback(async () => {
@@ -826,9 +955,15 @@ export default function DesignStudioSection({
     setMakingType(AD_CAMPAIGN_PACK_TYPE);
     setError(null);
     try {
+      const runMeta = createGenerationRunMeta(
+        "Campaign pack",
+        useSocialTemplates
+      );
+      setSelectedAdRunId(runMeta.generationRunId);
       for (let index = 0; index < AD_CAMPAIGN_VARIANTS.length; index += 1) {
         const variant = AD_CAMPAIGN_VARIANTS[index];
         await generateCollateralAsset(AD_TYPE, {
+          ...runMeta,
           brief: [
             baseBrief,
             `Campaign post ${index + 1} of ${AD_CAMPAIGN_VARIANTS.length}.`,
@@ -840,6 +975,7 @@ export default function DesignStudioSection({
           useTemplates: useSocialTemplates,
           useAiVisual: true,
           useProductImages: true,
+          templateBrief: useSocialTemplates ? socialTemplateBrief : "",
           visualBrief: [
             baseVisualBrief,
             `Variant role: ${variant.name}. ${variant.visual}`,
@@ -857,6 +993,7 @@ export default function DesignStudioSection({
     generateCollateralAsset,
     projectId,
     socialBrief,
+    socialTemplateBrief,
     socialVisualBrief,
     useSocialTemplates,
   ]);
@@ -1081,6 +1218,41 @@ export default function DesignStudioSection({
     []
   );
 
+  const tokens = tokenDraft ?? studio?.tokens ?? null;
+  const palette = tokens?.palette;
+  const adAssets = useMemo(
+    () => assets.filter((asset) => asset.type === AD_TYPE),
+    [assets]
+  );
+  const adRunFolders = useMemo(() => buildAdRunFolders(adAssets), [adAssets]);
+  const selectedAdRun =
+    adRunFolders.find((run) => run.id === selectedAdRunId) ?? adRunFolders[0];
+  const visibleAdAssets = selectedAdRun?.assets ?? [];
+  const businessCardAssets = useMemo(
+    () => assets.filter((asset) => asset.type === "business-card"),
+    [assets]
+  );
+  const flyerAssets = useMemo(
+    () => assets.filter((asset) => asset.type === "flyer"),
+    [assets]
+  );
+  const posterAssets = useMemo(
+    () => assets.filter((asset) => asset.type === "poster"),
+    [assets]
+  );
+
+  useEffect(() => {
+    if (!adRunFolders.length) {
+      setSelectedAdRunId("");
+      return;
+    }
+    setSelectedAdRunId((current) =>
+      current && adRunFolders.some((run) => run.id === current)
+        ? current
+        : adRunFolders[0].id
+    );
+  }, [adRunFolders]);
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-neutral-400">
@@ -1089,12 +1261,6 @@ export default function DesignStudioSection({
     );
   }
 
-  const tokens = tokenDraft ?? studio?.tokens ?? null;
-  const palette = tokens?.palette;
-  const adAssets = assets.filter((asset) => asset.type === AD_TYPE);
-  const businessCardAssets = assets.filter((asset) => asset.type === "business-card");
-  const flyerAssets = assets.filter((asset) => asset.type === "flyer");
-  const posterAssets = assets.filter((asset) => asset.type === "poster");
   const hasSourceWebsite = Boolean(
     sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance)
   );
@@ -1543,16 +1709,27 @@ export default function DesignStudioSection({
                 />
                 Templates
               </label>
-              <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                Midjourney scene
-              </span>
-              <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                Gemini product swap
-              </span>
+              <PipelineStep
+                label="Midjourney scene"
+                info="Always on for campaign images. We use Midjourney first for art direction: model pose, scene, lighting, composition, and copy space."
+              />
+              <PipelineStep
+                label="Gemini product swap"
+                info="Always on after Midjourney. Gemini receives the scene plus real product photos and overview images, then swaps in the actual product photorealistically."
+              />
               <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700 sm:col-span-3">
                 No generated image text
               </span>
             </div>
+            {useSocialTemplates ? (
+              <textarea
+                value={socialTemplateBrief}
+                onChange={(e) => setSocialTemplateBrief(e.target.value)}
+                placeholder="Template direction — e.g. 'premium skincare editorial with big headline, small CTA, lots of white space'"
+                rows={2}
+                className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+              />
+            ) : null}
             <textarea
               value={socialVisualBrief}
               onChange={(e) => setSocialVisualBrief(e.target.value)}
@@ -1560,12 +1737,48 @@ export default function DesignStudioSection({
               rows={3}
               className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
-            {adAssets.length ? (
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {adAssets.map((asset) => (
-                  <AssetCard key={asset.id} asset={asset} onDelete={removeAsset} />
-                ))}
-              </div>
+            {adRunFolders.length ? (
+              <>
+                <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                  <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Campaign run
+                  </label>
+                  <select
+                    value={selectedAdRun?.id ?? ""}
+                    onChange={(e) => setSelectedAdRunId(e.target.value)}
+                    className="w-full rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
+                  >
+                    {adRunFolders.map((run, index) => (
+                      <option key={run.id} value={run.id}>
+                        {index === 0 ? "Latest — " : ""}
+                        {run.label} · {run.assets.length} creative
+                        {run.assets.length === 1 ? "" : "s"}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedAdRun ? (
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      Showing {visibleAdAssets.length} creative
+                      {visibleAdAssets.length === 1 ? "" : "s"} from{" "}
+                      {selectedAdRun.stamp
+                        ? selectedAdRun.stamp.replace(/_/g, " ")
+                        : selectedAdRun.label}
+                      {selectedAdRun.templateFrameEnabled !== undefined
+                        ? ` · ${
+                            selectedAdRun.templateFrameEnabled
+                              ? "Template on"
+                              : "Template off"
+                          }`
+                        : ""}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  {visibleAdAssets.map((asset) => (
+                    <AssetCard key={asset.id} asset={asset} onDelete={removeAsset} />
+                  ))}
+                </div>
+              </>
             ) : (
               <p className="text-[12px] text-neutral-400">
                 No ad campaign creatives yet.

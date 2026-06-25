@@ -63,6 +63,11 @@ const CollateralPayloadSchema = BasePayloadSchema.extend({
   useAiVisual: z.boolean().default(false),
   useProductImages: z.boolean().default(false),
   visualBrief: z.string().trim().max(2000).default(""),
+  templateBrief: z.string().trim().max(1000).default(""),
+  generationRunId: z.string().trim().max(160).default(""),
+  generationRunLabel: z.string().trim().max(220).default(""),
+  generationRunCreatedAt: z.string().trim().max(80).default(""),
+  generationRunStamp: z.string().trim().max(80).default(""),
   content: CollateralContentSchema.optional(),
 });
 
@@ -379,6 +384,10 @@ export async function runDesignStudioJob(args: {
   if (args.type === "design_collateral") {
     const payload = CollateralPayloadSchema.parse(args.payload ?? {});
     const isSocial = payload.type === "ad";
+    const templateBrief =
+      payload.useTemplates && payload.templateBrief
+        ? payload.templateBrief
+        : "";
     const websiteAnalysis = await resolveWebsiteAnalysis(
       args.projectId,
       project.websiteAnalysis,
@@ -392,7 +401,9 @@ export async function runDesignStudioJob(args: {
         payload.type,
         profile,
         brandKit,
-        payload.brief,
+        [payload.brief, templateBrief ? `Template direction: ${templateBrief}` : ""]
+          .filter(Boolean)
+          .join("\n"),
         websiteAnalysis
       ));
     const shouldGenerateVisual =
@@ -411,6 +422,14 @@ export async function runDesignStudioJob(args: {
       (shouldUseProductImages
         ? "Use the available product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
         : "Create a polished campaign visual for this social ad.");
+    const visualBriefWithTemplate = [
+      visualBrief,
+      templateBrief
+        ? `Final template/layout direction: ${templateBrief}. Leave copy space and visual balance for that template.`
+        : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
     const visual =
       shouldGenerateVisual
         ? await callAdVisualImage({
@@ -419,7 +438,7 @@ export async function runDesignStudioJob(args: {
             profile,
             tokens,
             brandKit,
-            visualBrief,
+            visualBrief: visualBriefWithTemplate,
             copy: content,
             productImages: shouldUseProductImages ? productImages : undefined,
           })
@@ -437,7 +456,21 @@ export async function runDesignStudioJob(args: {
       width,
       height,
       content,
-      ...(visualBrief ? { visualBrief } : {}),
+      ...(visualBriefWithTemplate ? { visualBrief: visualBriefWithTemplate } : {}),
+      ...(templateBrief ? { templateBrief } : {}),
+      ...(payload.generationRunId
+        ? { generationRunId: payload.generationRunId }
+        : {}),
+      ...(payload.generationRunLabel
+        ? { generationRunLabel: payload.generationRunLabel }
+        : {}),
+      ...(payload.generationRunCreatedAt
+        ? { generationRunCreatedAt: payload.generationRunCreatedAt }
+        : {}),
+      ...(payload.generationRunStamp
+        ? { generationRunStamp: payload.generationRunStamp }
+        : {}),
+      templateFrameEnabled: payload.useTemplates,
       createdAt: new Date().toISOString(),
     });
     if (args.jobId) await throwIfJobSuperseded(args.jobId);

@@ -1675,6 +1675,12 @@ export const DesignAssetSchema = z.object({
   height: z.number(),
   content: CollateralContentSchema,
   visualBrief: z.string().optional(),
+  templateBrief: z.string().optional(),
+  generationRunId: z.string().optional(),
+  generationRunLabel: z.string().optional(),
+  generationRunCreatedAt: z.string().optional(),
+  generationRunStamp: z.string().optional(),
+  templateFrameEnabled: z.boolean().optional(),
   createdAt: z.string(),
 });
 export type DesignAsset = z.infer<typeof DesignAssetSchema>;
