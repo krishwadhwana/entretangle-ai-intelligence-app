@@ -69,7 +69,7 @@ function cleanDisplayText(value: string | undefined): string {
 function truncateDisplayText(value: string | undefined, maxChars: number): string {
   const text = cleanDisplayText(value);
   if (text.length <= maxChars) return text;
-  const soft = text.slice(0, Math.max(0, maxChars - 1)).trimEnd();
+  const soft = text.slice(0, Math.max(0, maxChars - 3)).trimEnd();
   const lastSpace = soft.lastIndexOf(" ");
   const base =
     lastSpace >= Math.floor(maxChars * 0.55) ? soft.slice(0, lastSpace) : soft;
@@ -113,7 +113,11 @@ function lineBreakText(
   const lines: string[] = [];
   let current = "";
 
-  for (const word of words) {
+  for (const rawWord of words) {
+    const word =
+      rawWord.length > maxCharsPerLine
+        ? truncateDisplayText(rawWord, maxCharsPerLine)
+        : rawWord;
     const next = current ? `${current} ${word}` : word;
     if (next.length <= maxCharsPerLine) {
       current = next;
@@ -1020,13 +1024,8 @@ function imageLedAd(
   const portrait = variant === "portrait";
   const headline = safeHeadline(content, variant);
   const subhead = safeSubhead(content, variant);
-  const headlineLines = lineBreakText(headline, portrait ? 22 : 16, 2);
-  const subheadLines = lineBreakText(subhead, portrait ? 34 : 28, 2);
-  const bodyLines = safeBodyLines(
-    content.body,
-    portrait ? 3 : 4,
-    portrait ? 58 : 46
-  );
+  const headlineLines = lineBreakText(headline, portrait ? 22 : 18, 2);
+  const subheadLines = lineBreakText(subhead, portrait ? 34 : 30, 2);
   const cta = safeCta(content, variant);
   const ctaLines = lineBreakText(cta, portrait ? 22 : 18, 1);
   return socialFrame(tokens, fonts, scale, [
@@ -1061,7 +1060,7 @@ function imageLedAd(
           {
             display: "flex",
             flexDirection: "column",
-            justifyContent: "space-between",
+            justifyContent: "center",
             flexGrow: 1,
             width: "100%",
             padding: `${portrait ? 38 * scale : 30 * scale}px`,
@@ -1105,34 +1104,13 @@ function imageLedAd(
                   : el({ display: "flex" }),
               ]
             ),
-            el(
-              {
-                display: "flex",
-                flexDirection: "column",
-                marginTop: `${26 * scale}px`,
-              },
-              bodyLines.map((line) =>
-                el(
-                  {
-                    display: "flex",
-                    marginTop: `${10 * scale}px`,
-                    fontSize: `${portrait ? 19 * scale : 14 * scale}px`,
-                    lineHeight: 1.22,
-                    color: palette.neutralLight,
-                    maxWidth: "100%",
-                    overflow: "hidden",
-                  },
-                  line
-                )
-              )
-            ),
             cta
               ? el(
                   {
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    marginTop: `${26 * scale}px`,
+                    marginTop: `${24 * scale}px`,
                     borderRadius: `${18 * scale}px`,
                     backgroundColor: palette.accent,
                     padding: `${14 * scale}px ${16 * scale}px`,

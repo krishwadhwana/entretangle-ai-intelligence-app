@@ -34,18 +34,30 @@ type CollateralRunType = CollateralType | typeof AD_CAMPAIGN_PACK_TYPE;
 const AD_CAMPAIGN_VARIANTS = [
   {
     name: "Prospecting hook",
-    angle: "lead with the sharpest new-customer problem, desire, or objection",
-    visual: "Hero product scene with broad appeal and room for headline overlay.",
+    angle:
+      "lead with the sharpest new-customer problem, desire, or objection",
+    visual:
+      "Human in-use scene: a model naturally holding or applying the product near the face/body when category-appropriate, intimate close crop, broad appeal, clean copy space.",
+    composition:
+      "lifestyle model moment, skin/hair/body context, shallow depth of field",
   },
   {
     name: "Offer test",
-    angle: "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
-    visual: "Offer-led composition with product, texture, and a clear focal area.",
+    angle:
+      "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
+    visual:
+      "Product-first commerce composition with tactile props, ingredient/texture cues, strong hero product placement, and uncluttered negative space.",
+    composition:
+      "studio tabletop or shelf scene, product packshot emphasis, no model",
   },
   {
     name: "Proof retargeting",
-    angle: "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
-    visual: "Trust-building editorial/product visual that feels like the same campaign.",
+    angle:
+      "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
+    visual:
+      "Trust-building editorial scene focused on product detail, outcome texture, usage proof, or premium material finish.",
+    composition:
+      "macro/editorial proof scene, close product detail, distinct from the other campaign posts",
   },
 ];
 
@@ -776,17 +788,20 @@ export default function DesignStudioSection({
       "Launch paid ad campaign using the current brand, product references, source website, and offer evidence.";
     const baseVisualBrief =
       socialVisualBrief.trim() ||
-      "Polished product-led campaign visual with no text in the image.";
+      "Polished product-led campaign visual with no readable text, captions, sliders, UI, labels, or typography inside the generated image.";
     setMakingType(AD_CAMPAIGN_PACK_TYPE);
     setError(null);
     try {
-      for (const variant of AD_CAMPAIGN_VARIANTS) {
+      for (let index = 0; index < AD_CAMPAIGN_VARIANTS.length; index += 1) {
+        const variant = AD_CAMPAIGN_VARIANTS[index];
         await generateCollateralAsset(AD_TYPE, {
           brief: [
             baseBrief,
+            `Campaign post ${index + 1} of ${AD_CAMPAIGN_VARIANTS.length}.`,
             `Campaign variant: ${variant.name}.`,
             `Angle: ${variant.angle}.`,
-            "Keep this as one distinct creative inside the same paid ad campaign pack.",
+            "This post must be meaningfully different from the other posts in the pack: different hook, copy angle, scene, framing, pose/props, and visual rhythm.",
+            "Do not reuse the same headline, subhead, body proof, CTA wording, or composition as another campaign post.",
           ].join("\n"),
           useTemplates: useSocialTemplates,
           useAiVisual: true,
@@ -794,6 +809,8 @@ export default function DesignStudioSection({
           visualBrief: [
             baseVisualBrief,
             `Variant role: ${variant.name}. ${variant.visual}`,
+            `Required composition lane: ${variant.composition}.`,
+            "Do not render readable text in the image unless the founder explicitly requested in-image text in the visual direction; if text is requested, it must be handled in the final Gemini edit, never in the Midjourney scene.",
           ].join("\n"),
         });
       }
@@ -1495,7 +1512,10 @@ export default function DesignStudioSection({
                 Midjourney scene
               </span>
               <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                Gemini product pass
+                Gemini product swap
+              </span>
+              <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700 sm:col-span-3">
+                No generated image text
               </span>
             </div>
             <textarea

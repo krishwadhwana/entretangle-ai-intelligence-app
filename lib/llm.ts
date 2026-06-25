@@ -2,7 +2,6 @@ import OpenAI, { toFile } from "openai";
 import { File as NodeFile } from "node:buffer";
 import { z } from "zod";
 import { config } from "./config";
-import { publicProductImageReferenceUrl } from "./productImages";
 import {
   recordProjectOnlyUsage,
   recordUsage,
@@ -252,21 +251,29 @@ function collateralImageSize(type: CollateralType): "1024x1024" | "1024x1536" {
   return type === "flyer" ? "1024x1536" : "1024x1024";
 }
 
-function publicReferenceUrls(productImages: ProductImageInput[]): string[] {
-  const seen = new Set<string>();
+function productReferenceRole(image: ProductImageInput): string {
+  if (image.ref.sourceKind === "uploaded") return "actual uploaded product photo";
+  if (image.ref.sourceKind === "scraped") {
+    return "source-site product or overview image";
+  }
+  return "product reference image";
+}
+
+function productReferencePromptNotes(productImages: ProductImageInput[]): string {
+  if (!productImages.length) return "No product reference images were provided.";
   return productImages
-    .map(
-      (image) =>
-        publicProductImageReferenceUrl(image.ref.url) ??
-        publicProductImageReferenceUrl(image.ref.sourceUrl)
-    )
-    .filter((url): url is string => Boolean(url))
-    .filter((url) => {
-      if (seen.has(url)) return false;
-      seen.add(url);
-      return true;
+    .map((image, index) => {
+      const summary = image.ref.visualSummary
+        ? ` Summary: ${image.ref.visualSummary}`
+        : "";
+      const tags = image.ref.tags?.length
+        ? ` Tags: ${image.ref.tags.join(", ")}.`
+        : "";
+      return `Image ${index + 2} (${productReferenceRole(image)}): ${
+        image.ref.name
+      }.${summary}${tags}`;
     })
-    .slice(0, 4);
+    .join("\n");
 }
 
 function collectStringUrls(value: unknown, urls: string[] = []): string[] {
@@ -421,23 +428,24 @@ async function callGeminiImageComposite(args: {
   const scene = dataUrlParts(args.sceneDataUrl);
   if (!scene) throw new Error("Midjourney scene image was not a valid data URL.");
 
+  const productReferences = args.productImages
+    .filter((image) => image.dataUrl || image.buffer)
+    .slice(0, 4);
   const imageParts = [
     { inlineData: { mimeType: scene.mimeType, data: scene.data } },
-    ...args.productImages
-      .filter((image) => image.dataUrl || image.buffer)
-      .slice(0, 3)
-      .map((image) => {
-        if (image.dataUrl) {
-          const parts = dataUrlParts(image.dataUrl);
-          if (parts) return { inlineData: parts };
-        }
-        return {
-          inlineData: {
-            mimeType: image.ref.mimeType,
-            data: image.buffer!.toString("base64"),
-          },
-        };
-      }),
+    ...productReferences.flatMap((image) => {
+      if (image.dataUrl) {
+        const parts = dataUrlParts(image.dataUrl);
+        if (parts) return [{ inlineData: parts }];
+      }
+      if (!image.buffer) return [];
+      return {
+        inlineData: {
+          mimeType: image.ref.mimeType,
+          data: image.buffer.toString("base64"),
+        },
+      };
+    }),
   ];
 
   const response = await fetch(
@@ -455,10 +463,13 @@ async function callGeminiImageComposite(args: {
             parts: [
               {
                 text: [
-                  "Create the final paid-social product advertising image.",
-                  "Use image 1 as the Midjourney art-direction scene: preserve its lighting, camera language, mood, composition, and copy space.",
-                  "Use the remaining images as product references. Preserve product shape, color, material, finish, packaging proportions, and label-placement cues. Do not invent readable label text.",
-                  "No readable typography, logos, watermarks, screenshots, or UI inside the image.",
+                  "Create the final paid-social product advertising image through a product-fidelity edit.",
+                  "Image 1 is the Midjourney art-direction scene. Preserve its lighting, camera language, model pose, hand placement, mood, background, composition, and copy space.",
+                  "Images 2+ are the real product source images: actual uploaded product photos first, plus source-site product or overview images when available.",
+                  "Replace every Midjourney-generated placeholder product, package, bottle, tube, jar, garment, prop product, or label surface with the matching real product from images 2+. The final product must look like the actual reference product, not a Midjourney approximation.",
+                  "Make the replacement photorealistic: correct product geometry, material, color, finish, cap/closure, proportions, shadows, reflections, occlusion by fingers/hands, and perspective in the scene.",
+                  "Do not add readable typography, logos, watermarks, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly asked for in-image text. Product label text may be non-readable or implied if the reference label is not perfectly visible.",
+                  `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
                   args.prompt,
                 ].join("\n"),
               },
@@ -529,33 +540,57 @@ async function callOpenAIAdVisualImage(args: {
   sceneDataUrl?: string;
 }): Promise<string> {
   ensureFileGlobal();
+  const productReferences = args.productImages
+    .filter((image) => image.dataUrl || image.buffer)
+    .slice(0, 4);
+  const prompt = args.sceneDataUrl
+    ? [
+        args.prompt,
+        "Use the first input image as the art-direction scene. Preserve its composition, lighting, model pose, background, and copy space.",
+        "Use the remaining input images as real product references. Replace any generated placeholder product in the scene with the real product, matching product geometry, color, material, finish, proportions, and scene perspective.",
+        "Do not add readable typography, logos, watermarks, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly requested in-image text.",
+        `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
+      ].join("\n")
+    : args.prompt;
+  const scene = args.sceneDataUrl ? dataUrlParts(args.sceneDataUrl) : null;
+  const imageInputs = [
+    ...(scene
+      ? [
+          {
+            name: "midjourney-scene.png",
+            mimeType: scene.mimeType,
+            buffer: Buffer.from(scene.data, "base64"),
+          },
+        ]
+      : []),
+    ...productReferences.flatMap((image) => {
+      const parts = image.dataUrl ? dataUrlParts(image.dataUrl) : null;
+      const buffer =
+        image.buffer ?? (parts ? Buffer.from(parts.data, "base64") : null);
+      if (!buffer) return [];
+      return [
+        {
+          name: image.ref.name,
+          mimeType: parts?.mimeType ?? image.ref.mimeType,
+          buffer,
+        },
+      ];
+    }),
+  ];
   const imageParams = {
     model: process.env.IMAGE_MODEL ?? "gpt-image-2",
-    prompt: args.prompt,
+    prompt,
     n: 1,
     size: collateralImageSize(args.type),
     quality: "medium" as const,
     output_format: "png" as const,
   };
   const imageFiles = await Promise.all(
-    [
-      ...(args.sceneDataUrl
-        ? [
-            {
-              ref: {
-                name: "midjourney-scene.png",
-                mimeType: dataUrlParts(args.sceneDataUrl)?.mimeType ?? "image/png",
-              },
-              buffer: Buffer.from(dataUrlParts(args.sceneDataUrl)?.data ?? "", "base64"),
-            },
-          ]
-        : []),
-      ...args.productImages.filter((image) => image.buffer).slice(0, 3),
-    ].map((image, index) =>
+    imageInputs.map((image, index) =>
       toFile(
-        image.buffer!,
-        image.ref.name || `image-reference-${index + 1}.png`,
-        { type: image.ref.mimeType }
+        image.buffer,
+        image.name || `image-reference-${index + 1}.png`,
+        { type: image.mimeType }
       )
     )
   );
@@ -2124,16 +2159,17 @@ export async function callAdVisualImage(args: {
   productImages?: ProductImageInput[];
 }): Promise<{ dataUrl: string; prompt: string }> {
   const usableRefs = (args.productImages ?? [])
-    .filter((image) => image.buffer)
-    .slice(0, 3);
-  const publicRefs = publicReferenceUrls(args.productImages ?? []);
+    .filter((image) => image.dataUrl || image.buffer)
+    .slice(0, 4);
   const productNotes = (args.productImages ?? [])
     .map((image, index) => {
       const tags = image.ref.tags?.length ? ` Tags: ${image.ref.tags.join(", ")}.` : "";
       const summary = image.ref.visualSummary
         ? ` Summary: ${image.ref.visualSummary}`
         : "";
-      return `Product reference ${index + 1}: ${image.ref.name}.${summary}${tags}`;
+      return `Product reference ${index + 1} (${productReferenceRole(image)}): ${
+        image.ref.name
+      }.${summary}${tags}`;
     })
     .join("\n");
   const prompt = [
@@ -2148,19 +2184,19 @@ export async function callAdVisualImage(args: {
       : "",
     `Brand palette: primary ${args.tokens.palette.primary}, secondary ${args.tokens.palette.secondary}, accent ${args.tokens.palette.accent}, light ${args.tokens.palette.neutralLight}, dark ${args.tokens.palette.neutralDark}.`,
     `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
-    "Do not create readable text, logos, watermarks, UI, or typography in the image. If a product reference includes packaging, preserve broad product shape, color, material, finish, and label-placement cues without inventing legible text. Leave clean areas for overlaid ad copy. Make it polished, commercial, and specific to the brief.",
+    "Create a product-in-scene art direction that matches the visual brief: composition, model pose, lighting, props, background, camera/lens, mood, and copy space.",
+    "Midjourney is only responsible for the artistic scene and may use a plausible placeholder product based on the product description. Exact product fidelity happens later in Gemini with the real product and overview images.",
+    "Do not create readable text, logos, watermarks, UI, sliders, captions, labels, or typography inside the generated image unless the founder explicitly asked for in-image text. If text is explicitly requested, reserve it for the final Gemini edit, not the Midjourney scene. Leave clean areas for separately overlaid ad copy.",
+    "Make it polished, commercial, photorealistic, and specific to this exact campaign variant.",
   ]
     .filter(Boolean)
     .join("\n");
 
   if (args.type === "ad") {
     const midjourneyPrompt = [
-      publicRefs.length
-        ? `Use these image URLs as product/packaging references: ${publicRefs.join(
-            " "
-          )}`
-        : "",
+      "Midjourney task: generate only the art-direction scene for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
       prompt,
+      "No readable text, UI, sliders, captions, watermarks, or typography in the scene.",
       "--ar 1:1 --style raw",
     ]
       .filter(Boolean)
