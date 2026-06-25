@@ -41,6 +41,12 @@ type ProductImagePlaceholder = {
   availableForInlineEmbed?: boolean;
 };
 
+type SitePolishOptions = {
+  brandName?: string | null;
+  logoSvg?: string | null;
+  heroSubhead?: string | null;
+};
+
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
@@ -48,8 +54,11 @@ function compactWhitespace(value: string): string {
 function cleanVisibleCopy(value: string): string {
   return compactWhitespace(value)
     .replace(/\bPage inspected:\s*/gi, "")
+    .replace(/\bCollections\s+/gi, "")
+    .replace(/\bShop\s+/gi, "")
     .replace(/\s*\|\s*/g, " ")
-    .replace(/\s*;\s*/g, ". ");
+    .replace(/\s*;\s*/g, ". ")
+    .replace(/\b([A-Z][A-Z0-9&!.' -]{2,})\b(?:\s+\1\b)+/g, "$1");
 }
 
 function heroDisplayTitle(value: string): string {
@@ -69,6 +78,11 @@ function polishCss(): string {
 <style data-et-site-polish>
 html,body{max-width:100%;overflow-x:hidden}
 body *{box-sizing:border-box}
+.et-site-header{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:clamp(18px,3vw,44px);min-height:82px;padding:clamp(18px,2.6vw,32px) clamp(22px,6vw,88px);color:#fff;background:linear-gradient(180deg,rgba(0,0,0,.28),rgba(0,0,0,0));pointer-events:auto}
+.et-site-logo{display:inline-flex;align-items:center;width:min(220px,34vw);height:52px;color:inherit;text-decoration:none}
+.et-site-logo svg{display:block;width:100%;height:100%;max-height:52px;overflow:visible}
+.et-site-header nav{display:flex;align-items:center;justify-content:flex-end;gap:clamp(18px,3vw,42px);margin-left:auto}
+.et-site-header nav a{color:inherit;text-decoration:none;font-size:12px;font-weight:850;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
 header,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0;min-height:72px}
 header,header nav,.site-header,.navbar,.et-product-hero__nav{display:flex;align-items:center;justify-content:space-between;gap:clamp(14px,2.5vw,32px);flex-wrap:nowrap}
 header>*,header nav>*,.site-header>*,.navbar>*,.et-product-hero__nav>*{min-width:0}
@@ -78,11 +92,12 @@ header :where([class*="brand"],[class*="logo"],.wordmark):has(> :nth-child(2)) >
 header :where(h1,h2),.site-header :where(h1,h2),.navbar :where(h1,h2){margin:0!important;font-size:clamp(24px,2.4vw,42px)!important;line-height:1!important;max-width:min(24ch,34vw)!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 header nav,.site-header nav,.navbar nav{margin-left:auto;justify-content:flex-end}
 main>section:first-of-type,[class*="hero"],.et-product-hero{overflow:hidden}
+main>section+section{margin-top:clamp(32px,5vw,72px)}
 main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(42px,7vw,96px)!important;line-height:.95!important;letter-spacing:0!important;max-width:min(12ch,92vw)!important;text-wrap:balance;overflow-wrap:break-word;hyphens:auto}
-main>section:first-of-type p,[class*="hero"] p,.et-product-hero p{max-width:min(640px,92vw)}
-.et-product-hero__copy{width:min(680px,100%)!important;padding-top:clamp(112px,14vw,170px)!important}
+main>section:first-of-type p,[class*="hero"] p,.et-product-hero p{max-width:min(620px,92vw);font-size:clamp(18px,1.8vw,24px)!important;line-height:1.38!important;text-wrap:pretty}
+.et-product-hero__copy{width:min(680px,100%)!important;padding-top:clamp(132px,16vw,190px)!important}
 .et-product-hero__nav span{display:block;max-width:min(34ch,62vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:760px){header,.site-header,.navbar,.et-product-hero__nav{min-height:64px;gap:12px;flex-wrap:wrap}header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.site-header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.navbar :where([class*="brand"],[class*="logo"],.wordmark,h1,h2){max-width:58vw!important;font-size:clamp(22px,8vw,34px)!important}main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:108px!important}.et-product-hero__nav{align-items:flex-start}}
+@media (max-width:760px){.et-site-header{position:absolute;min-height:72px;padding:18px 20px;gap:12px}.et-site-logo{width:min(170px,52vw);height:42px}.et-site-header nav{gap:14px;overflow-x:auto}.et-site-header nav a{font-size:11px}header,.site-header,.navbar,.et-product-hero__nav{min-height:64px;gap:12px;flex-wrap:wrap}header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.site-header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.navbar :where([class*="brand"],[class*="logo"],.wordmark,h1,h2){max-width:58vw!important;font-size:clamp(22px,8vw,34px)!important}main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:124px!important}.et-product-hero__nav{align-items:flex-start}}
 </style>`;
 }
 
@@ -133,11 +148,62 @@ function insertStyle(html: string): string {
 }
 
 export function polishGeneratedSiteHtml(rawHtml: string): string {
-  if (rawHtml.includes("data-et-site-polish")) return rawHtml;
-  if (/<\/head>/i.test(rawHtml)) {
-    return rawHtml.replace(/<\/head>/i, `${polishCss()}\n</head>`);
+  return polishGeneratedSiteHtmlWithAssets(rawHtml);
+}
+
+function stripTags(value: string): string {
+  return compactWhitespace(value.replace(/<[^>]+>/g, " "));
+}
+
+function dirtyHeroCopy(value: string): boolean {
+  const text = stripTags(value);
+  return (
+    /\b(Page inspected|Collections|Shop)\b/i.test(text) ||
+    /[;|]/.test(text) ||
+    text.split(/\s+/).length > 24
+  );
+}
+
+function polishHeroSubhead(html: string, heroSubhead: string | null | undefined): string {
+  const clean = cleanVisibleCopy(heroSubhead || "");
+  if (!clean) return html;
+  return html.replace(
+    /(<main\b[\s\S]*?<h1\b[^>]*>[\s\S]*?<\/h1>[\s\S]*?<p\b[^>]*>)([\s\S]*?)(<\/p>)/i,
+    (match, before: string, current: string, after: string) =>
+      dirtyHeroCopy(current) ? `${before}${escapeHtml(clean)}${after}` : match
+  );
+}
+
+function siteHeaderMarkup(brandName: string, logoSvg: string): string {
+  const label = escapeHtml(brandName || "Brand");
+  return `<header class="et-site-header"><a class="et-site-logo" href="#" aria-label="${label}">${logoSvg}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
+}
+
+function applyLogoHeader(html: string, options: SitePolishOptions): string {
+  const logoSvg = options.logoSvg?.trim();
+  if (!logoSvg || !/<svg[\s>]/i.test(logoSvg)) return html;
+  const header = siteHeaderMarkup(options.brandName || "Brand", logoSvg);
+  if (/<header\b[\s\S]*?<\/header>/i.test(html)) {
+    return html.replace(/<header\b[\s\S]*?<\/header>/i, header);
   }
-  return rawHtml;
+  if (/<body\b[^>]*>/i.test(html)) {
+    return html.replace(/<body\b[^>]*>/i, (match) => `${match}\n${header}`);
+  }
+  return html;
+}
+
+export function polishGeneratedSiteHtmlWithAssets(
+  rawHtml: string,
+  options: SitePolishOptions = {}
+): string {
+  let html = rawHtml.includes("data-et-site-polish")
+    ? rawHtml
+    : /<\/head>/i.test(rawHtml)
+      ? rawHtml.replace(/<\/head>/i, `${polishCss()}\n</head>`)
+      : rawHtml;
+  html = applyLogoHeader(html, options);
+  html = polishHeroSubhead(html, options.heroSubhead);
+  return html;
 }
 
 function insertAfterOpeningTag(

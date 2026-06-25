@@ -1706,7 +1706,8 @@ Hard requirements:
   evidence has a brandName, use that for the wordmark/chrome. Use EXACTLY ONE
   brand mark in the header: do not place a small all-caps brand label next to a
   second larger logo/wordmark, and do not repeat the same brand text twice in
-  the top bar.
+  the top bar. If brandAssets.logoSvg is provided, use that exact inline SVG as
+  the sole header logo/wordmark instead of recreating the brand in text.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
@@ -1718,6 +1719,13 @@ Hard requirements:
   inspected:", "Collected site evidence", source URLs, or semicolon-separated
   scrape summaries in visible page copy; translate evidence into clean consumer
   copy.
+- Hero subhead/body copy must read like finished consumer-facing marketing
+  copy. Never paste scraped page titles such as "Collections", "Shop", page
+  names, product listing breadcrumbs, or repeated brand/product strings into the
+  hero paragraph. Summarize those facts into one polished sentence.
+- Maintain visible breathing room between a narrow proof/announcement strip and
+  the section below it; do not let colored bands visually touch unless they are
+  intentionally the same module.
 
 Sections to include, written in the brand voice and specific to THIS venture:
 full-bleed image-led hero (headline + subhead + primary CTA over/alongside
@@ -1742,7 +1750,8 @@ export function siteGenUser(
     tags: string[];
     availableForInlineEmbed: boolean;
   }> = [],
-  websiteAnalysis: WebsiteAnalysis | null = null
+  websiteAnalysis: WebsiteAnalysis | null = null,
+  brandAssets: { brandName: string; logoSvg: string } | null = null
 ): string {
   return JSON.stringify(
     {
@@ -1753,6 +1762,7 @@ export function siteGenUser(
       contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
       websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
       productImages,
+      brandAssets,
       brief: brief || null,
       ohneisMethod: OHNEIS_WEBSITE_METHOD,
       task: "Design and write the one-page landing site as specified.",

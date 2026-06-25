@@ -2107,7 +2107,8 @@ export async function callSiteGenerator(
   brandKit: BrandKit | null,
   brief: string,
   productImages: ProductImageInput[] = [],
-  websiteAnalysis: WebsiteAnalysis | null = null
+  websiteAnalysis: WebsiteAnalysis | null = null,
+  brandAssets: { brandName: string; logoSvg: string } | null = null
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
     return SiteGenOutputSchema.parse({
@@ -2139,7 +2140,8 @@ export async function callSiteGenerator(
         tags: image.ref.tags ?? [],
         availableForInlineEmbed: Boolean(image.dataUrl),
       })),
-      websiteAnalysis
+      websiteAnalysis,
+      brandAssets
     ),
     schema: SiteGenOutputSchema,
     maxCompletionTokens: 12000,

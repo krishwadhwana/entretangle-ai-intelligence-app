@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createHash } from "crypto";
 import { renderCollateral, COLLATERAL_LABELS } from "./collateral";
-import { buildLogoVariants } from "./logo";
+import { buildLogoVariants, sanitizeSvg } from "./logo";
 import {
   callAdVisualImage,
   callCollateralCopy,
@@ -31,7 +31,7 @@ import {
 import {
   ensureProductImageryHtml,
   looksLikeHtmlDoc,
-  polishGeneratedSiteHtml,
+  polishGeneratedSiteHtmlWithAssets,
   sanitizeSiteHtml,
 } from "./site";
 import {
@@ -43,6 +43,7 @@ import type {
   BrandKit,
   ClientProfile,
   DesignTokens,
+  LogoAsset,
   ProductImageRef,
   WebsiteAnalysis,
 } from "../schema";
@@ -188,6 +189,44 @@ function websiteBrandName(
   const cleanedProject = cleanProjectBrandName(projectName);
   if (cleanedProject) return cleanedProject;
   return profile.product || "Brand";
+}
+
+function websiteLogoSvg(logos: LogoAsset[] | undefined): string | null {
+  const logo = logos?.[0];
+  if (!logo) return null;
+  const preferred =
+    logo.variants.find((variant) => variant.kind === "lockup") ??
+    logo.variants.find((variant) => variant.kind === "wordmark") ??
+    logo.variants.find((variant) => variant.kind === "icon") ??
+    null;
+  return preferred ? sanitizeSvg(preferred.svg) : null;
+}
+
+function websiteHeroSubhead(
+  profile: ClientProfile,
+  projectName: string,
+  websiteAnalysis: WebsiteAnalysis | null
+): string {
+  const differentiation = profile.productDetails?.differentiation?.trim();
+  const looksScraped =
+    differentiation &&
+    /\b(Page inspected|Collections|Shop)\b|[;|]/i.test(differentiation);
+  if (
+    differentiation &&
+    !looksScraped &&
+    differentiation.split(/\s+/).length <= 24
+  ) {
+    return differentiation;
+  }
+  const heroProducts = profile.productDetails?.heroProducts ?? [];
+  if (heroProducts.length) {
+    return `A product-led ritual built around ${heroProducts[0]}, styled for everyday hair and body care.`;
+  }
+  const product = profile.product || websiteAnalysis?.infoCollected?.products?.[0]?.name;
+  if (product) {
+    return `${product} presented as a polished, product-first ritual for the customers most likely to buy.`;
+  }
+  return profile.targetAudience || profile.goal || profile.ambitions || projectName;
 }
 
 function stableId(input: string): string {
@@ -518,6 +557,9 @@ export async function runDesignStudioJob(args: {
     productImages,
   });
   const siteProductImages = [websiteHeroVisual, ...productImages].slice(0, 6);
+  const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
+  const heroSubhead = websiteHeroSubhead(profile, project.name, websiteAnalysis);
+  const logoSvg = websiteLogoSvg(project.ownerDashboard?.designStudio?.logos);
   const out = await callSiteGenerator(
     payload.sourceRunId,
     args.projectId,
@@ -526,7 +568,8 @@ export async function runDesignStudioJob(args: {
     brandKit,
     payload.brief,
     siteProductImages,
-    websiteAnalysis
+    websiteAnalysis,
+    logoSvg ? { brandName, logoSvg } : null
   );
   const productImagePlaceholders = siteProductImages.map((image, index) => ({
     placeholder: `PRODUCT_IMAGE_${index + 1}`,
@@ -534,19 +577,15 @@ export async function runDesignStudioJob(args: {
     visualSummary: image.ref.visualSummary ?? "",
     availableForInlineEmbed: Boolean(image.dataUrl),
   }));
-  const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
   const imageLedHtml = ensureProductImageryHtml(out.html, productImagePlaceholders, {
     brandName,
-    tagline:
-      profile.productDetails?.differentiation ||
-      profile.targetAudience ||
-      profile.goal ||
-      profile.ambitions ||
-      profile.product ||
-      project.name,
+    tagline: heroSubhead,
   });
   const html = sanitizeSiteHtml(
-    polishGeneratedSiteHtml(replaceProductImagePlaceholders(imageLedHtml, siteProductImages))
+    polishGeneratedSiteHtmlWithAssets(
+      replaceProductImagePlaceholders(imageLedHtml, siteProductImages),
+      { brandName, logoSvg, heroSubhead }
+    )
   );
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");
   const site = SiteAssetSchema.parse({
