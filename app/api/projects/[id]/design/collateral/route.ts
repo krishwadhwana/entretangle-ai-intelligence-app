@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { runDesignStudioJob } from "@/lib/design/jobs";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -72,6 +73,28 @@ export async function POST(
   }
 
   try {
+    if (
+      process.env.NODE_ENV !== "production" ||
+      process.env.DESIGN_JOBS_INLINE === "1"
+    ) {
+      const result = await runDesignStudioJob({
+        type: "design_collateral",
+        projectId: params.id,
+        payload: {
+          type: body.data.type,
+          brief: body.data.brief,
+          useTemplates: body.data.useTemplates,
+          useAiVisual: body.data.useAiVisual,
+          useProductImages: body.data.useProductImages,
+          visualBrief: body.data.visualBrief,
+          sourceRunId: body.data.sourceRunId,
+          sourceWebsiteUrl: body.data.sourceWebsiteUrl,
+          ...(body.data.content ? { content: body.data.content } : {}),
+        },
+      });
+      return NextResponse.json(result);
+    }
+
     const job = await enqueueProjectJob(params.id, "design_collateral", {
       type: body.data.type,
       brief: body.data.brief,

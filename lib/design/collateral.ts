@@ -12,6 +12,8 @@ import { loadBrandFonts } from "./fonts";
 // self-contained SVG with brand typography, overlays, and downloadable output.
 // ---------------------------------------------------------------------------
 
+const COLLATERAL_RENDERER_VERSION = "collateral-renderer-v2-image-stack";
+
 // Minimal hyperscript: Satori accepts the JSX-compiled VDOM shape directly, so
 // we build it without pulling React into a server lib.
 type SatoriStyle = Record<string, string | number>;
@@ -1357,6 +1359,10 @@ export async function renderCollateral(
     options.visualImageDataUrl,
     options.useTemplateFrame ?? true
   );
-  const svg = prefixSvgIds(await satori(node as never, { width, height, fonts }));
+  const rendered = prefixSvgIds(await satori(node as never, { width, height, fonts }));
+  const svg = rendered.replace(
+    "<svg ",
+    `<svg data-renderer-version="${COLLATERAL_RENDERER_VERSION}" `
+  );
   return { svg, width, height };
 }
