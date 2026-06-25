@@ -28,7 +28,12 @@ import {
   saveSiteAsset,
   saveWebsiteAnalysis,
 } from "../store";
-import { ensureProductImageryHtml, looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
+import {
+  ensureProductImageryHtml,
+  looksLikeHtmlDoc,
+  polishGeneratedSiteHtml,
+  sanitizeSiteHtml,
+} from "./site";
 import {
   fetchScrapedProductImage,
   readProductImageFile,
@@ -165,6 +170,25 @@ function websiteImageNotes(analysis: WebsiteAnalysis | null): string[] {
         .join(" - ")
     ),
   ];
+}
+
+function cleanProjectBrandName(name: string): string {
+  return name
+    .replace(/\b(final|test|demo|draft|copy)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function websiteBrandName(
+  profile: ClientProfile,
+  projectName: string,
+  websiteAnalysis: WebsiteAnalysis | null
+): string {
+  const scrapedBrand = websiteAnalysis?.infoCollected?.brandName?.trim();
+  if (scrapedBrand) return scrapedBrand;
+  const cleanedProject = cleanProjectBrandName(projectName);
+  if (cleanedProject) return cleanedProject;
+  return profile.product || "Brand";
 }
 
 function stableId(input: string): string {
@@ -514,8 +538,9 @@ export async function runDesignStudioJob(args: {
     visualSummary: image.ref.visualSummary ?? "",
     availableForInlineEmbed: Boolean(image.dataUrl),
   }));
+  const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
   const imageLedHtml = ensureProductImageryHtml(out.html, productImagePlaceholders, {
-    brandName: profile.product || project.name,
+    brandName,
     tagline:
       profile.productDetails?.differentiation ||
       profile.targetAudience ||
@@ -525,13 +550,13 @@ export async function runDesignStudioJob(args: {
       project.name,
   });
   const html = sanitizeSiteHtml(
-    replaceProductImagePlaceholders(imageLedHtml, siteProductImages)
+    polishGeneratedSiteHtml(replaceProductImagePlaceholders(imageLedHtml, siteProductImages))
   );
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");
   const site = SiteAssetSchema.parse({
     id: `site-${Date.now().toString(36)}`,
     title: out.title,
-    brandName: profile.product || project.name,
+    brandName,
     html,
     deployUrl: null,
     createdAt: new Date().toISOString(),

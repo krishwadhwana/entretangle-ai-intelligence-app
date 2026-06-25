@@ -41,6 +41,46 @@ type ProductImagePlaceholder = {
   availableForInlineEmbed?: boolean;
 };
 
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function cleanVisibleCopy(value: string): string {
+  return compactWhitespace(value)
+    .replace(/\bPage inspected:\s*/gi, "")
+    .replace(/\s*\|\s*/g, " ")
+    .replace(/\s*;\s*/g, ". ");
+}
+
+function heroDisplayTitle(value: string): string {
+  const cleaned = cleanVisibleCopy(value)
+    .replace(/\b(collections?|shop|premium|made in india)\b/gi, "")
+    .replace(/\b\d+(?:\.\d+)?\s*(?:ml|g|oz|kg|pack|pcs?)\b/gi, "")
+    .replace(/\b(sulphate|sulfate)-free\b/gi, "")
+    .replace(/\b(conditioner|shampoo|cleanser|cream|serum|combo|bundle)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const words = cleaned.split(/\s+/).filter(Boolean);
+  return words.slice(0, 4).join(" ") || "New Ritual";
+}
+
+function polishCss(): string {
+  return `
+<style data-et-site-polish>
+html,body{max-width:100%;overflow-x:hidden}
+body *{box-sizing:border-box}
+header,nav,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0}
+header nav,.site-header,.navbar,.et-product-hero__nav{display:flex;align-items:center;justify-content:space-between;gap:clamp(10px,2vw,24px);flex-wrap:wrap}
+header a,nav a,.site-header a,.navbar a,.et-product-hero__nav a{white-space:nowrap}
+main>section:first-of-type,[class*="hero"],.et-product-hero{overflow:hidden}
+main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(42px,7vw,96px)!important;line-height:.95!important;letter-spacing:0!important;max-width:min(12ch,92vw)!important;text-wrap:balance;overflow-wrap:break-word;hyphens:auto}
+main>section:first-of-type p,[class*="hero"] p,.et-product-hero p{max-width:min(640px,92vw)}
+.et-product-hero__copy{width:min(680px,100%)!important;padding-top:clamp(112px,14vw,170px)!important}
+.et-product-hero__nav span{display:block;max-width:min(34ch,62vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:760px){main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:108px!important}.et-product-hero__nav{align-items:flex-start}}
+</style>`;
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -51,15 +91,15 @@ function escapeHtml(value: string): string {
 
 function siteImageCss(): string {
   return `
-.et-product-hero{position:relative;min-height:min(92vh,920px);display:flex;align-items:flex-end;overflow:hidden;background:var(--neutral-dark,#101010);color:var(--neutral-light,#fff)}
+.et-product-hero{position:relative;min-height:min(88vh,860px);display:flex;align-items:flex-end;overflow:hidden;background:var(--neutral-dark,#101010);color:var(--neutral-light,#fff)}
 .et-product-hero__image{position:absolute;inset:0;margin:0}
 .et-product-hero__image img{width:100%;height:100%;object-fit:cover;display:block;filter:saturate(1.04) contrast(1.03)}
 .et-product-hero__image:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.74) 0%,rgba(0,0,0,.42) 42%,rgba(0,0,0,.08) 100%),linear-gradient(0deg,rgba(0,0,0,.52) 0%,rgba(0,0,0,0) 48%)}
 .et-product-hero__nav{position:absolute;top:0;left:0;right:0;z-index:2;display:flex;align-items:center;justify-content:space-between;gap:20px;padding:clamp(18px,3vw,34px) clamp(20px,6vw,84px);font-size:12px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
 .et-product-hero__nav a{color:inherit;text-decoration:none;border-bottom:1px solid rgba(255,255,255,.55);padding-bottom:4px}
-.et-product-hero__copy{position:relative;z-index:1;width:min(760px,100%);padding:clamp(120px,16vw,210px) clamp(20px,6vw,84px) clamp(52px,8vw,92px)}
+.et-product-hero__copy{position:relative;z-index:1;width:min(680px,100%);padding:clamp(112px,14vw,170px) clamp(20px,6vw,84px) clamp(52px,8vw,92px)}
 .et-product-hero__eyebrow{margin:0 0 18px;font-size:12px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;opacity:.78}
-.et-product-hero h1{margin:0;font-family:var(--heading-font,inherit);font-size:clamp(52px,10vw,132px);line-height:.9;letter-spacing:0;max-width:11ch}
+.et-product-hero h1{margin:0;font-family:var(--heading-font,inherit);font-size:clamp(42px,7vw,96px);line-height:.95;letter-spacing:0;max-width:12ch;text-wrap:balance;overflow-wrap:break-word}
 .et-product-hero p{max-width:610px;margin:24px 0 0;font-size:clamp(17px,2vw,23px);line-height:1.45;color:rgba(255,255,255,.9)}
 .et-product-hero__actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}
 .et-product-hero__actions a{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 20px;border-radius:2px;text-decoration:none;font-weight:850;letter-spacing:.02em}
@@ -85,6 +125,14 @@ function insertStyle(html: string): string {
     /<\/head>/i,
     `<style>${siteImageCss()}</style>\n</head>`
   );
+}
+
+export function polishGeneratedSiteHtml(rawHtml: string): string {
+  if (rawHtml.includes("data-et-site-polish")) return rawHtml;
+  if (/<\/head>/i.test(rawHtml)) {
+    return rawHtml.replace(/<\/head>/i, `${polishCss()}\n</head>`);
+  }
+  return rawHtml;
 }
 
 function insertAfterOpeningTag(
@@ -119,8 +167,9 @@ export function ensureProductImageryHtml(
   const heroImage = usable[0];
   const showcaseImages = usable.slice(1, 5);
   const brandName = escapeHtml(options.brandName || "Brand");
+  const heroTitle = escapeHtml(heroDisplayTitle(options.tagline || options.brandName));
   const tagline = escapeHtml(
-    options.tagline || "Product-led essentials, styled for launch."
+    cleanVisibleCopy(options.tagline || "Product-led essentials, styled for launch.")
   );
   const showcase = showcaseImages.length
     ? `<section class="et-product-proof" aria-label="Product details"><div class="et-product-proof__intro"><h2>Built around the product, not filler.</h2><p>${tagline}</p></div><div class="et-product-proof__grid">${showcaseImages
@@ -136,7 +185,7 @@ export function ensureProductImageryHtml(
   <div class="et-product-hero__nav"><span>${brandName}</span><a href="#shop">Shop</a></div>
   <div class="et-product-hero__copy">
     <p class="et-product-hero__eyebrow">New campaign</p>
-    <h1>${brandName}</h1>
+    <h1>${heroTitle}</h1>
     <p>${tagline}</p>
     <div class="et-product-hero__actions"><a href="#shop">Shop now</a><a href="#details">See the product</a></div>
   </div>

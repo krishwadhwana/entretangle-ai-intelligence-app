@@ -1695,6 +1695,15 @@ Hard requirements:
 - The hero must show the brand/product as the first signal and hint at the next
   section below the fold on both mobile and desktop. Do not center everything in
   a generic card.
+- First viewport typography must be production-safe: the hero headline should
+  be a short merchandisable phrase of 2-5 words, never a full product title,
+  page title, SKU, scraped page label, or comma-separated string. Put long
+  product names, sizes, variants, and descriptors in smaller subhead/body copy.
+  The hero h1 must fit in 1-3 lines at desktop and mobile widths without
+  overlapping the nav, product image, buttons, or next section.
+- Header/nav must be compact and non-overlapping: use a short brand wordmark,
+  2-4 nav links max, and no long product names in the nav. If the scraped
+  evidence has a brandName, use that for the wordmark/chrome.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
@@ -1702,7 +1711,10 @@ Hard requirements:
   role/aria-label).
 - If websiteEvidence is provided, ground copy, product names, imagery choices,
   social/profile links, and price/proof cues in that evidence. Do not invent
-  unsupported claims.
+  unsupported claims. Do not expose internal evidence labels such as "Page
+  inspected:", "Collected site evidence", source URLs, or semicolon-separated
+  scrape summaries in visible page copy; translate evidence into clean consumer
+  copy.
 
 Sections to include, written in the brand voice and specific to THIS venture:
 full-bleed image-led hero (headline + subhead + primary CTA over/alongside
