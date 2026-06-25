@@ -87,6 +87,7 @@ export async function POST(
     uploadedAt: new Date().toISOString(),
     ...(visualSummary ? { visualSummary } : {}),
     tags,
+    sourceKind: "uploaded",
   };
   const productImages = [...existing, ref];
   await saveVentureProfile(params.id, {

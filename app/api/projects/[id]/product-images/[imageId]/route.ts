@@ -31,7 +31,8 @@ export async function GET(
       headers: {
         "Content-Type": image.mimeType,
         "Content-Length": String(file.length),
-        "Cache-Control": "private, max-age=86400",
+        "Cache-Control": "public, max-age=86400",
+        "Access-Control-Allow-Origin": "*",
         "Content-Disposition": `inline; filename="${fileName}"`,
       },
     });

@@ -813,15 +813,19 @@ function InfoCollectedPanel({
   uploadedImages,
   websiteUrl,
   analyzing,
+  importingScrapedImages,
   onWebsiteUrlChange,
   onAnalyze,
+  onImportScrapedImages,
 }: {
   analysis: WebsiteAnalysis | null;
   uploadedImages: ProductImageRef[];
   websiteUrl: string;
   analyzing: boolean;
+  importingScrapedImages: boolean;
   onWebsiteUrlChange: (value: string) => void;
   onAnalyze: () => void;
+  onImportScrapedImages: () => void;
 }) {
   const info = analysis?.infoCollected;
   const webImages = info?.productImages ?? [];
@@ -833,6 +837,11 @@ function InfoCollectedPanel({
   const marketplaceLinks = info?.marketplaceLinks ?? [];
   const facts = info?.facts ?? [];
   const openQuestions = info?.openQuestions ?? [];
+  const scrapedImageCount =
+    webImages.filter((image) => image.kind !== "logo" && image.kind !== "founder")
+      .length +
+    products.filter((product) => Boolean(product.imageUrl)).length +
+    listingEvidence.filter((listing) => Boolean(listing.imageUrl)).length;
   const profileFacts = analysis
     ? [
         ["Product", analysis.draftProfile.product],
@@ -854,8 +863,8 @@ function InfoCollectedPanel({
       url: image.url,
       title: image.name,
       detail: image.visualSummary || "Uploaded product reference.",
-      sourceUrl: null as string | null,
-      sourceLabel: "Uploaded",
+      sourceUrl: image.url,
+      sourceLabel: image.sourceKind === "scraped" ? "Hosted copy" : "Uploaded",
     })),
     ...webImages.map((image, index) => ({
       id: `web-${index}-${image.url}`,
@@ -945,6 +954,21 @@ function InfoCollectedPanel({
               <Sparkles className="h-4 w-4" />
             )}
             {analysis ? "Refresh info" : "Analyze URL"}
+          </button>
+          <button
+            type="button"
+            onClick={onImportScrapedImages}
+            disabled={
+              importingScrapedImages || !analysis || scrapedImageCount === 0
+            }
+            className="flex items-center justify-center gap-1.5 rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm font-medium text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50 disabled:opacity-50"
+          >
+            {importingScrapedImages ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Upload className="h-4 w-4" />
+            )}
+            {importingScrapedImages ? "Uploading refs" : "Upload scraped refs"}
           </button>
         </div>
       </div>
@@ -2915,6 +2939,7 @@ function IntakePageInner() {
   const [documents, setDocuments] = useState<DocSummary[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingImages, setUploadingImages] = useState(false);
+  const [importingScrapedImages, setImportingScrapedImages] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Free-text "Other response" for the current question.
   const [otherText, setOtherText] = useState("");
@@ -4693,6 +4718,34 @@ function IntakePageInner() {
     }
   }
 
+  async function importScrapedProductImages() {
+    if (!projectId || !profile || importingScrapedImages) return;
+    setImportingScrapedImages(true);
+    setError(null);
+    try {
+      const res = await fetch(
+        `/api/projects/${projectId}/product-images/import-scraped`,
+        { method: "POST" },
+      );
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(
+          typeof data?.error === "string"
+            ? data.error
+            : `Scraped image upload failed (${res.status})`,
+        );
+      }
+      applyProductImages((data.productImages ?? []) as ProductImageRef[]);
+      setActiveWorkspaceSection("workspace-info");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Scraped image upload failed",
+      );
+    } finally {
+      setImportingScrapedImages(false);
+    }
+  }
+
   async function deleteProductImage(imageId: string) {
     if (!projectId || !profile) return;
     const prior = profile.productImages ?? [];
@@ -6280,8 +6333,10 @@ function IntakePageInner() {
                   uploadedImages={productImages}
                   websiteUrl={websiteUrl}
                   analyzing={analyzing}
+                  importingScrapedImages={importingScrapedImages}
                   onWebsiteUrlChange={setWebsiteUrl}
                   onAnalyze={() => void analyzeWebsite()}
+                  onImportScrapedImages={() => void importScrapedProductImages()}
                 />
               </section>
 
@@ -6676,8 +6731,10 @@ function IntakePageInner() {
                   uploadedImages={productImages}
                   websiteUrl={websiteUrl}
                   analyzing={analyzing}
+                  importingScrapedImages={importingScrapedImages}
                   onWebsiteUrlChange={setWebsiteUrl}
                   onAnalyze={() => void analyzeWebsite()}
+                  onImportScrapedImages={() => void importScrapedProductImages()}
                 />
               </section>
 

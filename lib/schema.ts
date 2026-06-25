@@ -117,6 +117,9 @@ export const ProductImageRefSchema = z.object({
   uploadedAt: z.string(),
   visualSummary: z.string().optional(),
   tags: z.array(z.string()).default([]),
+  sourceUrl: z.string().optional(),
+  sourcePageUrl: z.string().optional(),
+  sourceKind: z.enum(["uploaded", "scraped"]).optional(),
 });
 export type ProductImageRef = z.infer<typeof ProductImageRefSchema>;
 

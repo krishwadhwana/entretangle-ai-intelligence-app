@@ -1,6 +1,7 @@
 import OpenAI, { toFile } from "openai";
 import { z } from "zod";
 import { config } from "./config";
+import { publicProductImageReferenceUrl } from "./productImages";
 import {
   recordProjectOnlyUsage,
   recordUsage,
@@ -182,6 +183,8 @@ const COHORT_BUDGET = 22000; // richer personas (lifestyle, reasoning, etc.) per
 const OWNER_WEB_TIMEOUT_MS = 22_000;
 const OWNER_FALLBACK_TIMEOUT_MS = 25_000;
 const OWNER_QA_TIMEOUT_MS = 45_000;
+const WEBSITE_ANALYSIS_WEB_TIMEOUT_MS = 75_000;
+const WEBSITE_ANALYSIS_FALLBACK_TIMEOUT_MS = 35_000;
 const DESIGN_SITE_TIMEOUT_MS = 120_000;
 const MARKET_DATA_TIMEOUT_MS = 90_000;
 const FINANCIALS_WEB_TIMEOUT_MS = 25_000;
@@ -239,8 +242,12 @@ function collateralImageSize(type: CollateralType): "1024x1024" | "1024x1536" {
 function publicReferenceUrls(productImages: ProductImageInput[]): string[] {
   const seen = new Set<string>();
   return productImages
-    .map((image) => image.ref.url)
-    .filter((url): url is string => /^https?:\/\//i.test(url ?? ""))
+    .map(
+      (image) =>
+        publicProductImageReferenceUrl(image.ref.url) ??
+        publicProductImageReferenceUrl(image.ref.sourceUrl)
+    )
+    .filter((url): url is string => Boolean(url))
     .filter((url) => {
       if (seen.has(url)) return false;
       seen.add(url);
@@ -2437,6 +2444,69 @@ function collectedInfoSourceUrls(info: WebsiteCollectedInfo): string[] {
   );
 }
 
+function websiteAnalysisScrapeFallback(
+  url: string,
+  scrapedInfo: WebsiteCollectedInfo,
+  reason: string
+): WebsiteAnalysisOutput {
+  const productNames = scrapedInfo.products
+    .map((product) => product.name)
+    .filter(Boolean);
+  const category = scrapedInfo.products.find((product) => product.category)
+    ?.category;
+  const priceTexts = [
+    ...scrapedInfo.priceRanges.map((range) => range.text),
+    ...scrapedInfo.listingEvidence.map((listing) => listing.priceText),
+  ].filter((text): text is string => Boolean(text));
+  const priceBand = Array.from(new Set(priceTexts)).slice(0, 3).join("; ");
+  const factSummary = scrapedInfo.facts
+    .slice(0, 3)
+    .map((fact) => `${fact.label}: ${fact.value}`)
+    .join("; ");
+  const brand = scrapedInfo.brandName || new URL(url).hostname.replace(/^www\./, "");
+  const collectedCounts = [
+    `${scrapedInfo.productImages.length} images`,
+    `${scrapedInfo.products.length} products`,
+    `${scrapedInfo.listingEvidence.length} listings`,
+    `${scrapedInfo.priceRanges.length} price ranges`,
+  ].join(", ");
+  const openQuestions = Array.from(
+    new Set([
+      ...scrapedInfo.openQuestions,
+      `AI synthesis was skipped because ${reason}; refresh analysis later to verify customer sentiment and positioning.`,
+    ])
+  );
+
+  return WebsiteAnalysisOutputSchema.parse({
+    draftProfile: {
+      product: productNames.slice(0, 3).join(", ") || brand,
+      category,
+      priceBand: priceBand || undefined,
+      heroProducts: productNames.slice(0, 8),
+      styleKeywords: [],
+      differentiation: factSummary || undefined,
+    },
+    knownFields: [
+      productNames.length || brand ? "product" : "",
+      category ? "category" : "",
+      priceBand ? "priceBand" : "",
+      factSummary ? "differentiation" : "",
+    ].filter(Boolean),
+    consumerOpinion:
+      "Customer sentiment could not be verified before the AI request timed out. The collected site evidence is still available for review.",
+    sentiment: "unknown",
+    summary: `Collected site evidence for ${brand} (${collectedCounts}). AI synthesis did not complete, so confirm the product positioning, audience, and customer sentiment before launching a run.`,
+    infoCollected: {
+      ...scrapedInfo,
+      openQuestions,
+    },
+    sources: Array.from(new Set([url, ...collectedInfoSourceUrls(scrapedInfo)])).slice(
+      0,
+      80
+    ),
+  });
+}
+
 /**
  * Bootstrap a venture from the founder's website + online consumer opinion.
  * Web-grounded (reads the site and searches real reviews/sentiment); on web or
@@ -2586,7 +2656,7 @@ export async function callWebsiteAnalysis(
         max_output_tokens: 6000,
         reasoning: { effort: "low" },
       },
-      { timeout: OWNER_WEB_TIMEOUT_MS, maxRetries: 0 }
+      { timeout: WEBSITE_ANALYSIS_WEB_TIMEOUT_MS, maxRetries: 0 }
     );
     const searchCalls = Array.isArray(response.output)
       ? response.output.filter((o: { type?: string }) =>
@@ -2614,17 +2684,35 @@ export async function callWebsiteAnalysis(
     );
   } catch (e) {
     console.error(`[website-analysis] web path failed, falling back:`, e);
-    return callJson({
-      runId: null,
-      projectId,
-      feature: "website.analysis",
-      system: WEBSITE_ANALYSIS_SYSTEM,
-      user: userPrompt,
-      schema: WebsiteAnalysisOutputSchema,
-      maxCompletionTokens: 6000,
-      requestTimeoutMs: OWNER_FALLBACK_TIMEOUT_MS,
-      requestMaxRetries: 0,
-    }).then(mergeAnalysis);
+    if (scrapedInfo && shouldUseOwnerLocalFallback(e)) {
+      return websiteAnalysisScrapeFallback(
+        url,
+        scrapedInfo,
+        ownerProviderFallbackReason(e)
+      );
+    }
+    try {
+      return await callJson({
+        runId: null,
+        projectId,
+        feature: "website.analysis",
+        system: WEBSITE_ANALYSIS_SYSTEM,
+        user: userPrompt,
+        schema: WebsiteAnalysisOutputSchema,
+        maxCompletionTokens: 6000,
+        requestTimeoutMs: WEBSITE_ANALYSIS_FALLBACK_TIMEOUT_MS,
+        requestMaxRetries: 0,
+      }).then(mergeAnalysis);
+    } catch (fallbackError) {
+      if (scrapedInfo && shouldUseOwnerLocalFallback(fallbackError)) {
+        return websiteAnalysisScrapeFallback(
+          url,
+          scrapedInfo,
+          ownerProviderFallbackReason(fallbackError)
+        );
+      }
+      throw fallbackError;
+    }
   }
 }
 

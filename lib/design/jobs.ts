@@ -30,10 +30,9 @@ import {
 } from "../store";
 import { looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
 import {
-  isSupportedProductImageMime,
-  MAX_PRODUCT_IMAGE_BYTES,
+  fetchScrapedProductImage,
   readProductImageFile,
-  safeProductImageName,
+  scrapedProductImageCandidates,
 } from "../productImages";
 import type { ProductImageRef, WebsiteAnalysis } from "../schema";
 
@@ -153,107 +152,8 @@ function websiteImageNotes(analysis: WebsiteAnalysis | null): string[] {
   ];
 }
 
-const REMOTE_IMAGE_TIMEOUT_MS = 8_000;
-
 function stableId(input: string): string {
   return createHash("sha1").update(input).digest("hex").slice(0, 12);
-}
-
-function mimeFromUrl(url: string): string | null {
-  const pathname = new URL(url).pathname.toLowerCase();
-  if (pathname.endsWith(".jpg") || pathname.endsWith(".jpeg")) return "image/jpeg";
-  if (pathname.endsWith(".png")) return "image/png";
-  if (pathname.endsWith(".webp")) return "image/webp";
-  if (pathname.endsWith(".gif")) return "image/gif";
-  return null;
-}
-
-function websiteImageCandidates(analysis: WebsiteAnalysis | null): {
-  url: string;
-  name: string;
-  summary: string;
-  tags: string[];
-}[] {
-  const info = analysis?.infoCollected;
-  if (!info) return [];
-  const seen = new Set<string>();
-  const candidates: {
-    url: string;
-    name: string;
-    summary: string;
-    tags: string[];
-  }[] = [];
-  const add = (
-    url: string | undefined,
-    name: string,
-    summary: string,
-    tags: string[]
-  ) => {
-    if (!url || seen.has(url) || !/^https?:\/\//i.test(url)) return;
-    seen.add(url);
-    candidates.push({ url, name: safeProductImageName(name), summary, tags });
-  };
-  for (const image of info.productImages) {
-    if (image.kind === "logo" || image.kind === "founder") continue;
-    add(
-      image.url,
-      image.alt || image.caption || "scraped product image",
-      `${image.caption || "Product image scraped from the analyzed website."}${
-        image.sourceUrl ? ` Source: ${image.sourceUrl}.` : ""
-      }`,
-      ["scraped", "website", image.kind]
-    );
-  }
-  for (const listing of info.listingEvidence) {
-    add(
-      listing.imageUrl,
-      listing.productName,
-      `Listing image from ${listing.source || "source"}${
-        listing.priceText ? ` with observed price ${listing.priceText}` : ""
-      }. Source: ${listing.url}.`,
-      ["scraped", "listing", listing.sourceType]
-    );
-  }
-  return candidates.slice(0, 8);
-}
-
-async function fetchRemoteImageInput(
-  candidate: ReturnType<typeof websiteImageCandidates>[number],
-  analyzedAt: string | undefined
-): Promise<ProductImageInput | null> {
-  try {
-    const response = await fetch(candidate.url, {
-      redirect: "follow",
-      headers: { Accept: "image/avif,image/webp,image/png,image/jpeg,image/gif,*/*" },
-      signal: AbortSignal.timeout(REMOTE_IMAGE_TIMEOUT_MS),
-    });
-    if (!response.ok) return null;
-    const contentLength = Number(response.headers.get("content-length") ?? "0");
-    if (contentLength > MAX_PRODUCT_IMAGE_BYTES) return null;
-    const mimeType =
-      response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
-      mimeFromUrl(candidate.url);
-    if (!mimeType || !isSupportedProductImageMime(mimeType)) return null;
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length || buffer.length > MAX_PRODUCT_IMAGE_BYTES) return null;
-    const ref: ProductImageRef = {
-      id: `scraped-${stableId(candidate.url)}`,
-      name: candidate.name,
-      url: candidate.url,
-      mimeType,
-      size: buffer.length,
-      uploadedAt: analyzedAt || new Date().toISOString(),
-      visualSummary: candidate.summary,
-      tags: candidate.tags,
-    };
-    return {
-      ref,
-      buffer,
-      dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
-    };
-  } catch {
-    return null;
-  }
 }
 
 async function loadProductImageInputs(
@@ -277,11 +177,30 @@ async function loadProductImageInputs(
     })
   );
   const remoteInputs = await Promise.all(
-    websiteImageCandidates(websiteAnalysis)
+    scrapedProductImageCandidates(websiteAnalysis, 8)
       .slice(0, 6)
-      .map((candidate) =>
-        fetchRemoteImageInput(candidate, websiteAnalysis?.analyzedAt)
-      )
+      .map(async (candidate): Promise<ProductImageInput | null> => {
+        const fetched = await fetchScrapedProductImage(candidate);
+        if (!fetched) return null;
+        const ref: ProductImageRef = {
+          id: `scraped-${stableId(candidate.url)}`,
+          name: candidate.name,
+          url: candidate.url,
+          mimeType: fetched.mimeType,
+          size: fetched.buffer.length,
+          uploadedAt: websiteAnalysis?.analyzedAt || new Date().toISOString(),
+          visualSummary: candidate.visualSummary,
+          tags: candidate.tags,
+          sourceUrl: candidate.url,
+          sourcePageUrl: candidate.sourcePageUrl,
+          sourceKind: "scraped",
+        };
+        return {
+          ref,
+          buffer: fetched.buffer,
+          dataUrl: fetched.dataUrl,
+        };
+      })
   );
   return [
     ...localInputs,
