@@ -14,7 +14,7 @@ import {
 } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 // Owner Dashboard › Design Studio › Collateral. Generates one branded asset:
 // the LLM writes the copy, then lib/design renders a self-contained SVG from the
@@ -78,10 +78,12 @@ export async function POST(
   }
 
   try {
-    if (
+    const shouldRunInline =
       process.env.NODE_ENV !== "production" ||
-      process.env.DESIGN_JOBS_INLINE === "1"
-    ) {
+      process.env.DESIGN_JOBS_INLINE === "1" ||
+      body.data.type === "ad";
+
+    if (shouldRunInline) {
       const result = await runDesignStudioJob({
         type: "design_collateral",
         projectId: params.id,
