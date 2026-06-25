@@ -1032,7 +1032,7 @@ function imageLedAd(
     el(
       {
         display: "flex",
-        flexDirection: portrait ? "column" : "row",
+        flexDirection: "column",
         flexGrow: 1,
         marginTop: `${34 * scale}px`,
         borderRadius: `${42 * scale}px`,
@@ -1043,8 +1043,8 @@ function imageLedAd(
         el(
           {
             display: "flex",
-            width: portrait ? "100%" : "58%",
-            height: portrait ? `${650 * scale}px` : "100%",
+            width: "100%",
+            height: `${(portrait ? 650 : 520) * scale}px`,
             backgroundColor: palette.primary,
           },
           [
@@ -1060,8 +1060,9 @@ function imageLedAd(
             display: "flex",
             flexDirection: "column",
             justifyContent: "space-between",
-            width: portrait ? "100%" : "42%",
-            padding: `${portrait ? 38 * scale : 34 * scale}px`,
+            flexGrow: 1,
+            width: "100%",
+            padding: `${portrait ? 38 * scale : 30 * scale}px`,
             backgroundColor: palette.neutralDark,
             overflow: "hidden",
           },
@@ -1113,7 +1114,7 @@ function imageLedAd(
                   {
                     display: "flex",
                     marginTop: `${10 * scale}px`,
-                    fontSize: `${portrait ? 19 * scale : 16 * scale}px`,
+                    fontSize: `${portrait ? 19 * scale : 14 * scale}px`,
                     lineHeight: 1.22,
                     color: palette.neutralLight,
                     maxWidth: "100%",
