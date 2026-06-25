@@ -189,12 +189,366 @@ const FINANCIALS_FALLBACK_TIMEOUT_MS = 65_000;
 const FINANCIALS_COMPLETION_BUDGET = 6000;
 const PRODUCT_IMAGE_TIMEOUT_MS = 25_000;
 const DESIGN_IMAGE_TIMEOUT_MS = 120_000;
+const MIDJOURNEY_TIMEOUT_MS = 10 * 60_000;
+const GEMINI_IMAGE_TIMEOUT_MS = 120_000;
 
 export type ProductImageInput = {
   ref: ProductImageRef;
   dataUrl?: string;
   buffer?: Buffer;
 };
+
+function dataUrlParts(dataUrl: string): { mimeType: string; data: string } | null {
+  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
+  if (!match) return null;
+  return { mimeType: match[1], data: match[2] };
+}
+
+function parseJsonArrayEnv(name: string): unknown[] {
+  let raw = process.env[name]?.trim();
+  if (!raw) return [];
+  if (
+    (raw.startsWith("'") && raw.endsWith("'")) ||
+    (raw.startsWith('"') && raw.endsWith('"'))
+  ) {
+    raw = raw.slice(1, -1);
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function boolEnv(name: string, fallback = false): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return fallback;
+  return ["1", "true", "yes", "on"].includes(raw);
+}
+
+function numberEnv(name: string, fallback: number): number {
+  const raw = Number(process.env[name]);
+  return Number.isFinite(raw) && raw > 0 ? raw : fallback;
+}
+
+function collateralImageSize(type: CollateralType): "1024x1024" | "1024x1536" {
+  return type === "flyer" ? "1024x1536" : "1024x1024";
+}
+
+function publicReferenceUrls(productImages: ProductImageInput[]): string[] {
+  const seen = new Set<string>();
+  return productImages
+    .map((image) => image.ref.url)
+    .filter((url): url is string => /^https?:\/\//i.test(url ?? ""))
+    .filter((url) => {
+      if (seen.has(url)) return false;
+      seen.add(url);
+      return true;
+    })
+    .slice(0, 4);
+}
+
+function collectStringUrls(value: unknown, urls: string[] = []): string[] {
+  if (typeof value === "string") {
+    for (const match of value.matchAll(/https?:\/\/[^\s"'<>)}\]]+/gi)) {
+      urls.push(match[0].replace(/[),.;\]]+$/g, ""));
+    }
+    return urls;
+  }
+  if (Array.isArray(value)) {
+    for (const item of value) collectStringUrls(item, urls);
+    return urls;
+  }
+  if (value && typeof value === "object") {
+    for (const item of Object.values(value)) collectStringUrls(item, urls);
+  }
+  return urls;
+}
+
+function isLikelyImageUrl(url: string): boolean {
+  return (
+    /cdn\.midjourney\.com/i.test(url) ||
+    /\.(?:png|jpe?g|webp|gif)(?:[?#].*)?$/i.test(url)
+  );
+}
+
+function mimeFromImageUrl(url: string): string {
+  const lower = url.split("?")[0].toLowerCase();
+  if (lower.endsWith(".jpg") || lower.endsWith(".jpeg")) return "image/jpeg";
+  if (lower.endsWith(".webp")) return "image/webp";
+  if (lower.endsWith(".gif")) return "image/gif";
+  return "image/png";
+}
+
+async function fetchImageAsDataUrl(url: string): Promise<string> {
+  const response = await fetch(url, {
+    redirect: "follow",
+    headers: { Accept: "image/png,image/jpeg,image/webp,image/gif,*/*" },
+    signal: AbortSignal.timeout(PRODUCT_IMAGE_TIMEOUT_MS),
+  });
+  if (!response.ok) {
+    throw new Error(`Could not fetch generated image (${response.status}).`);
+  }
+  const mimeType =
+    response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
+    mimeFromImageUrl(url);
+  const buffer = Buffer.from(await response.arrayBuffer());
+  if (!buffer.length) throw new Error("Generated image download was empty.");
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+async function runMidjourneyActor(prompt: string): Promise<string | null> {
+  const token = process.env.APIFY_TOKEN?.trim();
+  const actorId =
+    process.env.APIFY_MIDJOURNEY_ACTOR_ID?.trim() ||
+    "igolaizola~midjourney-automation";
+  const cookies = parseJsonArrayEnv("APIFY_MIDJOURNEY_COOKIES");
+  if (!token || !cookies.length) return null;
+
+  const input = {
+    cookies,
+    prompts: [prompt],
+    mode: process.env.APIFY_MIDJOURNEY_MODE?.trim() || "relaxed",
+    upscale: process.env.APIFY_MIDJOURNEY_UPSCALE?.trim() || "",
+    privacy: boolEnv("APIFY_MIDJOURNEY_PRIVACY", false),
+    concurrency: Math.max(1, Math.round(numberEnv("APIFY_MIDJOURNEY_CONCURRENCY", 1))),
+    minWait: Math.round(numberEnv("APIFY_MIDJOURNEY_MIN_WAIT", 5)),
+    maxWait: Math.round(numberEnv("APIFY_MIDJOURNEY_MAX_WAIT", 10)),
+    jobTimeout: Math.round(numberEnv("APIFY_MIDJOURNEY_JOB_TIMEOUT", 300)),
+    proxyConfiguration: {
+      useApifyProxy: true,
+      apifyProxyGroups: ["RESIDENTIAL"],
+    },
+  };
+
+  const waitSeconds = Math.min(
+    600,
+    Math.max(60, Math.ceil(MIDJOURNEY_TIMEOUT_MS / 1000))
+  );
+  const runUrl = new URL(
+    `https://api.apify.com/v2/acts/${encodeURIComponent(actorId)}/runs`
+  );
+  runUrl.searchParams.set("token", token);
+  runUrl.searchParams.set("waitForFinish", String(waitSeconds));
+
+  const runResponse = await fetch(runUrl, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+    signal: AbortSignal.timeout(MIDJOURNEY_TIMEOUT_MS + 15_000),
+  });
+  const runJson = (await runResponse.json().catch(() => ({}))) as {
+    data?: Record<string, unknown>;
+    error?: { message?: string };
+  };
+  if (!runResponse.ok) {
+    throw new Error(
+      runJson.error?.message || `Midjourney actor failed (${runResponse.status}).`
+    );
+  }
+  const run: Record<string, unknown> =
+    runJson.data ?? (runJson as unknown as Record<string, unknown>);
+  const status = String(run.status ?? "");
+  if (status && status !== "SUCCEEDED") {
+    throw new Error(`Midjourney actor ended with status ${status}.`);
+  }
+  const datasetId = String(run.defaultDatasetId ?? "");
+  if (!datasetId) throw new Error("Midjourney actor returned no dataset.");
+
+  const datasetUrl = new URL(
+    `https://api.apify.com/v2/datasets/${encodeURIComponent(datasetId)}/items`
+  );
+  datasetUrl.searchParams.set("token", token);
+  datasetUrl.searchParams.set("clean", "true");
+  datasetUrl.searchParams.set("format", "json");
+  const datasetResponse = await fetch(datasetUrl, {
+    signal: AbortSignal.timeout(PRODUCT_IMAGE_TIMEOUT_MS),
+  });
+  const items = (await datasetResponse.json().catch(() => [])) as unknown;
+  if (!datasetResponse.ok) {
+    throw new Error(`Could not read Midjourney results (${datasetResponse.status}).`);
+  }
+
+  const urls = collectStringUrls(items);
+  return urls.find(isLikelyImageUrl) ?? urls[0] ?? null;
+}
+
+async function callGeminiImageComposite(args: {
+  projectId: string;
+  prompt: string;
+  sceneDataUrl: string;
+  productImages: ProductImageInput[];
+}): Promise<string> {
+  const apiKey = process.env.GEMINI_API_KEY?.trim();
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
+  const model = (process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image")
+    .split("#")[0]
+    .trim();
+  const scene = dataUrlParts(args.sceneDataUrl);
+  if (!scene) throw new Error("Midjourney scene image was not a valid data URL.");
+
+  const imageParts = [
+    { inlineData: { mimeType: scene.mimeType, data: scene.data } },
+    ...args.productImages
+      .filter((image) => image.dataUrl || image.buffer)
+      .slice(0, 3)
+      .map((image) => {
+        if (image.dataUrl) {
+          const parts = dataUrlParts(image.dataUrl);
+          if (parts) return { inlineData: parts };
+        }
+        return {
+          inlineData: {
+            mimeType: image.ref.mimeType,
+            data: image.buffer!.toString("base64"),
+          },
+        };
+      }),
+  ];
+
+  const response = await fetch(
+    `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+      model
+    )}:generateContent?key=${encodeURIComponent(apiKey)}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: AbortSignal.timeout(GEMINI_IMAGE_TIMEOUT_MS),
+      body: JSON.stringify({
+        contents: [
+          {
+            role: "user",
+            parts: [
+              {
+                text: [
+                  "Create the final paid-social product advertising image.",
+                  "Use image 1 as the Midjourney art-direction scene: preserve its lighting, camera language, mood, composition, and copy space.",
+                  "Use the remaining images as product references. Preserve product shape, color, material, finish, packaging proportions, and label-placement cues. Do not invent readable label text.",
+                  "No readable typography, logos, watermarks, screenshots, or UI inside the image.",
+                  args.prompt,
+                ].join("\n"),
+              },
+              ...imageParts,
+            ],
+          },
+        ],
+        generationConfig: { responseModalities: ["IMAGE"] },
+      }),
+    }
+  );
+  const json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    const message =
+      typeof json.error === "object" &&
+      json.error &&
+      "message" in json.error &&
+      typeof json.error.message === "string"
+        ? json.error.message
+        : `Gemini image edit failed (${response.status}).`;
+    throw new Error(message);
+  }
+
+  const usage = json.usageMetadata as
+    | { promptTokenCount?: number; candidatesTokenCount?: number }
+    | undefined;
+  if (usage) {
+    await recordProjectOnlyUsage(
+      args.projectId,
+      usage.promptTokenCount ?? 0,
+      usage.candidatesTokenCount ?? 0,
+      "frontier",
+      0,
+      "design.collateral"
+    );
+  }
+
+  const candidates = Array.isArray(json.candidates) ? json.candidates : [];
+  for (const candidate of candidates) {
+    const content =
+      candidate && typeof candidate === "object" && "content" in candidate
+        ? (candidate.content as { parts?: unknown[] })
+        : null;
+    for (const part of content?.parts ?? []) {
+      if (!part || typeof part !== "object") continue;
+      const inlineData =
+        "inlineData" in part
+          ? (part.inlineData as { mimeType?: string; data?: string })
+          : "inline_data" in part
+            ? (part.inline_data as { mimeType?: string; data?: string })
+            : null;
+      if (inlineData?.data) {
+        return `data:${inlineData.mimeType || "image/png"};base64,${
+          inlineData.data
+        }`;
+      }
+    }
+  }
+  throw new Error("Gemini returned no image.");
+}
+
+async function callOpenAIAdVisualImage(args: {
+  projectId: string;
+  type: CollateralType;
+  prompt: string;
+  productImages: ProductImageInput[];
+  sceneDataUrl?: string;
+}): Promise<string> {
+  const imageParams = {
+    model: process.env.IMAGE_MODEL ?? "gpt-image-2",
+    prompt: args.prompt,
+    n: 1,
+    size: collateralImageSize(args.type),
+    quality: "medium" as const,
+    output_format: "png" as const,
+  };
+  const imageFiles = await Promise.all(
+    [
+      ...(args.sceneDataUrl
+        ? [
+            {
+              ref: {
+                name: "midjourney-scene.png",
+                mimeType: dataUrlParts(args.sceneDataUrl)?.mimeType ?? "image/png",
+              },
+              buffer: Buffer.from(dataUrlParts(args.sceneDataUrl)?.data ?? "", "base64"),
+            },
+          ]
+        : []),
+      ...args.productImages.filter((image) => image.buffer).slice(0, 3),
+    ].map((image, index) =>
+      toFile(
+        image.buffer!,
+        image.ref.name || `image-reference-${index + 1}.png`,
+        { type: image.ref.mimeType }
+      )
+    )
+  );
+  const response = imageFiles.length
+    ? await client().images.edit(
+        { ...imageParams, image: imageFiles },
+        { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
+      )
+    : await client().images.generate(imageParams, {
+        timeout: DESIGN_IMAGE_TIMEOUT_MS,
+        maxRetries: 0,
+      });
+
+  if (response.usage) {
+    await recordProjectOnlyUsage(
+      args.projectId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      0,
+      "design.collateral"
+    );
+  }
+
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) throw new Error("Image generation returned no image.");
+  return `data:image/png;base64,${b64}`;
+}
 
 function baseParams(
   model: string = config.model
@@ -986,7 +1340,8 @@ export async function callQuery(
   profile: ClientProfile,
   conclusions: Conclusion[],
   aggregate: AudienceAggregate | null,
-  question: string
+  question: string,
+  answerInstructions: string | null = null
 ): Promise<QueryOutput> {
   if (config.mockMode) {
     return QueryOutputSchema.parse({
@@ -998,7 +1353,13 @@ export async function callQuery(
     runId,
     feature: "simulation.chat",
     system: QUERY_SYSTEM,
-    user: queryV2User(profile, conclusions, aggregate, question),
+    user: queryV2User(
+      profile,
+      conclusions,
+      aggregate,
+      question,
+      answerInstructions
+    ),
     schema: QueryOutputSchema,
   });
 }
@@ -1539,7 +1900,7 @@ const FALLBACK_DESIGN_TOKENS: DesignTokens = {
 /**
  * Distill the brand's CONCRETE design tokens (hex palette, Google-Font pairing,
  * logo direction) from the venture profile + (optional) brand kit, founder
- * story and product-image notes. A pure synthesis call (no web search). On
+ * story, product-image notes, and optional pre-collected website evidence. On
  * provider/parse failure, returns the neutral fallback so the Design Studio
  * always has a coherent system to render downstream assets from.
  */
@@ -1550,7 +1911,8 @@ export async function callDesignTokens(
   brandKit: BrandKit | null,
   founderStory: FounderStorySection | null = null,
   productImageNotes: string[] = [],
-  guidance = ""
+  guidance = "",
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): Promise<DesignTokens> {
   if (config.mockMode) return DesignTokensSchema.parse(FALLBACK_DESIGN_TOKENS);
   try {
@@ -1564,7 +1926,8 @@ export async function callDesignTokens(
         brandKit,
         founderStory,
         productImageNotes,
-        guidance
+        guidance,
+        websiteAnalysis
       ),
       schema: DesignTokensSchema,
       maxCompletionTokens: 3000,
@@ -1578,7 +1941,7 @@ export async function callDesignTokens(
 }
 
 /**
- * Write the COPY for one collateral piece (business card / flyer / poster). The
+ * Write the COPY for one collateral piece (ad / business card / flyer / poster). The
  * layout is rendered deterministically from the design tokens, so this returns
  * words only. A pure synthesis call; throws on provider/parse failure (the
  * route surfaces it — there is no sensible generic copy fallback).
@@ -1668,7 +2031,8 @@ export async function callSiteGenerator(
   tokens: DesignTokens,
   brandKit: BrandKit | null,
   brief: string,
-  productImages: ProductImageInput[] = []
+  productImages: ProductImageInput[] = [],
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
     return SiteGenOutputSchema.parse({
@@ -1686,6 +2050,7 @@ export async function callSiteGenerator(
     runId,
     projectId,
     feature: "design.site",
+    model: process.env.SITE_MODEL || "gpt-5.5",
     system: SITE_GEN_SYSTEM,
     user: siteGenUser(
       profile,
@@ -1698,7 +2063,8 @@ export async function callSiteGenerator(
         visualSummary: image.ref.visualSummary ?? "",
         tags: image.ref.tags ?? [],
         availableForInlineEmbed: Boolean(image.dataUrl),
-      }))
+      })),
+      websiteAnalysis
     ),
     schema: SiteGenOutputSchema,
     maxCompletionTokens: 12000,
@@ -1720,6 +2086,7 @@ export async function callAdVisualImage(args: {
   const usableRefs = (args.productImages ?? [])
     .filter((image) => image.buffer)
     .slice(0, 3);
+  const publicRefs = publicReferenceUrls(args.productImages ?? []);
   const productNotes = (args.productImages ?? [])
     .map((image, index) => {
       const tags = image.ref.tags?.length ? ` Tags: ${image.ref.tags.join(", ")}.` : "";
@@ -1746,49 +2113,66 @@ export async function callAdVisualImage(args: {
     .filter(Boolean)
     .join("\n");
 
-  const imageParams = {
-    model: process.env.IMAGE_MODEL ?? "gpt-image-1",
-    prompt,
-    n: 1,
-    size: args.type === "flyer" ? "1024x1536" : "1024x1024",
-    quality: "medium" as const,
-    output_format: "png" as const,
-  };
-  const response = usableRefs.length
-    ? await client().images.edit(
-        {
-          ...imageParams,
-          image: await Promise.all(
-            usableRefs.map((image, index) =>
-              toFile(
-                image.buffer!,
-                image.ref.name || `product-reference-${index + 1}.png`,
-                { type: image.ref.mimeType }
-              )
-            )
-          ),
-        },
-        { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
-      )
-    : await client().images.generate(imageParams, {
-        timeout: DESIGN_IMAGE_TIMEOUT_MS,
-        maxRetries: 0,
-      });
-
-  if (response.usage) {
-    await recordProjectOnlyUsage(
-      args.projectId,
-      response.usage.input_tokens ?? 0,
-      response.usage.output_tokens ?? 0,
-      "frontier",
-      0,
-      "design.collateral"
-    );
+  if (args.type === "ad") {
+    const midjourneyPrompt = [
+      publicRefs.length
+        ? `Use these image URLs as product/packaging references: ${publicRefs.join(
+            " "
+          )}`
+        : "",
+      prompt,
+      "--ar 1:1 --style raw",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    try {
+      const midjourneyUrl = await runMidjourneyActor(midjourneyPrompt);
+      if (midjourneyUrl) {
+        const sceneDataUrl = await fetchImageAsDataUrl(midjourneyUrl);
+        try {
+          const dataUrl = await callGeminiImageComposite({
+            projectId: args.projectId,
+            prompt,
+            sceneDataUrl,
+            productImages: usableRefs,
+          });
+          return {
+            dataUrl,
+            prompt: `${prompt}\n\nMidjourney scene prompt:\n${midjourneyPrompt}`,
+          };
+        } catch (geminiError) {
+          console.error(
+            "[design] Gemini product-composite failed; falling back to OpenAI image edit:",
+            geminiError
+          );
+          const dataUrl = await callOpenAIAdVisualImage({
+            projectId: args.projectId,
+            type: args.type,
+            prompt,
+            productImages: usableRefs,
+            sceneDataUrl,
+          });
+          return {
+            dataUrl,
+            prompt: `${prompt}\n\nMidjourney scene prompt:\n${midjourneyPrompt}`,
+          };
+        }
+      }
+    } catch (midjourneyError) {
+      console.error(
+        "[design] Midjourney social pipeline failed; falling back to OpenAI image generation:",
+        midjourneyError
+      );
+    }
   }
 
-  const b64 = response.data?.[0]?.b64_json;
-  if (!b64) throw new Error("Image generation returned no image.");
-  return { dataUrl: `data:image/png;base64,${b64}`, prompt };
+  const dataUrl = await callOpenAIAdVisualImage({
+    projectId: args.projectId,
+    type: args.type,
+    prompt,
+    productImages: usableRefs,
+  });
+  return { dataUrl, prompt };
 }
 
 /**

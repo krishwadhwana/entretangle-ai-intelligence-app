@@ -434,7 +434,11 @@ export default function RunDashboard({
   const onQuery = useCallback(
     async (
       question: string,
-      opts?: { domains?: string[]; highlight?: boolean }
+      opts?: {
+        domains?: string[];
+        highlight?: boolean;
+        answerInstructions?: string;
+      }
     ): Promise<string> => {
       const res = await fetch(`/api/runs/${runId}/query`, {
         method: "POST",
@@ -442,6 +446,9 @@ export default function RunDashboard({
         body: JSON.stringify({
           question,
           ...(opts?.domains ? { domains: opts.domains } : {}),
+          ...(opts?.answerInstructions
+            ? { answerInstructions: opts.answerInstructions }
+            : {}),
         }),
       });
       const data = await res.json().catch(() => null);

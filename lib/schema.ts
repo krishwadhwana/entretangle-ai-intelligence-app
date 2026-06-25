@@ -1634,6 +1634,7 @@ export type DesignTokens = z.infer<typeof DesignTokensSchema>;
 // One generated marketing-collateral piece. The LLM writes the copy; social ads
 // can also include an AI-generated visual scene requested by the founder.
 export const CollateralTypeSchema = z.enum([
+  "ad",
   "business-card",
   "flyer",
   "poster",
@@ -2052,7 +2053,8 @@ export type OwnerDashboard = z.infer<typeof OwnerDashboardSchema>;
 
 // Intake interview (Shot 8, v2.1: structured MCQ): either the next question
 // — with clickable options, Cursor-style — or the final profile. The UI
-// always offers a free-text fallback alongside the options.
+// appends an "Other" affordance and always offers a free-text fallback alongside
+// the model-suggested options.
 export const IntakeOutputSchema = z.discriminatedUnion("done", [
   z.object({
     done: z.literal(false),

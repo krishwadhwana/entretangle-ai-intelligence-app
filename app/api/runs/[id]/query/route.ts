@@ -11,6 +11,7 @@ export const dynamic = "force-dynamic";
 
 const QueryRequestSchema = z.object({
   question: z.string().min(1),
+  answerInstructions: z.string().max(4000).optional(),
   // Optional: restrict reasoning to specific business-module domains (the
   // Playbook's per-module ask box). Omit to query the whole world model.
   domains: z.array(z.string()).optional(),
@@ -67,7 +68,8 @@ export async function POST(
       profile,
       conclusions,
       aggregate,
-      body.data.question
+      body.data.question,
+      body.data.answerInstructions ?? null
     );
     // Only cite ids that actually exist in this run's world model.
     const valid = new Set(conclusions.map((c) => c.id));

@@ -8,6 +8,7 @@ export type KnowHowModuleKey =
   | "market"
   | "supply-ops"
   | "channel"
+  | "tax-legal"
   | "product-regulation";
 
 export type KnowHowTool =
@@ -23,6 +24,11 @@ export type KnowHowTask = {
   detail: string;
 };
 
+export type KnowHowLink = {
+  label: string;
+  url: string;
+};
+
 export type KnowHowModule = {
   key: KnowHowModuleKey;
   title: string;
@@ -32,6 +38,9 @@ export type KnowHowModule = {
   tasks: KnowHowTask[];
   tool: KnowHowTool;
   askSubject: string;
+  askInstructions?: string;
+  starterQuestions?: string[];
+  referenceLinks?: KnowHowLink[];
   domains: Domain[];
 };
 
@@ -74,7 +83,7 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
         id: "pick-first-validation-metric",
         title: "Pick the first validation metric",
         detail:
-          "Choose one metric that decides whether the next two weeks worked: leads, orders, CAC, margin, or repeat intent.",
+          "Choose one metric that decides whether the next two weeks worked: leads, orders, CAC, margin, repeat intent, or another venture-specific signal.",
       },
       {
         id: "list-top-three-kill-risks",
@@ -146,13 +155,13 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
         id: "define-scale-stop-rules",
         title: "Define scale and stop rules",
         detail:
-          "Write the CAC, conversion, or refund threshold that decides whether spend increases.",
+          "Write the CAC, conversion, refund, or other threshold that decides whether spend increases.",
       },
       {
         id: "check-operational-readiness",
         title: "Check operational readiness",
         detail:
-          "Confirm stock, packaging, fulfilment, returns, and customer support before pushing traffic.",
+          "Confirm stock, packaging, fulfilment, returns, customer support, and any other launch-critical constraint before pushing traffic.",
       },
     ],
     tool: "launch",
@@ -224,7 +233,7 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
         id: "collect-price-anchors",
         title: "Collect price anchors",
         detail:
-          "Record low, middle, and premium competitor prices for the same buyer use case.",
+          "Record low, middle, premium, or otherwise relevant competitor prices for the same buyer use case.",
       },
     ],
     tool: "playbook",
@@ -290,7 +299,7 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
         id: "draft-three-test-creatives",
         title: "Draft three test creatives",
         detail:
-          "Write three ad, post, or outreach concepts tied to buyer objections.",
+          "Write three ad, post, outreach, or other test concepts tied to buyer objections.",
       },
       {
         id: "define-channel-budget",
@@ -302,6 +311,103 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
     tool: "qa",
     askSubject: "this venture's acquisition channels and growth",
     domains: ["channel", "social", "audience"],
+  },
+  {
+    key: "tax-legal",
+    title: "Tax, legal & US entry",
+    blurb:
+      "Build the cross-border checklist for taking the product into the US: export paperwork, HTS/duty, FDA/MoCRA, labels, claims, sales tax, contracts, insurance, IP, and open legal questions.",
+    decision:
+      "What tax, customs, regulatory, or legal gate must be solved before selling in the US?",
+    needToKnow: [
+      "Importer/exporter setup: India IEC, export invoice/shipping bill, importer of record, customs broker, bond, HTS code, duty, fees, and landed-cost treatment.",
+      "Product law: FDA/MoCRA cosmetic rules where applicable, facility registration/product listing, label copy, net quantity, ingredient naming, country of origin, warnings, and claim boundaries.",
+      "Commercial legal/tax: US entity or foreign seller setup, EIN, sales-tax nexus by state/channel, marketplace facilitator rules, product liability insurance, distributor contracts, trademark/IP, privacy, returns, and recall/adverse-event process.",
+    ],
+    tasks: [
+      {
+        id: "classify-us-entry-stack",
+        title: "Classify the US entry stack",
+        detail:
+          "Confirm product category, HS/HTS code, importer of record, customs broker, duty/fee estimate, and whether the channel is DTC, Amazon/marketplace, distributor, or retail.",
+      },
+      {
+        id: "verify-product-compliance",
+        title: "Verify product compliance",
+        detail:
+          "Check FDA/MoCRA status, responsible person, facility registration, product listing, ingredient/label requirements, warnings, claims, batch records, adverse-event handling, and recall owner.",
+      },
+      {
+        id: "prepare-tax-legal-questions",
+        title: "Prepare tax/legal questions",
+        detail:
+          "Write the questions for a customs broker, US tax advisor, product lawyer, insurer, and marketplace/distributor before first shipment.",
+      },
+    ],
+    tool: "playbook",
+    askSubject: "tax, legal, customs, FDA, sales-tax, and US-entry requirements",
+    askInstructions:
+      "Answer as an operational tax/legal/export-to-US checklist, not legal advice. Cover every relevant area supported by the run evidence: India export/GST paperwork, US importer of record, CBP entry, HTS classification, duty/fees, landed-cost and pricing tax treatment, FDA/MoCRA/cosmetics requirements if the product is personal care or cosmetic, label/net quantity/country-of-origin/ingredient/claims rules, state sales-tax nexus and marketplace facilitator issues, EIN/entity setup, distributor/3PL/retailer contracts, product liability insurance, IP/trademark, privacy/website terms, returns/recalls/adverse events, and the exact unknowns that still need professional verification. Include source URLs from the provided conclusions wherever available. End with a section titled 'Follow-up questions' containing 6-10 concrete questions the founder must answer or ask a professional.",
+    starterQuestions: [
+      "What tax and legal checklist do we need to take LetsSmush 8 to the US?",
+      "What US FDA, MoCRA, label, claims, and ingredient rules apply before first shipment?",
+      "What should we ask a customs broker and US tax advisor before selling in the US?",
+    ],
+    referenceLinks: [
+      {
+        label: "CBP importing basics",
+        url: "https://www.cbp.gov/trade/basic-import-export",
+      },
+      {
+        label: "US HTS lookup",
+        url: "https://hts.usitc.gov/",
+      },
+      {
+        label: "FDA cosmetics",
+        url: "https://www.fda.gov/cosmetics",
+      },
+      {
+        label: "FDA MoCRA",
+        url: "https://www.fda.gov/cosmetics/cosmetics-laws-regulations/modernization-cosmetics-regulation-act-2022-mocra",
+      },
+      {
+        label: "FDA cosmetic labels",
+        url: "https://www.fda.gov/cosmetics/cosmetics-labeling-regulations/summary-cosmetics-labeling-requirements",
+      },
+      {
+        label: "FDA registration/listing",
+        url: "https://www.fda.gov/cosmetics/registration-listing-cosmetic-product-facilities-and-products",
+      },
+      {
+        label: "FTC FPLA",
+        url: "https://www.ftc.gov/legal-library/browse/rules/fair-packaging-labeling-act-regulations-under-section-4-fair-packaging-labeling-act",
+      },
+      {
+        label: "IRS EIN",
+        url: "https://www.irs.gov/businesses/employer-identification-number",
+      },
+      {
+        label: "SBA state taxes",
+        url: "https://www.sba.gov/business-guide/manage-your-business/pay-taxes",
+      },
+      {
+        label: "USPTO trademarks",
+        url: "https://www.uspto.gov/trademarks/basics",
+      },
+      {
+        label: "India IEC",
+        url: "https://www.dgft.gov.in/CP/?opt=iec-profile-management",
+      },
+      {
+        label: "India GST zero-rated exports",
+        url: "https://taxinformation.cbic.gov.in/content/html/tax_repository/gst/acts/2017_IGST_Act/active/chaptervii/section16_v1.00.html",
+      },
+      {
+        label: "ICEGATE",
+        url: "https://www.icegate.gov.in/",
+      },
+    ],
+    domains: ["regulation", "product", "finance", "pricing", "operations", "supply"],
   },
   {
     key: "product-regulation",
@@ -326,13 +432,13 @@ export const KNOW_HOW_MODULES: KnowHowModule[] = [
         id: "list-compliance-gates",
         title: "List compliance gates",
         detail:
-          "Record labels, certifications, duties, or claims that need verification.",
+          "Record labels, certifications, duties, claims, or any other gate that needs verification.",
       },
       {
         id: "prepare-proof-assets",
         title: "Prepare proof assets",
         detail:
-          "List photos, test results, certifications, or guarantees needed to reduce buyer risk.",
+          "List photos, test results, certifications, guarantees, or other proof needed to reduce buyer risk.",
       },
     ],
     tool: "playbook",

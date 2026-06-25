@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import {
   ArrowRight,
   BarChart3,
@@ -8,9 +9,11 @@ import {
   Calculator,
   Check,
   CheckCircle2,
+  ChevronDown,
   Circle,
   ClipboardList,
   CornerDownLeft,
+  ExternalLink,
   FileText,
   HelpCircle,
   Loader2,
@@ -52,7 +55,11 @@ type Props = {
   state: CanvasState;
   onQuery: (
     q: string,
-    opts?: { domains?: string[]; highlight?: boolean },
+    opts?: {
+      domains?: string[];
+      highlight?: boolean;
+      answerInstructions?: string;
+    },
   ) => Promise<string>;
   onNavigate: (view: "launch" | "playbook") => void;
 };
@@ -389,6 +396,28 @@ export default function KnowHowWorkspace({
                   </li>
                 ))}
               </ul>
+              {selectedModule.referenceLinks?.length ? (
+                <div className="mt-4 border-t border-neutral-100 pt-3">
+                  <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    Official references
+                  </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {selectedModule.referenceLinks.map((link) => (
+                      <a
+                        key={link.url}
+                        href={link.url}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex max-w-full items-center gap-1 rounded-full border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600"
+                        title={link.url}
+                      >
+                        <span className="truncate">{link.label}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
             </section>
           </section>
 
@@ -454,6 +483,7 @@ export default function KnowHowWorkspace({
               const answer = await onQuery(question, {
                 domains: selectedModule.domains,
                 highlight: false,
+                answerInstructions: selectedModule.askInstructions,
               });
               const next = [
                 ...history,
@@ -782,6 +812,172 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function citationUrl(source: string): string | null {
+  try {
+    const url = new URL(source);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? url.href
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function citationLabel(source: string): string {
+  const href = citationUrl(source);
+  if (!href) return source;
+  try {
+    return new URL(href).hostname.replace(/^www\./, "");
+  } catch {
+    return source;
+  }
+}
+
+function CitationList({ sources }: { sources: string[] }) {
+  if (sources.length === 0) {
+    return (
+      <p className="rounded-lg border border-dashed border-neutral-200 bg-neutral-50 px-3 py-2 text-[11px] leading-5 text-neutral-500">
+        No source citations are attached to this finding.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10px] font-medium text-neutral-400">Citations</p>
+      <div className="flex flex-wrap gap-1.5">
+        {sources.map((source, index) => {
+          const href = citationUrl(source);
+          const label = citationLabel(source);
+          return href ? (
+            <a
+              key={`${source}-${index}`}
+              href={href}
+              target="_blank"
+              rel="noreferrer"
+              title={source}
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-indigo-100 bg-indigo-50 px-2 py-1 text-[10px] font-medium text-indigo-600 underline-offset-2 hover:border-indigo-200 hover:bg-indigo-100 hover:underline"
+            >
+              <span className="truncate">
+                {index + 1}. {label}
+              </span>
+              <ExternalLink className="h-3 w-3 shrink-0" />
+            </a>
+          ) : (
+            <span
+              key={`${source}-${index}`}
+              title={source}
+              className="max-w-full truncate rounded-full bg-neutral-100 px-2 py-1 text-[10px] text-neutral-500"
+            >
+              {index + 1}. {label}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function EvidenceCard({
+  block,
+  conclusion,
+  expanded,
+  onToggle,
+}: {
+  block: Block;
+  conclusion: Conclusion;
+  expanded: boolean;
+  onToggle: () => void;
+}) {
+  const meta = DOMAIN_META[block.domain];
+  const color = DOMAIN_COLORS[block.domain] ?? "#737373";
+  const sources = Array.from(
+    new Set(conclusion.sources.map((source) => source.trim()).filter(Boolean)),
+  );
+  const citationText =
+    sources.length === 1
+      ? "1 citation"
+      : sources.length > 1
+        ? `${sources.length} citations`
+        : "No citations";
+
+  return (
+    <article
+      className={`rounded-lg border border-neutral-200 px-3 py-3 transition-colors hover:border-neutral-300 ${
+        expanded ? "lg:col-span-2" : ""
+      }`}
+    >
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span
+              className="h-2 w-2 shrink-0 rounded-full"
+              style={{ background: color }}
+            />
+            <p className="truncate text-[11px] font-medium text-neutral-400">
+              {meta.label} · {block.name}
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          aria-label={expanded ? "Collapse evidence" : "Expand evidence"}
+          className="rounded-md p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+        >
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${
+              expanded ? "rotate-180" : ""
+            }`}
+          />
+        </button>
+      </div>
+      <p className="text-sm font-semibold leading-5 text-neutral-900">
+        <GlossaryText>{conclusion.claim}</GlossaryText>
+      </p>
+      <p
+        className={`mt-1 text-xs leading-5 text-neutral-600 ${
+          expanded ? "" : "line-clamp-3"
+        }`}
+      >
+        <GlossaryText>{conclusion.value}</GlossaryText>
+      </p>
+
+      {expanded ? (
+        <div className="mt-3 space-y-3 border-t border-neutral-100 pt-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] text-neutral-500">
+              conf {Math.round(conclusion.confidence * 100)}%
+            </span>
+            {conclusion.entities.map((entity) => (
+              <span
+                key={entity}
+                className="rounded-full bg-indigo-50 px-2 py-0.5 text-[10px] text-indigo-500"
+              >
+                {entity}
+              </span>
+            ))}
+          </div>
+          <CitationList sources={sources} />
+        </div>
+      ) : (
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <span className="text-[10px] text-neutral-400">{citationText}</span>
+          <button
+            type="button"
+            onClick={onToggle}
+            className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-500 hover:text-indigo-700"
+          >
+            Expand
+            <ChevronDown className="h-3 w-3" />
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
 function EvidencePanel({
   ready,
   blocks,
@@ -791,6 +987,25 @@ function EvidencePanel({
   blocks: Block[];
   items: Array<{ block: Block; conclusion: Conclusion }>;
 }) {
+  const [showAll, setShowAll] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
+  const itemKey = items.map(({ conclusion }) => conclusion.id).join("|");
+  const visibleItems = showAll ? items : items.slice(0, 10);
+
+  useEffect(() => {
+    setShowAll(false);
+    setExpandedIds(new Set());
+  }, [itemKey]);
+
+  function toggleExpanded(id: string) {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   return (
     <section className="rounded-lg border border-neutral-200 bg-white p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
@@ -809,34 +1024,35 @@ function EvidencePanel({
           Know-How unlocks when the run has conclusions.
         </p>
       ) : items.length > 0 ? (
-        <div className="grid gap-2 lg:grid-cols-2">
-          {items.slice(0, 10).map(({ block, conclusion }) => {
-            const meta = DOMAIN_META[block.domain];
-            const color = DOMAIN_COLORS[block.domain] ?? "#737373";
-            return (
-              <article
+        <>
+          <div className="grid gap-2 lg:grid-cols-2">
+            {visibleItems.map(({ block, conclusion }) => (
+              <EvidenceCard
                 key={conclusion.id}
-                className="rounded-lg border border-neutral-200 px-3 py-3"
+                block={block}
+                conclusion={conclusion}
+                expanded={expandedIds.has(conclusion.id)}
+                onToggle={() => toggleExpanded(conclusion.id)}
+              />
+            ))}
+          </div>
+          {items.length > 10 ? (
+            <div className="mt-3 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setShowAll((value) => !value)}
+                className="inline-flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-[11px] font-medium text-neutral-600 hover:border-indigo-200 hover:text-indigo-600"
               >
-                <div className="mb-2 flex items-center gap-2">
-                  <span
-                    className="h-2 w-2 rounded-full"
-                    style={{ background: color }}
-                  />
-                  <p className="truncate text-[11px] font-medium text-neutral-400">
-                    {meta.label} · {block.name}
-                  </p>
-                </div>
-                <p className="text-sm font-semibold leading-5 text-neutral-900">
-                  <GlossaryText>{conclusion.claim}</GlossaryText>
-                </p>
-                <p className="mt-1 line-clamp-3 text-xs leading-5 text-neutral-600">
-                  <GlossaryText>{conclusion.value}</GlossaryText>
-                </p>
-              </article>
-            );
-          })}
-        </div>
+                {showAll ? "Show top 10" : `Show all ${items.length} findings`}
+                <ChevronDown
+                  className={`h-3.5 w-3.5 transition-transform ${
+                    showAll ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+            </div>
+          ) : null}
+        </>
       ) : (
         <p className="rounded-lg border border-dashed border-neutral-200 bg-neutral-50 px-3 py-4 text-sm leading-6 text-neutral-500">
           No evidence has landed for this module yet. Use the checklist and
@@ -845,6 +1061,57 @@ function EvidencePanel({
       )}
     </section>
   );
+}
+
+const ANSWER_LINK_RE =
+  /\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s<>()]+[^\s<>().,;:!?])/g;
+
+function LinkedAnswerText({ children }: { children: string }) {
+  const parts: ReactNode[] = [];
+  let lastIndex = 0;
+  let key = 0;
+
+  for (const match of children.matchAll(ANSWER_LINK_RE)) {
+    const index = match.index ?? 0;
+    if (index > lastIndex) {
+      parts.push(
+        <GlossaryText key={`text-${key++}`}>
+          {children.slice(lastIndex, index)}
+        </GlossaryText>,
+      );
+    }
+
+    const label = match[1] ?? match[3] ?? "";
+    const href = citationUrl(match[2] ?? match[3] ?? "");
+    if (href) {
+      parts.push(
+        <a
+          key={`link-${key++}`}
+          href={href}
+          target="_blank"
+          rel="noreferrer"
+          className="font-medium text-indigo-600 underline decoration-indigo-300 underline-offset-2 hover:text-indigo-700"
+        >
+          {label}
+        </a>,
+      );
+    } else {
+      parts.push(
+        <GlossaryText key={`fallback-${key++}`}>{match[0]}</GlossaryText>,
+      );
+    }
+    lastIndex = index + match[0].length;
+  }
+
+  if (lastIndex < children.length) {
+    parts.push(
+      <GlossaryText key={`text-${key++}`}>
+        {children.slice(lastIndex)}
+      </GlossaryText>,
+    );
+  }
+
+  return <>{parts}</>;
 }
 
 function AskPanel({
@@ -886,9 +1153,32 @@ function AskPanel({
       </div>
       <div className="max-h-72 space-y-2 overflow-y-auto pr-1">
         {history.length === 0 ? (
-          <p className="text-sm leading-6 text-neutral-500">
-            Ask about {module.askSubject}. Answers stay attached to this module.
-          </p>
+          <div className="space-y-3">
+            <p className="text-sm leading-6 text-neutral-500">
+              Ask about {module.askSubject}. Answers stay attached to this
+              module.
+            </p>
+            {module.starterQuestions?.length ? (
+              <div className="space-y-1.5">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Suggested questions
+                </p>
+                <div className="flex flex-wrap gap-1.5">
+                  {module.starterQuestions.map((starter) => (
+                    <button
+                      key={starter}
+                      type="button"
+                      disabled={!ready || asking}
+                      onClick={() => setQuestion(starter)}
+                      className="rounded-full border border-neutral-200 px-2.5 py-1 text-left text-[11px] font-medium leading-4 text-neutral-600 hover:border-indigo-200 hover:bg-indigo-50 hover:text-indigo-600 disabled:opacity-50"
+                    >
+                      {starter}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+          </div>
         ) : (
           history.map((turn, index) => (
             <div key={`${turn.ts}-${index}`} className="space-y-1.5">
@@ -896,7 +1186,7 @@ function AskPanel({
                 {turn.question}
               </p>
               <p className="whitespace-pre-wrap rounded-lg bg-neutral-100 px-3 py-2 text-xs leading-5 text-neutral-700">
-                {turn.answer}
+                <LinkedAnswerText>{turn.answer}</LinkedAnswerText>
               </p>
             </div>
           ))

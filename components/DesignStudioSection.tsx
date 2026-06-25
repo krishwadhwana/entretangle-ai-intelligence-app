@@ -8,7 +8,9 @@ import {
   FileImage,
   Globe,
   Hexagon,
+  Link2,
   Loader2,
+  Megaphone,
   Palette,
   RefreshCw,
   Rocket,
@@ -25,16 +27,27 @@ import type {
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
-const COLLATERAL_TYPES: { type: CollateralType; label: string }[] = [
-  { type: "business-card", label: "Business card" },
-  { type: "flyer", label: "Flyer" },
-  { type: "poster", label: "Poster" },
-];
+const AD_TYPE: CollateralType = "ad";
+
+function extractWebsiteUrl(value: string): string {
+  const match = value.match(
+    /(?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+(?:\/[^\s]*)?/i
+  );
+  return match ? match[0].replace(/[),.;\]]+$/g, "") : "";
+}
 
 type JobStatus = {
   id: string;
   status: "queued" | "running" | "succeeded" | "failed" | "cancelled";
   error?: string | null;
+};
+
+type WebsiteImageRef = {
+  url: string;
+  name: string;
+  kind: string;
+  sourceUrl?: string;
+  summary?: string;
 };
 
 // A readable text color (black/white) for a given hex background, so swatch
@@ -224,6 +237,56 @@ function AssetCard({
         </div>
       </div>
     </div>
+  );
+}
+
+function GeneratedAssetSection({
+  type,
+  label,
+  assets,
+  makingType,
+  onGenerate,
+  onDelete,
+}: {
+  type: CollateralType;
+  label: string;
+  assets: DesignAsset[];
+  makingType: CollateralType | null;
+  onGenerate: (type: CollateralType) => void;
+  onDelete: (id: string) => void;
+}) {
+  const busy = makingType !== null;
+  return (
+    <section className="rounded-xl border border-neutral-200 bg-white p-4">
+      <div className="mb-2 flex items-center justify-between gap-3">
+        <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+          <FileImage className="h-3.5 w-3.5" /> {label}
+        </p>
+        <button
+          onClick={() => onGenerate(type)}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+        >
+          {makingType === type ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <RefreshCw className="h-3.5 w-3.5" />
+          )}
+          {assets.length ? `Regenerate ${label.toLowerCase()}` : `Generate ${label.toLowerCase()}`}
+        </button>
+      </div>
+      {assets.length ? (
+        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          {assets.map((asset) => (
+            <AssetCard key={asset.id} asset={asset} onDelete={onDelete} />
+          ))}
+        </div>
+      ) : (
+        <p className="text-[12px] text-neutral-400">
+          No {label.toLowerCase()} generated yet.
+        </p>
+      )}
+    </section>
   );
 }
 
@@ -419,6 +482,7 @@ export default function DesignStudioSection({
   const [sites, setSites] = useState<SiteAsset[]>([]);
   const [tokenDraft, setTokenDraft] = useState<DesignTokens | null>(null);
   const [tokenGuidance, setTokenGuidance] = useState("");
+  const [sourceWebsiteUrl, setSourceWebsiteUrl] = useState("");
   const [logoBrief, setLogoBrief] = useState("");
   const [deployEnabled, setDeployEnabled] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -427,25 +491,32 @@ export default function DesignStudioSection({
   const [makingLogo, setMakingLogo] = useState(false);
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
-  const [brief, setBrief] = useState("");
-  const [useTemplates, setUseTemplates] = useState(true);
-  const [useAiVisual, setUseAiVisual] = useState(false);
-  const [useProductImages, setUseProductImages] = useState(false);
-  const [visualBrief, setVisualBrief] = useState("");
+  const [websiteBrief, setWebsiteBrief] = useState("");
+  const [socialBrief, setSocialBrief] = useState("");
+  const [collateralBrief, setCollateralBrief] = useState("");
+  const [useSocialTemplates, setUseSocialTemplates] = useState(true);
+  const [socialVisualBrief, setSocialVisualBrief] = useState("");
+  const [websiteImageRefs, setWebsiteImageRefs] = useState<WebsiteImageRef[]>([]);
+  const [pullingRefs, setPullingRefs] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStudio = useCallback(async () => {
     if (!projectId) return;
     const res = await fetch(`/api/projects/${projectId}/design/tokens`);
     if (res.ok) {
-      const { designStudio } = (await readJsonResponse(res)) as {
+      const data = (await readJsonResponse(res)) as {
         designStudio: DesignStudioState | null;
+        sourceWebsiteUrl?: string;
+        websiteImageRefs?: WebsiteImageRef[];
       };
+      const { designStudio } = data;
       setStudio(designStudio);
       setAssets(designStudio?.assets ?? []);
       setLogos(designStudio?.logos ?? []);
       setSites(designStudio?.sites ?? []);
       setTokenDraft(designStudio?.tokens ?? null);
+      setSourceWebsiteUrl((current) => current || data.sourceWebsiteUrl || "");
+      setWebsiteImageRefs(data.websiteImageRefs ?? []);
     }
     const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
     if (siteRes.ok) {
@@ -513,6 +584,8 @@ export default function DesignStudioSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sourceRunId: sourceRunId ?? null,
+          sourceWebsiteUrl:
+            sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
           guidance: tokenGuidance,
         }),
       });
@@ -535,7 +608,38 @@ export default function DesignStudioSection({
     } finally {
       setGenerating(false);
     }
-  }, [projectId, sourceRunId, tokenGuidance, waitForJob]);
+  }, [projectId, sourceRunId, sourceWebsiteUrl, tokenGuidance, waitForJob]);
+
+  const pullProductRefs = useCallback(async () => {
+    if (!projectId) return;
+    const url = sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance);
+    if (!url) {
+      setError("Add a source website first, e.g. letssmush.com.");
+      return;
+    }
+    setPullingRefs(true);
+    setError(null);
+    try {
+      const res = await fetch(`/api/projects/${projectId}/analyze-website`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url }),
+      });
+      const data = await readJsonResponse(res);
+      if (!res.ok) {
+        setError(
+          providerErrorMessage(data.error ?? data, `Website pull failed (${res.status}).`)
+        );
+        return;
+      }
+      setSourceWebsiteUrl(url);
+      await refreshStudio();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Website pull failed.");
+    } finally {
+      setPullingRefs(false);
+    }
+  }, [projectId, refreshStudio, sourceWebsiteUrl, tokenGuidance]);
 
   const saveTokenDraft = useCallback(async () => {
     if (!projectId || !tokenDraft) return;
@@ -570,6 +674,7 @@ export default function DesignStudioSection({
   const makeCollateral = useCallback(
     async (type: CollateralType) => {
       if (!projectId) return;
+      const isSocial = type === AD_TYPE;
       setMakingType(type);
       setError(null);
       try {
@@ -578,14 +683,22 @@ export default function DesignStudioSection({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             type,
-            brief,
-            useTemplates: type === "business-card" ? true : useTemplates,
-            useAiVisual: type === "business-card" ? false : useAiVisual,
+            brief: isSocial ? socialBrief : collateralBrief,
+            useTemplates:
+              type === "business-card"
+                ? true
+                : isSocial
+                  ? useSocialTemplates
+                  : true,
+            useAiVisual: isSocial,
             useProductImages:
-              type === "business-card" ? false : useProductImages,
-            visualBrief:
-              type === "business-card" || !useAiVisual ? "" : visualBrief,
+              type === "business-card"
+                ? false
+                : isSocial,
+            visualBrief: isSocial ? socialVisualBrief : "",
             sourceRunId: sourceRunId ?? null,
+            sourceWebsiteUrl:
+              sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
           }),
         });
         const data = await readJsonResponse(res);
@@ -611,12 +724,13 @@ export default function DesignStudioSection({
     },
     [
       projectId,
-      brief,
-      useTemplates,
-      useAiVisual,
-      useProductImages,
-      visualBrief,
+      socialBrief,
+      collateralBrief,
+      useSocialTemplates,
+      socialVisualBrief,
       sourceRunId,
+      sourceWebsiteUrl,
+      tokenGuidance,
       waitForJob,
     ]
   );
@@ -700,8 +814,10 @@ export default function DesignStudioSection({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "generate",
-          brief,
+          brief: websiteBrief,
           sourceRunId: sourceRunId ?? null,
+          sourceWebsiteUrl:
+            sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
         }),
       });
       const data = await readJsonResponse(res);
@@ -721,7 +837,14 @@ export default function DesignStudioSection({
     } finally {
       setMakingSite(false);
     }
-  }, [projectId, brief, sourceRunId, waitForJob]);
+  }, [
+    projectId,
+    websiteBrief,
+    sourceRunId,
+    sourceWebsiteUrl,
+    tokenGuidance,
+    waitForJob,
+  ]);
 
   const deploySite = useCallback(
     async (siteId: string) => {
@@ -842,6 +965,13 @@ export default function DesignStudioSection({
 
   const tokens = tokenDraft ?? studio?.tokens ?? null;
   const palette = tokens?.palette;
+  const adAssets = assets.filter((asset) => asset.type === AD_TYPE);
+  const businessCardAssets = assets.filter((asset) => asset.type === "business-card");
+  const flyerAssets = assets.filter((asset) => asset.type === "flyer");
+  const posterAssets = assets.filter((asset) => asset.type === "poster");
+  const hasSourceWebsite = Boolean(
+    sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance)
+  );
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -876,6 +1006,17 @@ export default function DesignStudioSection({
             className="w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
           />
         </label>
+        <label className="mt-2 block">
+          <span className="mb-1 flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            <Link2 className="h-3 w-3" /> Source website
+          </span>
+          <input
+            value={sourceWebsiteUrl}
+            onChange={(e) => setSourceWebsiteUrl(e.target.value)}
+            placeholder="letssmush.com"
+            className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+          />
+        </label>
         <div className="mt-3 flex flex-wrap gap-2">
           <button
             onClick={generateTokens}
@@ -887,7 +1028,13 @@ export default function DesignStudioSection({
             ) : (
               <RefreshCw className="h-3.5 w-3.5" />
             )}
-            {tokens ? "Regenerate with direction" : "Generate tokens"}
+            {hasSourceWebsite
+              ? tokens
+                ? "Pull site + regenerate tokens"
+                : "Pull site + generate tokens"
+              : tokens
+                ? "Regenerate tokens"
+                : "Generate tokens"}
           </button>
           {tokens ? (
             <button
@@ -899,6 +1046,65 @@ export default function DesignStudioSection({
             </button>
           ) : null}
         </div>
+      </section>
+
+      <section className="mb-5 rounded-xl border border-neutral-200 bg-white p-4">
+        <div className="mb-2 flex items-center justify-between gap-3">
+          <div>
+            <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              <FileImage className="h-3.5 w-3.5" /> Product refs
+            </p>
+            <p className="mt-1 text-[12px] leading-relaxed text-neutral-500">
+              Scraped images from the source site that social generation can use
+              as Midjourney references and product-preservation inputs.
+            </p>
+          </div>
+          <button
+            onClick={pullProductRefs}
+            disabled={pullingRefs || !projectId || !hasSourceWebsite}
+            className="flex shrink-0 items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+          >
+            {pullingRefs ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <RefreshCw className="h-3.5 w-3.5" />
+            )}
+            {websiteImageRefs.length ? "Regenerate refs" : "Pull product refs"}
+          </button>
+        </div>
+        {websiteImageRefs.length ? (
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {websiteImageRefs.slice(0, 8).map((ref) => (
+              <a
+                key={ref.url}
+                href={ref.sourceUrl || ref.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group overflow-hidden rounded-lg border border-neutral-200 bg-neutral-50"
+                title={ref.summary || ref.name}
+              >
+                <div className="aspect-square bg-white">
+                  <img
+                    src={ref.url}
+                    alt={ref.name}
+                    className="h-full w-full object-cover"
+                    loading="lazy"
+                  />
+                </div>
+                <div className="flex items-center gap-1 px-2 py-1.5">
+                  <span className="min-w-0 flex-1 truncate text-[10px] text-neutral-500">
+                    {ref.name}
+                  </span>
+                  <ExternalLink className="h-3 w-3 shrink-0 text-neutral-300 group-hover:text-indigo-500" />
+                </div>
+              </a>
+            ))}
+          </div>
+        ) : (
+          <p className="mt-2 text-[12px] text-neutral-400">
+            No scraped product refs yet. Add a source website above and pull refs.
+          </p>
+        )}
       </section>
 
       {!tokens ? (
@@ -1087,7 +1293,7 @@ export default function DesignStudioSection({
                 ) : (
                   <Hexagon className="h-3.5 w-3.5" />
                 )}
-                {logos.length ? "New concept" : "Generate logo"}
+                {logos.length ? "Regenerate logo" : "Generate logo"}
               </button>
             </div>
             <textarea
@@ -1111,89 +1317,11 @@ export default function DesignStudioSection({
             )}
           </section>
 
-          {/* Collateral generator */}
-          <section>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-              Collateral
-            </p>
-            <input
-              value={brief}
-              onChange={(e) => setBrief(e.target.value)}
-              placeholder="Optional copy brief — e.g. 'Instagram launch ad for monsoon hydration combo, 20% off'"
-              className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
-            />
-            <div className="mb-2 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={useTemplates}
-                  onChange={(e) => setUseTemplates(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                Templates
-              </label>
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={useAiVisual}
-                  onChange={(e) => setUseAiVisual(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                AI visual
-              </label>
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={useProductImages}
-                  onChange={(e) => setUseProductImages(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                Product refs
-              </label>
-            </div>
-            <textarea
-              value={visualBrief}
-              onChange={(e) => setVisualBrief(e.target.value)}
-              disabled={!useAiVisual}
-              placeholder="AI visual direction — e.g. 'woman with shiny hydrated hair in warm bathroom light, premium beauty ad, use the product reference, no text'"
-              rows={3}
-              className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400 disabled:bg-neutral-50 disabled:text-neutral-400"
-            />
-            <div className="flex flex-wrap gap-2">
-              {COLLATERAL_TYPES.map(({ type, label }) => (
-                <button
-                  key={type}
-                  onClick={() => makeCollateral(type)}
-                  disabled={makingType !== null}
-                  className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
-                >
-                  {makingType === type ? (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  ) : null}
-                  {label}
-                </button>
-              ))}
-            </div>
-
-            {assets.length ? (
-              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
-                {assets.map((asset) => (
-                  <AssetCard key={asset.id} asset={asset} onDelete={removeAsset} />
-                ))}
-              </div>
-            ) : (
-              <p className="mt-3 text-[12px] text-neutral-400">
-                No collateral yet — pick a format above to generate one. Download
-                as SVG (editable, imports into Figma) or PNG.
-              </p>
-            )}
-          </section>
-
           {/* Website generator */}
           <section>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex items-center justify-between gap-3">
               <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-                <Globe className="h-3.5 w-3.5" /> Website
+                <Globe className="h-3.5 w-3.5" /> Website design
               </p>
               <button
                 onClick={makeSite}
@@ -1205,9 +1333,15 @@ export default function DesignStudioSection({
                 ) : (
                   <Globe className="h-3.5 w-3.5" />
                 )}
-                {sites.length ? "New version" : "Generate site"}
+                {sites.length ? "Regenerate website" : "Generate website"}
               </button>
             </div>
+            <input
+              value={websiteBrief}
+              onChange={(e) => setWebsiteBrief(e.target.value)}
+              placeholder="Homepage brief — e.g. 'launch page for hydration cleanser, emphasize subscription and bundles'"
+              className="mb-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
             {sites.length ? (
               <div className="space-y-3">
                 {sites.map((site) => (
@@ -1223,9 +1357,7 @@ export default function DesignStudioSection({
               </div>
             ) : (
               <p className="text-[12px] text-neutral-400">
-                No site yet — generate a one-page landing site from your tokens.
-                Preview it live, download <code>index.html</code>
-                {deployEnabled ? ", or publish straight to Vercel." : "."}
+                No website design yet.
               </p>
             )}
             {!deployEnabled ? (
@@ -1234,6 +1366,106 @@ export default function DesignStudioSection({
               </p>
             ) : null}
           </section>
+
+          {/* Social media generator */}
+          <section className="rounded-xl border border-neutral-200 bg-white p-4">
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                <Megaphone className="h-3.5 w-3.5" /> Social media
+              </p>
+              <button
+                onClick={() => makeCollateral(AD_TYPE)}
+                disabled={makingType !== null}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+              >
+                {makingType === AD_TYPE ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <RefreshCw className="h-3.5 w-3.5" />
+                )}
+                {adAssets.length ? "Regenerate social" : "Generate social"}
+              </button>
+            </div>
+            <input
+              value={socialBrief}
+              onChange={(e) => setSocialBrief(e.target.value)}
+              placeholder="Social brief — e.g. 'Instagram launch ad for barrier repair duo, 20% off'"
+              className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
+            <div className="mb-2 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={useSocialTemplates}
+                  onChange={(e) => setUseSocialTemplates(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                Templates
+              </label>
+              <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                Midjourney scene
+              </span>
+              <span className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                Gemini product pass
+              </span>
+            </div>
+            <textarea
+              value={socialVisualBrief}
+              onChange={(e) => setSocialVisualBrief(e.target.value)}
+              placeholder="Visual direction — e.g. 'glossy product macro with wet skin texture, no text'"
+              rows={3}
+              className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
+            {adAssets.length ? (
+              <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                {adAssets.map((asset) => (
+                  <AssetCard key={asset.id} asset={asset} onDelete={removeAsset} />
+                ))}
+              </div>
+            ) : (
+              <p className="text-[12px] text-neutral-400">
+                No social media creative yet.
+              </p>
+            )}
+          </section>
+
+          {/* Collateral generator */}
+          <section className="rounded-xl border border-neutral-200 bg-white p-4">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              Collateral brief
+            </p>
+            <input
+              value={collateralBrief}
+              onChange={(e) => setCollateralBrief(e.target.value)}
+              placeholder="Shared collateral brief — e.g. 'premium sample-card handout for a pop-up'"
+              className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+            />
+          </section>
+
+          <GeneratedAssetSection
+            type="business-card"
+            label="Business card"
+            assets={businessCardAssets}
+            makingType={makingType}
+            onGenerate={makeCollateral}
+            onDelete={removeAsset}
+          />
+          <GeneratedAssetSection
+            type="flyer"
+            label="Flyer"
+            assets={flyerAssets}
+            makingType={makingType}
+            onGenerate={makeCollateral}
+            onDelete={removeAsset}
+          />
+          <GeneratedAssetSection
+            type="poster"
+            label="Poster"
+            assets={posterAssets}
+            makingType={makingType}
+            onGenerate={makeCollateral}
+            onDelete={removeAsset}
+          />
 
           {studio?.generatedAt ? (
             <p className="text-[10px] text-neutral-300">

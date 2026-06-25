@@ -9,6 +9,7 @@ import {
   callLogoMarks,
   type ProductImageInput,
   callSiteGenerator,
+  callWebsiteAnalysis,
 } from "../llm";
 import {
   CollateralContentSchema,
@@ -16,6 +17,7 @@ import {
   DesignAssetSchema,
   LogoAssetSchema,
   SiteAssetSchema,
+  WebsiteAnalysisSchema,
 } from "../schema";
 import {
   getFounderStory,
@@ -24,6 +26,7 @@ import {
   saveDesignTokens,
   saveLogoAsset,
   saveSiteAsset,
+  saveWebsiteAnalysis,
 } from "../store";
 import { looksLikeHtmlDoc, sanitizeSiteHtml } from "./site";
 import {
@@ -36,6 +39,7 @@ import type { ProductImageRef, WebsiteAnalysis } from "../schema";
 
 const BasePayloadSchema = z.object({
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+  sourceWebsiteUrl: z.string().trim().max(400).default(""),
 });
 
 const TokensPayloadSchema = BasePayloadSchema.extend({
@@ -74,6 +78,79 @@ async function projectOrThrow(projectId: string) {
   if (!project) throw new Error("project not found");
   if (!project.ventureProfile) throw new Error("Finish the venture intake first.");
   return project;
+}
+
+function normalizeSourceWebsiteUrl(raw: string | null | undefined): string | null {
+  const trimmed = (raw ?? "").trim().replace(/[),.;\]]+$/g, "");
+  if (!trimmed) return null;
+  const withProtocol = /^https?:\/\//i.test(trimmed)
+    ? trimmed
+    : `https://${trimmed}`;
+  try {
+    const url = new URL(withProtocol);
+    if (!["http:", "https:"].includes(url.protocol) || !url.hostname.includes(".")) {
+      return null;
+    }
+    url.hash = "";
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function sameSourceUrl(a: string | null | undefined, b: string | null): boolean {
+  if (!a || !b) return false;
+  return normalizeSourceWebsiteUrl(a) === b;
+}
+
+async function resolveWebsiteAnalysis(
+  projectId: string,
+  existing: WebsiteAnalysis | null,
+  sourceWebsiteUrl: string
+): Promise<WebsiteAnalysis | null> {
+  const normalizedUrl = normalizeSourceWebsiteUrl(sourceWebsiteUrl);
+  if (!normalizedUrl) return existing;
+  if (sameSourceUrl(existing?.url, normalizedUrl)) return existing;
+
+  try {
+    const out = await callWebsiteAnalysis(normalizedUrl, projectId);
+    const analysis = WebsiteAnalysisSchema.parse({
+      ...out,
+      url: normalizedUrl,
+      analyzedAt: new Date().toISOString(),
+    });
+    await saveWebsiteAnalysis(projectId, analysis).catch(() => undefined);
+    return analysis;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "website analysis failed";
+    throw new Error(`Could not pull ${normalizedUrl}: ${message}`);
+  }
+}
+
+function websiteImageNotes(analysis: WebsiteAnalysis | null): string[] {
+  const info = analysis?.infoCollected;
+  if (!info) return [];
+  return [
+    ...info.productImages.slice(0, 8).map((image) =>
+      [
+        image.kind,
+        image.alt || image.caption || "website image",
+        image.sourceUrl || image.url,
+      ]
+        .filter(Boolean)
+        .join(" - ")
+    ),
+    ...info.products.slice(0, 6).map((product) =>
+      [
+        product.name,
+        product.category,
+        product.priceText,
+        product.description,
+      ]
+        .filter(Boolean)
+        .join(" - ")
+    ),
+  ];
 }
 
 const REMOTE_IMAGE_TIMEOUT_MS = 8_000;
@@ -235,14 +312,20 @@ export async function runDesignStudioJob(args: {
   if (args.type === "design_tokens") {
     const payload = TokensPayloadSchema.parse(args.payload ?? {});
     const founderStory = await getFounderStory(args.projectId).catch(() => null);
+    const websiteAnalysis = await resolveWebsiteAnalysis(
+      args.projectId,
+      project.websiteAnalysis,
+      payload.sourceWebsiteUrl
+    );
     const tokens = await callDesignTokens(
       payload.sourceRunId,
       args.projectId,
       profile,
       brandKit,
       founderStory,
-      [],
-      payload.guidance
+      websiteImageNotes(websiteAnalysis),
+      payload.guidance,
+      websiteAnalysis
     );
     const designStudio = await saveDesignTokens(
       args.projectId,
@@ -293,6 +376,12 @@ export async function runDesignStudioJob(args: {
 
   if (args.type === "design_collateral") {
     const payload = CollateralPayloadSchema.parse(args.payload ?? {});
+    const isSocial = payload.type === "ad";
+    const websiteAnalysis = await resolveWebsiteAnalysis(
+      args.projectId,
+      project.websiteAnalysis,
+      payload.sourceWebsiteUrl
+    );
     const content =
       payload.content ??
       (await callCollateralCopy(
@@ -302,21 +391,22 @@ export async function runDesignStudioJob(args: {
         profile,
         brandKit,
         payload.brief,
-        project.websiteAnalysis
+        websiteAnalysis
       ));
     const shouldGenerateVisual =
       payload.type !== "business-card" &&
-      (payload.useAiVisual || payload.useProductImages);
-    const productImages = payload.useProductImages
+      (isSocial || payload.useAiVisual || payload.useProductImages);
+    const shouldUseProductImages = isSocial || payload.useProductImages;
+    const productImages = shouldUseProductImages
       ? await loadProductImageInputs(
           args.projectId,
           profile.productImages,
-          project.websiteAnalysis
+          websiteAnalysis
         )
       : [];
     const visualBrief =
       payload.visualBrief ||
-      (payload.useProductImages
+      (shouldUseProductImages
         ? "Use the available product references as the hero product visual in a polished social ad. Preserve product shape, color, material, finish, and packaging cues."
         : "Create a polished campaign visual for this social ad.");
     const visual =
@@ -329,7 +419,7 @@ export async function runDesignStudioJob(args: {
             brandKit,
             visualBrief,
             copy: content,
-            productImages: payload.useProductImages ? productImages : undefined,
+            productImages: shouldUseProductImages ? productImages : undefined,
           })
         : null;
     const { svg, width, height } = await renderCollateral(payload.type, tokens, content, {
@@ -353,10 +443,15 @@ export async function runDesignStudioJob(args: {
   }
 
   const payload = SitePayloadSchema.parse(args.payload ?? {});
+  const websiteAnalysis = await resolveWebsiteAnalysis(
+    args.projectId,
+    project.websiteAnalysis,
+    payload.sourceWebsiteUrl
+  );
   const productImages = await loadProductImageInputs(
     args.projectId,
     profile.productImages,
-    project.websiteAnalysis
+    websiteAnalysis
   );
   const out = await callSiteGenerator(
     payload.sourceRunId,
@@ -365,7 +460,8 @@ export async function runDesignStudioJob(args: {
     tokens,
     brandKit,
     payload.brief,
-    productImages
+    productImages,
+    websiteAnalysis
   );
   const html = sanitizeSiteHtml(
     replaceProductImagePlaceholders(out.html, productImages)

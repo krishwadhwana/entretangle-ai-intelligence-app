@@ -3,6 +3,7 @@ import { z } from "zod";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { DesignTokensSchema } from "@/lib/schema";
+import type { WebsiteAnalysis } from "@/lib/schema";
 import {
   getDesignStudio,
   getProject,
@@ -20,16 +21,88 @@ export const maxDuration = 120;
 const BodySchema = z.object({
   // Optional provenance: the run whose brand kit seeded these tokens.
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+  sourceWebsiteUrl: z.string().trim().max(400).default(""),
   guidance: z.string().trim().max(2000).default(""),
   tokens: DesignTokensSchema.optional(),
 });
+
+function websiteImageRefs(analysis: WebsiteAnalysis | null) {
+  const info = analysis?.infoCollected;
+  if (!info) return [];
+  const seen = new Set<string>();
+  const refs: {
+    url: string;
+    name: string;
+    kind: string;
+    sourceUrl?: string;
+    summary?: string;
+  }[] = [];
+  const add = (entry: {
+    url?: string;
+    name: string;
+    kind: string;
+    sourceUrl?: string;
+    summary?: string;
+  }) => {
+    if (!entry.url || !/^https?:\/\//i.test(entry.url) || seen.has(entry.url)) {
+      return;
+    }
+    seen.add(entry.url);
+    refs.push({
+      url: entry.url,
+      name: entry.name,
+      kind: entry.kind,
+      sourceUrl: entry.sourceUrl,
+      summary: entry.summary,
+    });
+  };
+  for (const image of info.productImages) {
+    if (image.kind === "logo" || image.kind === "founder") continue;
+    add({
+      url: image.url,
+      name: image.alt || image.caption || "Website image",
+      kind: image.kind,
+      sourceUrl: image.sourceUrl,
+      summary: image.caption,
+    });
+  }
+  for (const product of info.products) {
+    add({
+      url: product.imageUrl,
+      name: product.name,
+      kind: "product",
+      sourceUrl: product.url,
+      summary: product.description || product.priceText,
+    });
+  }
+  for (const listing of info.listingEvidence) {
+    add({
+      url: listing.imageUrl,
+      name: listing.productName,
+      kind: "listing",
+      sourceUrl: listing.url,
+      summary: [listing.source, listing.priceText, listing.availability]
+        .filter(Boolean)
+        .join(" - "),
+    });
+  }
+  return refs.slice(0, 24);
+}
 
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    return NextResponse.json({ designStudio: await getDesignStudio(params.id) });
+    const project = await getProject(params.id);
+    if (!project) {
+      return NextResponse.json({ error: "project not found" }, { status: 404 });
+    }
+    return NextResponse.json({
+      designStudio: await getDesignStudio(params.id),
+      sourceWebsiteUrl: project.websiteAnalysis?.url ?? "",
+      websiteImageRefs: websiteImageRefs(project.websiteAnalysis),
+    });
   } catch {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
@@ -59,6 +132,7 @@ export async function POST(
     if (!body.data.tokens) {
       const job = await enqueueProjectJob(params.id, "design_tokens", {
         sourceRunId: body.data.sourceRunId,
+        sourceWebsiteUrl: body.data.sourceWebsiteUrl,
         guidance: body.data.guidance,
       });
       return NextResponse.json({ jobId: job.id, alreadyQueued: job.alreadyQueued }, { status: 202 });

@@ -39,6 +39,16 @@ export const OHNEIS_COLLATERAL_COPY_METHOD = [
   "- Avoid generic premium language unless the copy names the material, mechanism, customer problem, proof, or outcome.",
 ].join("\n");
 
+export const OHNEIS_WEBSITE_METHOD = [
+  "Apply the Ohneis conversion/content method to the generated website:",
+  "- Treat the page as a conversion path: instant category clarity, specific product promise, proof/context, then one obvious CTA.",
+  "- Use a sharp hero hook that names the customer desire, objection, or transformation; keep supporting copy concrete and evidence-led.",
+  "- Build sections from reusable post logic: hook, problem/agitation, mechanism, proof/example, offer, CTA.",
+  "- Use visual rhythm that could translate into social content: hero frame, product detail tiles, benefit cards, proof band, and capture CTA.",
+  "- Avoid generic premium language unless the page names product facts, material/ingredient/mechanism cues, price/offer evidence, or customer use cases.",
+  "- If website evidence is provided, make the site feel like a polished evolution of the source brand rather than a generic landing-page template.",
+].join("\n");
+
 export const OHNEIS_AD_VISUAL_METHOD = [
   "Use the Ohneis visual production method for the generated ad image:",
   "- Think scene-first: establish lighting, camera, mood, composition, and negative space before product styling.",

@@ -42,7 +42,11 @@ const MODULE_BLURB: Record<Domain, string> = {
 
 type QueryFn = (
   q: string,
-  opts?: { domains?: string[]; highlight?: boolean }
+  opts?: {
+    domains?: string[];
+    highlight?: boolean;
+    answerInstructions?: string;
+  }
 ) => Promise<string>;
 
 // Playbook generation is a single web-grounded request that can take ~60s.

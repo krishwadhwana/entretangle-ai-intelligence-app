@@ -20,6 +20,7 @@ const PostSchema = z.discriminatedUnion("action", [
     action: z.literal("generate"),
     brief: z.string().trim().max(2000).default(""),
     sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+    sourceWebsiteUrl: z.string().trim().max(400).default(""),
   }),
   z.object({
     action: z.literal("deploy"),
@@ -94,6 +95,7 @@ export async function POST(
   try {
     const job = await enqueueProjectJob(params.id, "design_site", {
       sourceRunId: body.data.sourceRunId,
+      sourceWebsiteUrl: body.data.sourceWebsiteUrl,
       brief: body.data.brief,
     });
     return NextResponse.json(

@@ -92,6 +92,7 @@ const GREETING: ChatMessage = {
 // Pins the project this browser is actively working on, so a reload restores
 // the SAME project even if a background run updated a different one.
 const ACTIVE_PROJECT_KEY = "et_active_project";
+const OTHER_OPTION_LABEL = "Other";
 
 // Rough cost model for the audience-size estimate (clearly labelled in the UI
 // as an estimate). Research desks are a fixed base; each simulated agent adds
@@ -101,6 +102,14 @@ const COST_PER_AGENT = 0.0006; // ≈ one mini-model call per 25 personas
 const MAX_AGENTS = 10000;
 function estimateRunCost(agents: number): number {
   return BASE_RESEARCH_COST + Math.max(0, agents) * COST_PER_AGENT;
+}
+
+function isOtherOption(option: string): boolean {
+  return option.trim().toLowerCase() === OTHER_OPTION_LABEL.toLowerCase();
+}
+
+function optionsWithOther(options: string[]): string[] {
+  return options.some(isOtherOption) ? options : [...options, OTHER_OPTION_LABEL];
 }
 
 function runStatusPresentation(status: SimulationRunRecord["status"]) {
@@ -2893,6 +2902,8 @@ function IntakePageInner() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   // Free-text "Other response" for the current question.
   const [otherText, setOtherText] = useState("");
+  const setupOtherInputRef = useRef<HTMLInputElement>(null);
+  const asideOtherInputRef = useRef<HTMLInputElement>(null);
   const submittingRef = useRef(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -4690,8 +4701,12 @@ function IntakePageInner() {
     }
   }
 
-  function clickOption(opt: string) {
+  function clickOption(opt: string, otherInput?: HTMLInputElement | null) {
     if (!pending) return;
+    if (isOtherOption(opt)) {
+      window.requestAnimationFrame(() => otherInput?.focus());
+      return;
+    }
     if (!pending.multiSelect) {
       void submitAnswer(opt); // single-select: click = answer
       return;
@@ -4729,6 +4744,13 @@ function IntakePageInner() {
     } else if (otherReady) {
       void submitAnswer(otherText.trim());
     }
+  }
+
+  function skipPendingQuestion() {
+    if (!pending || busy || launching) return;
+    void submitAnswer(
+      "Skip this question for now. Fill it later from the website analysis if possible; otherwise mark it as To fill later and do not ask this same question again.",
+    );
   }
 
   // Can step back as long as we're on a question with a prior step to revert.
@@ -4795,6 +4817,10 @@ function IntakePageInner() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   });
+
+  const visiblePendingOptions = pending
+    ? optionsWithOther(pending.options)
+    : [];
 
   if (loading) {
     return (
@@ -4882,7 +4908,7 @@ function IntakePageInner() {
       id: asset.id,
       title: asset.title,
       type: asset.type,
-      module: "Collateral",
+      module: asset.type === "ad" ? "Ads" : "Collateral",
       description:
         asset.visualBrief ||
         asset.content.headline ||
@@ -6335,13 +6361,14 @@ function IntakePageInner() {
                           </span>
                         )}
                         <div className="grid gap-2">
-                          {pending.options.map((opt) => {
-                            const isSel = selected.has(opt);
+                          {visiblePendingOptions.map((opt) => {
+                            const isOther = isOtherOption(opt);
+                            const isSel = isOther ? otherReady : selected.has(opt);
                             return (
                               <button
                                 key={opt}
                                 onClick={(e) => {
-                                  clickOption(opt);
+                                  clickOption(opt, setupOtherInputRef.current);
                                   (e.currentTarget as HTMLButtonElement).blur();
                                 }}
                                 className={`flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm font-medium transition-colors ${
@@ -6350,7 +6377,7 @@ function IntakePageInner() {
                                     : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50"
                                 }`}
                               >
-                                {pending.multiSelect && (
+                                {pending.multiSelect && !isOther && (
                                   <span
                                     className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? "border-white bg-white/20" : "border-neutral-300"}`}
                                   >
@@ -6365,6 +6392,7 @@ function IntakePageInner() {
                           })}
                         </div>
                         <input
+                          ref={setupOtherInputRef}
                           value={otherText}
                           onChange={(e) => setOtherText(e.target.value)}
                           onKeyDown={(e) => {
@@ -6373,11 +6401,11 @@ function IntakePageInner() {
                               submitInline();
                             }
                           }}
-                          placeholder="Other response"
+                          placeholder="Other response..."
                           className="w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm outline-none focus:border-indigo-500"
                         />
-                        {(pending.multiSelect || otherReady) && (
-                          <div className="flex items-center gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          {(pending.multiSelect || otherReady) && (
                             <button
                               onClick={submitInline}
                               disabled={!canContinue}
@@ -6385,13 +6413,21 @@ function IntakePageInner() {
                             >
                               Continue <CornerDownLeft className="h-3 w-3" />
                             </button>
-                            {pending.multiSelect && (
-                              <span className="text-[10px] text-neutral-400">
-                                {selected.size + (otherReady ? 1 : 0)} selected
-                              </span>
-                            )}
-                          </div>
-                        )}
+                          )}
+                          <button
+                            type="button"
+                            onClick={skipPendingQuestion}
+                            disabled={busy || launching}
+                            className="rounded-lg border border-neutral-200 bg-white px-3.5 py-2 text-xs font-semibold text-neutral-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40"
+                          >
+                            Skip / fill later
+                          </button>
+                          {pending.multiSelect && (
+                            <span className="text-[10px] text-neutral-400">
+                              {selected.size + (otherReady ? 1 : 0)} selected
+                            </span>
+                          )}
+                        </div>
                       </div>
                     )}
 
@@ -7343,13 +7379,14 @@ function IntakePageInner() {
                         </span>
                       )}
                       <div className="grid gap-2">
-                        {pending.options.map((opt) => {
-                          const isSel = selected.has(opt);
+                        {visiblePendingOptions.map((opt) => {
+                          const isOther = isOtherOption(opt);
+                          const isSel = isOther ? otherReady : selected.has(opt);
                           return (
                             <button
                               key={opt}
                               onClick={(e) => {
-                                clickOption(opt);
+                                clickOption(opt, asideOtherInputRef.current);
                                 (e.currentTarget as HTMLButtonElement).blur();
                               }}
                               className={`flex min-h-10 items-center gap-2 rounded-lg border px-3 py-2 text-left text-xs font-medium transition-colors ${
@@ -7358,7 +7395,7 @@ function IntakePageInner() {
                                   : "border-neutral-300 bg-white text-neutral-700 hover:border-indigo-400 hover:bg-indigo-50"
                               }`}
                             >
-                              {pending.multiSelect && (
+                              {pending.multiSelect && !isOther && (
                                 <span
                                   className={`flex h-4 w-4 shrink-0 items-center justify-center rounded border ${isSel ? "border-white bg-white/20" : "border-neutral-300"}`}
                                 >
@@ -7371,6 +7408,7 @@ function IntakePageInner() {
                         })}
                       </div>
                       <input
+                        ref={asideOtherInputRef}
                         value={otherText}
                         onChange={(e) => setOtherText(e.target.value)}
                         onKeyDown={(e) => {
@@ -7379,11 +7417,11 @@ function IntakePageInner() {
                             submitInline();
                           }
                         }}
-                        placeholder="Other response"
+                        placeholder="Other response..."
                         className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-indigo-500"
                       />
-                      {(pending.multiSelect || otherReady) && (
-                        <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2">
+                        {(pending.multiSelect || otherReady) && (
                           <button
                             onClick={submitInline}
                             disabled={!canContinue}
@@ -7391,13 +7429,21 @@ function IntakePageInner() {
                           >
                             Continue <CornerDownLeft className="h-3 w-3" />
                           </button>
-                          {pending.multiSelect && (
-                            <span className="text-[10px] text-neutral-400">
-                              {selected.size + (otherReady ? 1 : 0)} selected
-                            </span>
-                          )}
-                        </div>
-                      )}
+                        )}
+                        <button
+                          type="button"
+                          onClick={skipPendingQuestion}
+                          disabled={busy || launching}
+                          className="rounded-lg border border-neutral-200 bg-white px-3.5 py-2 text-xs font-semibold text-neutral-500 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700 disabled:opacity-40"
+                        >
+                          Skip / fill later
+                        </button>
+                        {pending.multiSelect && (
+                          <span className="text-[10px] text-neutral-400">
+                            {selected.size + (otherReady ? 1 : 0)} selected
+                          </span>
+                        )}
+                      </div>
                     </div>
                   )}
 

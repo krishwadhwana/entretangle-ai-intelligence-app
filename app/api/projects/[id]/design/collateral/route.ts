@@ -26,6 +26,7 @@ const PostSchema = z.object({
   useProductImages: z.boolean().default(false),
   visualBrief: z.string().trim().max(2000).default(""),
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
+  sourceWebsiteUrl: z.string().trim().max(400).default(""),
   // Optional: re-render edited copy without another LLM call.
   content: CollateralContentSchema.optional(),
 });
@@ -79,6 +80,7 @@ export async function POST(
       useProductImages: body.data.useProductImages,
       visualBrief: body.data.visualBrief,
       sourceRunId: body.data.sourceRunId,
+      sourceWebsiteUrl: body.data.sourceWebsiteUrl,
       ...(body.data.content ? { content: body.data.content } : {}),
     });
     return NextResponse.json(

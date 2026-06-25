@@ -32,12 +32,14 @@ function imageEl(src: string, style: SatoriStyle): SatoriNode {
 }
 
 const DIMENSIONS: Record<CollateralType, { width: number; height: number }> = {
+  ad: { width: 1080, height: 1080 }, // square paid social ad / feed creative
   "business-card": { width: 1050, height: 600 }, // 3.5"×2" @ 300dpi
   flyer: { width: 1080, height: 1350 }, // portrait social ad / feed post
   poster: { width: 1080, height: 1080 }, // square social post / ad
 };
 
 export const COLLATERAL_LABELS: Record<CollateralType, string> = {
+  ad: "Ad creative",
   "business-card": "Business card",
   flyer: "Flyer",
   poster: "Poster",
@@ -1106,7 +1108,7 @@ function buildNode(
   useTemplateFrame = true
 ): SatoriNode {
   if (type === "business-card") return businessCard(tokens, content, fonts);
-  if (type === "poster") {
+  if (type === "ad" || type === "poster") {
     return socialAd(
       tokens,
       content,

@@ -25,6 +25,7 @@ import { formatRegion } from "./datasources/politicalGeography";
 import {
   OHNEIS_BRAND_SOCIAL_METHOD,
   OHNEIS_COLLATERAL_COPY_METHOD,
+  OHNEIS_WEBSITE_METHOD,
 } from "./ohneis";
 
 // All prompts demand JSON only, no markdown fences, and include the literal
@@ -175,8 +176,8 @@ integration, service-level, purchasing process and success-metric questions.
 Rules for each question:
 - 3–6 clickable "options": mutually distinct, concrete, tailored to what
   the user already said (e.g. capital ranges in THEIR currency, real city
-  names for THEIR market). Never generic filler like "Other" — the UI
-  already provides free-text input.
+  names for THEIR market). Treat options as suggestions, never as a closed set:
+  the UI appends an "Other" choice and always accepts free-text.
 - "multiSelect": set true WHENEVER more than one option could genuinely apply
   — target audience/buyers, channels, geographies, restrictions, product
   ranges, style directions, hero SKUs, occasions, even experience. Most
@@ -186,6 +187,10 @@ Rules for each question:
 - Do not ask about anything already answered. Always finish by the 10th
   question — earlier only if you have enough product, customer, market and
   funding detail to simulate realistic personas.
+- If the user chooses to skip a question or says "fill later", do NOT ask that
+  same question again. Move to the next most important missing gap. On done:true,
+  use "To fill later" for unknown required string fields, null for unknown
+  numeric fields, and [] for unknown lists.
 - Never let business logistics crowd out product reality. For a fashion brand,
   "men's ready-to-wear at ₹5k–₹15k" is NOT enough: collect aesthetic, fit,
   silhouettes, occasions, references, materials/quality cues and who the wearer
@@ -685,7 +690,8 @@ export function queryV2User(
   profile: ClientProfile,
   conclusions: Conclusion[],
   aggregate: AudienceAggregate | null,
-  question: string
+  question: string,
+  answerInstructions: string | null = null
 ): string {
   return JSON.stringify(
     {
@@ -698,8 +704,10 @@ export function queryV2User(
         value: c.value,
         confidence: c.confidence,
         entities: c.entities,
+        sources: c.sources,
       })),
       question,
+      answerInstructions,
     },
     null,
     2
@@ -708,9 +716,17 @@ export function queryV2User(
 
 export const QUERY_SYSTEM = `You answer questions about a completed research run. You are given the full
 world model: client profile and every conclusion with its blockId.
-Answer concisely. After the answer, list "citedConclusionIds": the ids of
-the conclusions your answer relied on. If the world model cannot answer,
-say so and suggest which new team could.
+Answer directly and concretely from the provided conclusions. Use any
+answerInstructions in the user payload to shape format and coverage.
+When source URLs are present on conclusions you rely on, include those links in
+the answer text near the relevant point. If the world model cannot answer a
+point, say so, name the missing evidence, and add it as a follow-up question.
+For tax, legal, import, export, FDA, duties, or sales-tax questions, state that
+the answer is an operational checklist rather than legal/tax advice, cover the
+relevant compliance/tax areas in the instructions, and end with concrete
+follow-up questions.
+After the answer, list "citedConclusionIds": the ids of the conclusions your
+answer relied on.
 Output JSON only: {"answer":"...","citedConclusionIds":[...]}`;
 
 export const FOUNDER_STORY_SYSTEM = `You extract a founder-story signal map for a venture.
@@ -1315,6 +1331,7 @@ Rules given this pre-fill:
 - In particular, if the draft profile carries an "experience" value (founders' existing skills/background inferred from the site), treat the founders' skills/experience as ALREADY KNOWN and do NOT ask any background/experience question.
 - ALWAYS ask the SIMULATION GOAL (what the founder wants the run to answer) — a website can't reveal it — and CONFIRM the target country if it wasn't explicit on the site (it sets currency/benchmarks/regions).
 - Otherwise ask ONLY what is still missing or genuinely ambiguous — typically capital & runway, ambitions/scale, and any financial targets (and founder experience ONLY if the draft profile has no "experience" value). Aim for 2-4 questions; ask fewer when the site was rich.
+- If the founder skips a question or says to fill it later, keep moving and do NOT re-ask the same missing field in the next turn. If the interview finishes with that field still unknown, mark required strings as "To fill later" and nullable numbers as null.
 - On done:true, MERGE the draft profile into the final profile (the founder's chat answers override the draft on any conflict): carry the draft "experience" straight into the final profile's "experience" field, and fold the consumer opinion into your read of targetAudience.`;
 }
 
@@ -1456,9 +1473,9 @@ export function brandKitUser(
 
 export const DESIGN_TOKENS_SYSTEM = `You are the brand design lead on a venture-intelligence platform. Given a
 venture's profile and (when present) its brand kit, founder story, and product-
-image notes, distill a small, COHERENT design system the founder can build every
-asset from — a business card, a flyer, a logo, and a landing page that all look
-like one brand.
+image notes or website evidence, distill a small, COHERENT design system the
+founder can build every asset from — a business card, a flyer, a logo, and a
+landing page that all look like one brand.
 
 Produce concrete, reusable tokens:
 
@@ -1483,6 +1500,10 @@ Produce concrete, reusable tokens:
 5. "imagery": photography/illustration direction (subject, framing, treatment).
 6. "rationale": 1-2 sentences on why this system fits THIS venture.
 
+If websiteEvidence is provided, use the actual source site as the strongest
+visual reference: brand name, product names, product imagery, palette cues,
+price tier, and existing social/profile signals. Do not claim facts that are not
+present in the profile, brand kit, founder story, guidance, or website evidence.
 Be specific to the venture; never output generic placeholder colors or "Arial".
 Output JSON ONLY, no markdown fences, matching exactly:
 {"palette":{"primary","secondary","accent","neutralDark","neutralLight",
@@ -1497,13 +1518,15 @@ export function designTokensUser(
   brandKit: BrandKit | null,
   founderStory: FounderStorySection | null,
   productImageNotes: string[] = [],
-  guidance = ""
+  guidance = "",
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): string {
   return JSON.stringify(
     {
       clientProfile: profile,
       brandIdentity: brandKit?.brandIdentity ?? null,
       founderStory: compactFounderStory(founderStory),
+      websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
       productImageNotes,
       founderGuidance: guidance || null,
       task:
@@ -1516,7 +1539,7 @@ export function designTokensUser(
 
 // ---------------------------------------------------------------------------
 // Owner Dashboard › Design Studio › Collateral copy. Writes ONLY the words that
-// go on a business card / flyer / poster — the layout and brand styling are
+// go on an ad / business card / flyer / poster — the layout and brand styling are
 // rendered deterministically from the design tokens, so the model must not
 // describe visuals, only supply tight, on-brand copy that fits the format.
 // ---------------------------------------------------------------------------
@@ -1525,16 +1548,19 @@ export const COLLATERAL_COPY_SYSTEM = `You are a brand copywriter producing the 
 collateral. The visual layout, colors and fonts are handled separately from the
 brand's design tokens — your ONLY job is the words. Write in the brand's voice,
 specific to the venture; never generic filler.
-If an Ohneis method block is provided in the user payload, use it to make flyer
-and poster copy work as high-performing social media post/ad copy. Adapt the
+If an Ohneis method block is provided in the user payload, use it to make ad,
+flyer, and poster copy work as high-performing social media post/ad copy. Adapt the
 method silently; do not mention Ohneis in the output.
 If websiteEvidence is provided, mine exact product names, product facts,
 listing/price evidence, press/news links, and consumer-opinion signals for the
 hook. Do not make claims that are not present in the venture profile,
 brand/social kit, brief, or website evidence.
 
-You are told the collateral "type" (one of "business-card", "flyer", "poster").
+You are told the collateral "type" (one of "ad", "business-card", "flyer", "poster").
 Tailor the copy to it:
+- "ad": paid social creative. Write one conversion-focused hook/headline (max ~6
+  words), a concrete product/offer subhead, 2-4 benefit/proof lines, and a direct
+  CTA. Use evidence from the profile/brand kit/website; avoid unsupported claims.
 - "business-card": brandName + a 2-5 word tagline + a contact block (name, role,
   email, phone, website). Keep headline/subhead/body/cta minimal or empty.
 - "flyer" / "poster": a punchy "headline" (max ~6 words), a short "subhead", 3-5
@@ -1633,6 +1659,9 @@ export function logoMarksUser(
 export const SITE_GEN_SYSTEM = `You are a senior brand web designer. Produce a COMPLETE, self-contained,
 responsive one-page landing site for the venture, styled strictly from its
 design tokens so it matches the rest of the brand's assets.
+If an Ohneis method block is provided in the user payload, use it as the
+conversion/content operating method for the page. Adapt it silently; do not
+mention Ohneis in the output.
 
 Hard requirements:
 - A single full HTML document: <!DOCTYPE html> … </html>.
@@ -1648,6 +1677,9 @@ Hard requirements:
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
   HTML (header/nav, main, sections, footer; alt text on any inline SVG via
   role/aria-label).
+- If websiteEvidence is provided, ground copy, product names, imagery choices,
+  social/profile links, and price/proof cues in that evidence. Do not invent
+  unsupported claims.
 
 Sections to include, written in the brand voice and specific to THIS venture:
 hero (headline + subhead + primary CTA), 3-4 value props / features, a short
@@ -1670,7 +1702,8 @@ export function siteGenUser(
     visualSummary: string;
     tags: string[];
     availableForInlineEmbed: boolean;
-  }> = []
+  }> = [],
+  websiteAnalysis: WebsiteAnalysis | null = null
 ): string {
   return JSON.stringify(
     {
@@ -1679,8 +1712,10 @@ export function siteGenUser(
       brandVoice: brandKit?.brandIdentity?.voice ?? null,
       positioning: brandKit?.brandIdentity?.positioning ?? null,
       contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
+      websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
       productImages,
       brief: brief || null,
+      ohneisMethod: OHNEIS_WEBSITE_METHOD,
       task: "Design and write the one-page landing site as specified.",
     },
     null,
