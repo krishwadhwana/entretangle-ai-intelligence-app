@@ -157,7 +157,12 @@ import {
   mockBrandKit,
   mockInspiration,
 } from "./fixtures/venture-sim";
-import { OHNEIS_AD_VISUAL_METHOD } from "./ohneis";
+import {
+  OHNEIS_AD_VISUAL_METHOD,
+  OHNEIS_MIDJOURNEY_PROMPT_METHOD,
+  OHNEIS_OPENAI_IMAGE_FALLBACK_METHOD,
+  OHNEIS_PRODUCT_SWAP_METHOD,
+} from "./ohneis";
 import {
   collectWebsiteEvidence,
   mergeWebsiteCollectedInfo,
@@ -269,7 +274,11 @@ function productReferencePromptNotes(productImages: ProductImageInput[]): string
       const tags = image.ref.tags?.length
         ? ` Tags: ${image.ref.tags.join(", ")}.`
         : "";
-      return `Image ${index + 2} (${productReferenceRole(image)}): ${
+      const priority =
+        image.ref.sourceKind === "uploaded"
+          ? "Primary fidelity reference"
+          : "Secondary context reference";
+      return `Image ${index + 2} (${productReferenceRole(image)}, ${priority}): ${
         image.ref.name
       }.${summary}${tags}`;
     })
@@ -464,11 +473,15 @@ async function callGeminiImageComposite(args: {
               {
                 text: [
                   "Create the final paid-social product advertising image through a product-fidelity edit.",
+                  OHNEIS_PRODUCT_SWAP_METHOD,
                   "Image 1 is the Midjourney art-direction scene. Preserve its lighting, camera language, model pose, hand placement, mood, background, composition, and copy space.",
                   "Images 2+ are the real product source images: actual uploaded product photos first, plus source-site product or overview images when available.",
                   "Replace every Midjourney-generated placeholder product, package, bottle, tube, jar, garment, prop product, or label surface with the matching real product from images 2+. The final product must look like the actual reference product, not a Midjourney approximation.",
                   "Make the replacement photorealistic: correct product geometry, material, color, finish, cap/closure, proportions, shadows, reflections, occlusion by fingers/hands, and perspective in the scene.",
-                  "Do not add readable typography, logos, watermarks, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly asked for in-image text. Product label text may be non-readable or implied if the reference label is not perfectly visible.",
+                  "If the real reference product has visible brand-critical marks, symbols, logos, color blocking, or label shapes, preserve them on the swapped product. Do not invent new logo/text; preserve only what the references show.",
+                  "Output only the final photorealistic image. Do not wrap it in an ad card, poster, template, split panel, slider, UI screen, headline area, CTA bar, badge, watermark, caption, or any graphic overlay.",
+                  "Do not add readable typography, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly asked for in-image text. Existing product label/mark details from the reference are allowed only as part of the real product surface.",
+                  "Use ingredient/source-site props only when they are explicitly requested by this variant; never repeat the same prop motif across the campaign merely because it appears in a reference image.",
                   `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
                   args.prompt,
                 ].join("\n"),
@@ -546,9 +559,14 @@ async function callOpenAIAdVisualImage(args: {
   const prompt = args.sceneDataUrl
     ? [
         args.prompt,
+        OHNEIS_PRODUCT_SWAP_METHOD,
+        OHNEIS_OPENAI_IMAGE_FALLBACK_METHOD,
         "Use the first input image as the art-direction scene. Preserve its composition, lighting, model pose, background, and copy space.",
         "Use the remaining input images as real product references. Replace any generated placeholder product in the scene with the real product, matching product geometry, color, material, finish, proportions, and scene perspective.",
-        "Do not add readable typography, logos, watermarks, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly requested in-image text.",
+        "Preserve visible brand-critical marks, symbols, logos, label shapes, color blocking, and packaging proportions from the real reference product. Do not invent new text or logos.",
+        "Output only the final photorealistic image. No ad card, poster layout, split panel, slider, headline area, CTA bar, badge, watermark, caption, UI, or graphic overlay.",
+        "Use ingredient/source-site props only when this exact creative variant asks for them; do not repeat the same prop motif across every campaign image.",
+        "Do not add readable typography, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly requested in-image text. Existing product label/mark details from the reference are allowed only as part of the real product surface.",
         `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
       ].join("\n")
     : args.prompt;
@@ -584,6 +602,7 @@ async function callOpenAIAdVisualImage(args: {
     size: collateralImageSize(args.type),
     quality: "medium" as const,
     output_format: "png" as const,
+    background: "opaque" as const,
   };
   const imageFiles = await Promise.all(
     imageInputs.map((image, index) =>
@@ -594,11 +613,19 @@ async function callOpenAIAdVisualImage(args: {
       )
     )
   );
+  const imageModel = String(imageParams.model);
+  const supportsInputFidelity =
+    !imageModel.startsWith("gpt-image-2") &&
+    imageModel !== "gpt-image-1-mini" &&
+    imageModel !== "dall-e-2";
+  const editImageParams = supportsInputFidelity
+    ? { ...imageParams, image: imageFiles, input_fidelity: "high" as const }
+    : { ...imageParams, image: imageFiles };
   const response = imageFiles.length
-    ? await client().images.edit(
-        { ...imageParams, image: imageFiles },
-        { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
-      )
+    ? await client().images.edit(editImageParams, {
+        timeout: DESIGN_IMAGE_TIMEOUT_MS,
+        maxRetries: 0,
+      })
     : await client().images.generate(imageParams, {
         timeout: DESIGN_IMAGE_TIMEOUT_MS,
         maxRetries: 0,
@@ -2181,9 +2208,12 @@ export async function callAdVisualImage(args: {
       : `Create the main advertising visual for a ${args.type} paid ad campaign creative.`,
     `Founder visual brief: ${args.visualBrief}`,
     OHNEIS_AD_VISUAL_METHOD,
+    OHNEIS_MIDJOURNEY_PROMPT_METHOD,
     `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
     `Category: ${args.profile.category || "unknown"}.`,
     productNotes,
+    "Reference policy: uploaded product photos are the product-identity source; scraped/site images are secondary context. Do not let one scraped ingredient, prop, or overview image dominate every campaign variant.",
+    "Campaign diversity policy: every post in a campaign pack must have a different concept, hook job, scene type, camera distance, pose/action, prop logic, and composition. Keep the brand grade coherent, but do not recycle the same tabletop/ingredient/coconut/fruit/plant/shower motif unless this specific variant asks for it.",
     args.brandKit?.brandIdentity?.positioning
       ? `Positioning: ${args.brandKit.brandIdentity.positioning}.`
       : "",
@@ -2193,7 +2223,8 @@ export async function callAdVisualImage(args: {
       : `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
     "Create a product-in-scene art direction that matches the visual brief: composition, model pose, lighting, props, background, camera/lens, mood, and copy space.",
     "Midjourney is only responsible for the artistic scene and may use a plausible placeholder product based on the product description. Exact product fidelity happens later in Gemini with the real product and overview images.",
-    "Do not create readable text, logos, watermarks, UI, sliders, captions, labels, or typography inside the generated image unless the founder explicitly asked for in-image text. If text is explicitly requested, reserve it for the final Gemini edit, not the Midjourney scene. Leave clean areas for separately overlaid ad copy.",
+    "Do not create readable text, logos, watermarks, UI, sliders, captions, labels, template panels, poster layouts, CTA bars, or typography inside the generated image unless the founder explicitly asked for in-image text. If text is explicitly requested, reserve it for the final Gemini edit, not the Midjourney scene. Leave clean areas for separately overlaid ad copy.",
+    "No social-media mockup, no website screenshot, no before/after slider, no ad-card frame, no graphic design layout. This must be only a photoreal scene plate.",
     args.surface === "website"
       ? "Make it polished, commercial, photorealistic, crop-safe for desktop and mobile hero use, and specific to this exact product page. Keep at least one natural clean area for overlaid landing-page copy."
       : "Make it polished, commercial, photorealistic, and specific to this exact campaign variant.",
@@ -2202,13 +2233,19 @@ export async function callAdVisualImage(args: {
     .join("\n");
 
   if (args.type === "ad") {
+    const midjourneyParameters =
+      args.surface === "website"
+        ? "--ar 16:9 --v 7 --raw --s 75 --c 12 --no text typography captions subtitles UI screenshot split-screen slider poster flyer ad-layout CTA watermark fake-logo"
+        : "--ar 1:1 --v 7 --raw --s 75 --c 18 --no text typography captions subtitles UI screenshot split-screen slider poster flyer ad-layout CTA watermark fake-logo";
     const midjourneyPrompt = [
       args.surface === "website"
-        ? "Midjourney task: generate only the full-bleed art-direction scene for a premium website hero. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage."
-        : "Midjourney task: generate only the art-direction scene for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
+        ? "Midjourney task::2 generate only the full-bleed art-direction scene for a premium website hero. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage."
+        : "Midjourney task::2 generate only the art-direction scene plate for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
+      "Photographic composition::1.6 no graphic design, no template, no readable text, no fake logo, no UI.",
+      "Variant uniqueness::1.4 this frame must be visually distinct from the other campaign posts: different pose/action, crop distance, scene, prop logic, and visual rhythm.",
       prompt,
-      "No readable text, UI, sliders, captions, watermarks, or typography in the scene.",
-      args.surface === "website" ? "--ar 16:9 --style raw" : "--ar 1:1 --style raw",
+      "No readable text, UI, sliders, captions, watermarks, typography, poster layout, CTA bar, or social-media mockup in the scene.",
+      midjourneyParameters,
     ]
       .filter(Boolean)
       .join("\n");

@@ -1003,9 +1003,12 @@ function socialAd(
 ): SatoriNode {
   if (visualImageDataUrl) {
     if (!useTemplateFrame) {
-      return fullBleedImageAd(tokens, content, fonts, variant, visualImageDataUrl);
+      return imageOnlyAd(tokens, visualImageDataUrl);
     }
     return imageLedAd(tokens, content, fonts, variant, visualImageDataUrl);
+  }
+  if (!useTemplateFrame) {
+    return noTemplateFallbackNotice(tokens, fonts);
   }
   const layouts = [productHeroAd, editorialAd, offerBurstAd, proofChecklistAd];
   const index = Math.floor(Math.random() * layouts.length);
@@ -1140,134 +1143,77 @@ function imageLedAd(
   ]);
 }
 
-function fullBleedImageAd(
+function imageOnlyAd(
   tokens: DesignTokens,
-  content: CollateralContent,
-  fonts: { heading: string; body: string },
-  variant: "portrait" | "square",
   visualImageDataUrl: string
 ): SatoriNode {
-  const { palette } = tokens;
-  const scale = socialScale(variant);
-  const portrait = variant === "portrait";
-  const headline = safeHeadline(content, variant);
-  const subhead = safeSubhead(content, variant);
-  const cta = safeCta(content, variant);
   return el(
     {
       display: "flex",
-      flexDirection: "column",
       width: "100%",
       height: "100%",
-      backgroundColor: palette.neutralDark,
+      backgroundColor: tokens.palette.neutralDark,
+    },
+    [
+      imageEl(visualImageDataUrl, {
+        width: "100%",
+        height: "100%",
+        objectFit: "cover",
+      }),
+    ]
+  );
+}
+
+function noTemplateFallbackNotice(
+  tokens: DesignTokens,
+  fonts: { heading: string; body: string }
+): SatoriNode {
+  return el(
+    {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: "100%",
+      height: "100%",
+      backgroundColor: tokens.palette.neutralLight,
+      color: tokens.palette.neutralDark,
       fontFamily: fonts.body,
+      padding: "72px",
     },
     [
       el(
         {
           display: "flex",
-          height: portrait ? "68%" : "62%",
-          width: "100%",
-          backgroundColor: palette.primary,
-        },
-        [
-          imageEl(visualImageDataUrl, {
-            width: "100%",
-            height: "100%",
-            objectFit: "cover",
-          }),
-        ]
-      ),
-      el(
-        {
-          display: "flex",
           flexDirection: "column",
-          justifyContent: "space-between",
-          flexGrow: 1,
-          padding: `${42 * scale}px ${52 * scale}px`,
-          backgroundColor: palette.neutralDark,
+          alignItems: "center",
+          justifyContent: "center",
+          maxWidth: "720px",
+          borderRadius: "28px",
+          border: `2px solid ${tokens.palette.neutralDark}`,
+          padding: "42px",
         },
         [
           el(
             {
               display: "flex",
-              flexDirection: "row",
-              alignItems: "center",
-              justifyContent: "space-between",
+              fontFamily: fonts.heading,
+              fontWeight: 700,
+              fontSize: "36px",
+              lineHeight: 1,
+              textAlign: "center",
+              marginBottom: "14px",
             },
-            [
-              el(
-                {
-                  display: "flex",
-                  fontFamily: fonts.heading,
-                  fontWeight: 700,
-                  fontSize: `${30 * scale}px`,
-                  color: palette.neutralLight,
-                },
-                content.brandName
-              ),
-              content.tagline
-                ? el(
-                    {
-                      display: "flex",
-                      fontSize: `${17 * scale}px`,
-                      color: palette.accent,
-                    },
-                    content.tagline
-                  )
-                : el({ display: "flex" }),
-            ]
+            "Visual generation failed"
           ),
           el(
-            { display: "flex", flexDirection: "column" },
-            [
-              el(
-                {
-                  display: "flex",
-                  fontFamily: fonts.heading,
-                  fontWeight: 700,
-                  fontSize: `${portrait ? 58 * scale : 46 * scale}px`,
-                  lineHeight: 1,
-                  color: palette.neutralLight,
-                  maxWidth: "100%",
-                  overflow: "hidden",
-                },
-                headline
-              ),
-              subhead
-                ? el(
-                    {
-                      display: "flex",
-                      marginTop: `${16 * scale}px`,
-                      fontSize: `${22 * scale}px`,
-                      lineHeight: 1.22,
-                      color: palette.accent,
-                      maxWidth: "100%",
-                      overflow: "hidden",
-                    },
-                    subhead
-                  )
-                : el({ display: "flex" }),
-            ]
+            {
+              display: "flex",
+              fontSize: "22px",
+              lineHeight: 1.3,
+              textAlign: "center",
+            },
+            "No-template mode does not compose fallback ad copy or graphic overlays."
           ),
-          cta
-            ? el(
-                {
-                  display: "flex",
-                  alignSelf: "flex-start",
-                  borderRadius: `${999 * scale}px`,
-                  backgroundColor: palette.accent,
-                  padding: `${16 * scale}px ${24 * scale}px`,
-                  color: palette.neutralDark,
-                  fontFamily: fonts.heading,
-                  fontWeight: 700,
-                  fontSize: `${22 * scale}px`,
-                  maxWidth: "100%",
-                  overflow: "hidden",
-                },
-                cta
-              )
-            : el({ display: "flex" }),
         ]
       ),
     ]

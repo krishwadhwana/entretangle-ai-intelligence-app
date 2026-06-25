@@ -52,27 +52,36 @@ const AD_CAMPAIGN_VARIANTS = [
     angle:
       "lead with the sharpest new-customer problem, desire, or objection",
     visual:
-      "Human in-use scene: a model naturally holding or applying the product near the face/body when category-appropriate, intimate close crop, broad appeal, clean copy space.",
+      "Human in-use scene: a model naturally holding or applying the product near the face/body when category-appropriate, intimate close crop, broad appeal, clean copy space. No tabletop packshot, no ingredient props, no ad layout.",
     composition:
-      "lifestyle model moment, skin/hair/body context, shallow depth of field",
+      "lifestyle model moment, skin/hair/body context, shallow depth of field, 50mm or 85mm lens, human expression/action as the differentiator",
   },
   {
     name: "Offer test",
     angle:
       "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
     visual:
-      "Product-first commerce composition with tactile props, ingredient/texture cues, strong hero product placement, and uncluttered negative space.",
+      "Product-first commerce composition with strong hero product placement, tactile surface detail, and uncluttered negative space. Use at most one ingredient/prop cue, and do not repeat any prop motif used by the lifestyle post.",
     composition:
-      "studio tabletop or shelf scene, product packshot emphasis, no model",
+      "studio shelf or counter scene, product packshot emphasis, no model, 70mm or 85mm lens, controlled commercial lighting",
   },
   {
     name: "Proof retargeting",
     angle:
       "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
     visual:
-      "Trust-building editorial scene focused on product detail, outcome texture, usage proof, or premium material finish.",
+      "Trust-building editorial proof scene focused on product detail, outcome texture, usage proof, or premium material finish. Avoid the same hero-prop/tabletop setup from the offer post.",
     composition:
-      "macro/editorial proof scene, close product detail, distinct from the other campaign posts",
+      "macro/editorial proof scene, close product detail, compressed crop or texture-led composition, distinct from the other campaign posts",
+  },
+  {
+    name: "Routine reminder",
+    angle:
+      "make the product feel like a repeatable everyday ritual instead of a one-off purchase",
+    visual:
+      "Environmental lifestyle still: product integrated into a real bathroom, vanity, gym bag, bedside, or travel ritual depending on category. No model close-up and no ingredient tableau.",
+    composition:
+      "wider contextual frame, natural light, believable lived-in details, 35mm lens, product visible but not staged like the offer post",
   },
 ];
 
@@ -867,21 +876,32 @@ export default function DesignStudioSection({
     ) => {
       if (!projectId) return;
       const isSocial = type === AD_TYPE;
+      const resolvedUseTemplates =
+        options.useTemplates ??
+        (type === "business-card" ? true : isSocial ? useSocialTemplates : true);
+      const resolvedVisualBrief =
+        options.visualBrief ?? (isSocial ? socialVisualBrief : "");
+      const visualBrief =
+        isSocial && !resolvedUseTemplates
+          ? [
+              resolvedVisualBrief,
+              "Templates are off: the final saved creative must be only the photoreal image, with no graphic frame, ad-card layout, headline, CTA, or text overlay.",
+            ]
+              .filter(Boolean)
+              .join("\n")
+          : resolvedVisualBrief;
       const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           type,
           brief: options.brief ?? (isSocial ? socialBrief : collateralBrief),
-          useTemplates:
-            options.useTemplates ??
-            (type === "business-card" ? true : isSocial ? useSocialTemplates : true),
+          useTemplates: resolvedUseTemplates,
           useAiVisual: options.useAiVisual ?? isSocial,
           useProductImages:
             options.useProductImages ??
             (type === "business-card" ? false : isSocial),
-          visualBrief:
-            options.visualBrief ?? (isSocial ? socialVisualBrief : ""),
+          visualBrief,
           templateBrief:
             options.templateBrief ??
             (isSocial && useSocialTemplates ? socialTemplateBrief : ""),
@@ -980,6 +1000,9 @@ export default function DesignStudioSection({
             baseVisualBrief,
             `Variant role: ${variant.name}. ${variant.visual}`,
             `Required composition lane: ${variant.composition}.`,
+            useSocialTemplates
+              ? "Templates are on: leave intentional copy space for the later composed layout."
+              : "Templates are off: the final saved creative must be only the photoreal image, with no graphic frame, ad-card layout, headline, CTA, or text overlay.",
             "Do not render readable text in the image unless the founder explicitly requested in-image text in the visual direction; if text is requested, it must be handled in the final Gemini edit, never in the Midjourney scene.",
           ].join("\n"),
         });
