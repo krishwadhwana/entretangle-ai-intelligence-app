@@ -52,36 +52,36 @@ const AD_CAMPAIGN_VARIANTS = [
     angle:
       "lead with the sharpest new-customer problem, desire, or objection",
     visual:
-      "Human in-use scene: a model naturally holding or applying the product near the face/body when category-appropriate, intimate close crop, broad appeal, clean copy space. No tabletop packshot, no ingredient props, no ad layout.",
+      "A model holding a bottle of shampoo or conditioner to her face, close-up.",
     composition:
-      "lifestyle model moment, skin/hair/body context, shallow depth of field, 50mm or 85mm lens, human expression/action as the differentiator",
+      "close-up lifestyle portrait, shallow depth of field",
   },
   {
     name: "Offer test",
     angle:
       "turn the current launch offer, bundle, sample, or discount into a direct-response ad",
     visual:
-      "Product-first commerce composition with strong hero product placement, tactile surface detail, and uncluttered negative space. Use at most one ingredient/prop cue, and do not repeat any prop motif used by the lifestyle post.",
+      "A bottle of shampoo on a clean bathroom counter, close-up.",
     composition:
-      "studio shelf or counter scene, product packshot emphasis, no model, 70mm or 85mm lens, controlled commercial lighting",
+      "single-product bathroom counter scene, no model",
   },
   {
     name: "Proof retargeting",
     angle:
       "use product facts, source-site evidence, founder proof, or social proof for warm audiences",
     visual:
-      "Trust-building editorial proof scene focused on product detail, outcome texture, usage proof, or premium material finish. Avoid the same hero-prop/tabletop setup from the offer post.",
+      "A hand holding a conditioner bottle with water droplets, close-up.",
     composition:
-      "macro/editorial proof scene, close product detail, compressed crop or texture-led composition, distinct from the other campaign posts",
+      "macro hand-and-product detail, wet texture",
   },
   {
     name: "Routine reminder",
     angle:
       "make the product feel like a repeatable everyday ritual instead of a one-off purchase",
     visual:
-      "Environmental lifestyle still: product integrated into a real bathroom, vanity, gym bag, bedside, or travel ritual depending on category. No model close-up and no ingredient tableau.",
+      "A bottle of body wash on a shower shelf in soft natural light.",
     composition:
-      "wider contextual frame, natural light, believable lived-in details, 35mm lens, product visible but not staged like the offer post",
+      "wider bathroom ritual still life",
   },
 ];
 
@@ -313,6 +313,16 @@ function downloadPng(asset: DesignAsset) {
   downloadPngString(asset.svg, asset.width, asset.height, asset.id);
 }
 
+function downloadPromptAudit(asset: DesignAsset) {
+  if (!asset.generationPrompt) return;
+  downloadBlob(
+    new Blob([JSON.stringify(asset.generationPrompt, null, 2)], {
+      type: "application/json",
+    }),
+    `${asset.id}-prompts.json`
+  );
+}
+
 function formatGeneratedAt(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Unknown time";
@@ -394,6 +404,15 @@ function AssetCard({
           >
             <FileImage className="h-3.5 w-3.5" />
           </button>
+          {asset.generationPrompt ? (
+            <button
+              onClick={() => downloadPromptAudit(asset)}
+              title="Download generation prompts"
+              className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              <Type className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
           <button
             onClick={() => onDelete(asset.id)}
             title="Delete"
@@ -879,17 +898,8 @@ export default function DesignStudioSection({
       const resolvedUseTemplates =
         options.useTemplates ??
         (type === "business-card" ? true : isSocial ? useSocialTemplates : true);
-      const resolvedVisualBrief =
-        options.visualBrief ?? (isSocial ? socialVisualBrief : "");
       const visualBrief =
-        isSocial && !resolvedUseTemplates
-          ? [
-              resolvedVisualBrief,
-              "Templates are off: the final saved creative must be only the photoreal image, with no graphic frame, ad-card layout, headline, CTA, or text overlay.",
-            ]
-              .filter(Boolean)
-              .join("\n")
-          : resolvedVisualBrief;
+        options.visualBrief ?? (isSocial ? socialVisualBrief : "");
       const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -997,13 +1007,9 @@ export default function DesignStudioSection({
           useProductImages: true,
           templateBrief: useSocialTemplates ? socialTemplateBrief : "",
           visualBrief: [
-            baseVisualBrief,
             `Variant role: ${variant.name}. ${variant.visual}`,
-            `Required composition lane: ${variant.composition}.`,
-            useSocialTemplates
-              ? "Templates are on: leave intentional copy space for the later composed layout."
-              : "Templates are off: the final saved creative must be only the photoreal image, with no graphic frame, ad-card layout, headline, CTA, or text overlay.",
-            "Do not render readable text in the image unless the founder explicitly requested in-image text in the visual direction; if text is requested, it must be handled in the final Gemini edit, never in the Midjourney scene.",
+            baseVisualBrief,
+            `Composition hint: ${variant.composition}.`,
           ].join("\n"),
         });
       }

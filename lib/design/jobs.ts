@@ -233,6 +233,44 @@ function stableId(input: string): string {
   return createHash("sha1").update(input).digest("hex").slice(0, 12);
 }
 
+function istStamp(date: Date): string {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false,
+    })
+      .formatToParts(date)
+      .map((part) => [part.type, part.value])
+  );
+  return `${parts.year}-${parts.month}-${parts.day}_${parts.hour}-${parts.minute}-${parts.second}_IST`;
+}
+
+function fallbackAdRunMeta(useTemplates: boolean): {
+  generationRunId: string;
+  generationRunLabel: string;
+  generationRunCreatedAt: string;
+  generationRunStamp: string;
+} {
+  const now = new Date();
+  const stamp = istStamp(now);
+  const suffix = Math.random().toString(36).slice(2, 7);
+  return {
+    generationRunId: `ad-run-${stamp}-${suffix}`,
+    generationRunLabel: `Server-stamped creative · ${stamp.replace(
+      /_/g,
+      " "
+    )} · ${useTemplates ? "Template" : "No template"}`,
+    generationRunCreatedAt: now.toISOString(),
+    generationRunStamp: stamp,
+  };
+}
+
 async function loadProductImageInputs(
   projectId: string,
   images: ProductImageRef[] | undefined,
@@ -507,6 +545,10 @@ export async function runDesignStudioJob(args: {
       visualImageDataUrl: visual?.dataUrl,
       useTemplateFrame: payload.useTemplates,
     });
+    const generatedRunMeta =
+      isSocial && !payload.generationRunId
+        ? fallbackAdRunMeta(payload.useTemplates)
+        : null;
     const asset = DesignAssetSchema.parse({
       id: assetId(payload.type, content.brandName),
       type: payload.type,
@@ -518,19 +560,35 @@ export async function runDesignStudioJob(args: {
       content,
       ...(visualBriefWithTemplate ? { visualBrief: visualBriefWithTemplate } : {}),
       ...(templateBrief ? { templateBrief } : {}),
-      ...(payload.generationRunId
-        ? { generationRunId: payload.generationRunId }
+      ...(payload.generationRunId || generatedRunMeta
+        ? {
+            generationRunId:
+              payload.generationRunId || generatedRunMeta?.generationRunId,
+          }
         : {}),
-      ...(payload.generationRunLabel
-        ? { generationRunLabel: payload.generationRunLabel }
+      ...(payload.generationRunLabel || generatedRunMeta
+        ? {
+            generationRunLabel:
+              payload.generationRunLabel || generatedRunMeta?.generationRunLabel,
+          }
         : {}),
-      ...(payload.generationRunCreatedAt
-        ? { generationRunCreatedAt: payload.generationRunCreatedAt }
+      ...(payload.generationRunCreatedAt || generatedRunMeta
+        ? {
+            generationRunCreatedAt:
+              payload.generationRunCreatedAt ||
+              generatedRunMeta?.generationRunCreatedAt,
+          }
         : {}),
-      ...(payload.generationRunStamp
-        ? { generationRunStamp: payload.generationRunStamp }
+      ...(payload.generationRunStamp || generatedRunMeta
+        ? {
+            generationRunStamp:
+              payload.generationRunStamp || generatedRunMeta?.generationRunStamp,
+          }
         : {}),
       templateFrameEnabled: payload.useTemplates,
+      ...(visual?.generationPrompt
+        ? { generationPrompt: visual.generationPrompt }
+        : {}),
       createdAt: new Date().toISOString(),
     });
     const studio = await saveDesignAsset(args.projectId, asset);

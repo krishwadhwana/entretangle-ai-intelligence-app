@@ -158,12 +158,6 @@ import {
   mockInspiration,
 } from "./fixtures/venture-sim";
 import {
-  OHNEIS_AD_VISUAL_METHOD,
-  OHNEIS_MIDJOURNEY_PROMPT_METHOD,
-  OHNEIS_OPENAI_IMAGE_FALLBACK_METHOD,
-  OHNEIS_PRODUCT_SWAP_METHOD,
-} from "./ohneis";
-import {
   collectWebsiteEvidence,
   mergeWebsiteCollectedInfo,
 } from "./websiteIntel";
@@ -256,33 +250,211 @@ function collateralImageSize(type: CollateralType): "1024x1024" | "1024x1536" {
   return type === "flyer" ? "1024x1536" : "1024x1024";
 }
 
-function productReferenceRole(image: ProductImageInput): string {
-  if (image.ref.sourceKind === "uploaded") return "actual uploaded product photo";
-  if (image.ref.sourceKind === "scraped") {
-    return "source-site product or overview image";
-  }
-  return "product reference image";
+type AdVisualPromptAudit = {
+  scenePrompt: string;
+  midjourneyPrompt?: string;
+  geminiPrompt?: string;
+  openaiPrompt?: string;
+  productReference?: {
+    id: string;
+    name: string;
+    sourceKind?: string;
+    url?: string;
+    sourcePageUrl?: string;
+    visualSummary?: string;
+    tags?: string[];
+  };
+};
+
+type AdVisualResult = {
+  dataUrl: string;
+  prompt: string;
+  generationPrompt: AdVisualPromptAudit;
+};
+
+function compactPromptLine(value: string): string {
+  return value.replace(/\s+/g, " ").trim().replace(/\.$/, "");
 }
 
-function productReferencePromptNotes(productImages: ProductImageInput[]): string {
-  if (!productImages.length) return "No product reference images were provided.";
-  return productImages
-    .map((image, index) => {
-      const summary = image.ref.visualSummary
-        ? ` Summary: ${image.ref.visualSummary}`
-        : "";
-      const tags = image.ref.tags?.length
-        ? ` Tags: ${image.ref.tags.join(", ")}.`
-        : "";
-      const priority =
-        image.ref.sourceKind === "uploaded"
-          ? "Primary fidelity reference"
-          : "Secondary context reference";
-      return `Image ${index + 2} (${productReferenceRole(image)}, ${priority}): ${
-        image.ref.name
-      }.${summary}${tags}`;
-    })
-    .join("\n");
+function lineAfterVariantPrefix(value: string): string {
+  return value.replace(/^Variant role:\s*[^.]+\.?\s*/i, "").trim();
+}
+
+function scenePromptFromVisualBrief(
+  visualBrief: string,
+  productName: string
+): string {
+  const lines = visualBrief
+    .split(/\n+/)
+    .map((line) => compactPromptLine(line))
+    .filter(Boolean);
+  const direct = lines.find(
+    (line) =>
+      !/^Variant role:/i.test(line) &&
+      !/^Composition hint:/i.test(line) &&
+      !/^Required composition lane:/i.test(line) &&
+      !/templates?\s+(are\s+)?(on|off)/i.test(line) &&
+      !/do not render/i.test(line)
+  );
+  const variant = lines.find((line) => /^Variant role:/i.test(line));
+  const base =
+    !direct ||
+    /polished product-led|model-product|highly artistic|product-led campaign/i.test(
+      direct
+    )
+      ? variant
+        ? lineAfterVariantPrefix(variant)
+        : direct
+      : direct;
+  const fallback = productName
+    ? `A model holding a bottle of ${productName} to her face, close-up`
+    : "A model holding a product bottle to her face, close-up";
+  return compactPromptLine(base || fallback).slice(0, 240);
+}
+
+function promptTokens(value: string): Set<string> {
+  const stop = new Set([
+    "the",
+    "and",
+    "for",
+    "with",
+    "this",
+    "that",
+    "from",
+    "into",
+    "body",
+    "hair",
+    "care",
+    "premium",
+    "product",
+    "bottle",
+    "close",
+    "up",
+  ]);
+  return new Set(
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 2 && !stop.has(token))
+  );
+}
+
+function isLogoReference(image: ProductImageInput): boolean {
+  const haystack = [
+    image.ref.name,
+    image.ref.visualSummary,
+    ...(image.ref.tags ?? []),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return /\blogo\b|wordmark|brand mark/.test(haystack);
+}
+
+function selectProductReference(args: {
+  productImages?: ProductImageInput[];
+  visualBrief: string;
+  copy: CollateralContent;
+  profile: ClientProfile;
+}): ProductImageInput | null {
+  const candidates = (args.productImages ?? []).filter(
+    (image) => (image.dataUrl || image.buffer) && !isLogoReference(image)
+  );
+  if (!candidates.length) return null;
+  const query = [
+    args.visualBrief,
+    args.copy.headline,
+    args.copy.subhead,
+    args.copy.body.join(" "),
+  ].join(" ");
+  const tokens = promptTokens(query);
+  const scored = candidates.map((image, index) => {
+    const haystack = [
+      image.ref.name,
+      image.ref.visualSummary,
+      ...(image.ref.tags ?? []),
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .toLowerCase();
+    let score = image.ref.sourceKind === "uploaded" ? 100 : 0;
+    for (const token of tokens) {
+      if (haystack.includes(token)) score += 8;
+    }
+    if (/conditioner/.test(query.toLowerCase()) && /conditioner|fig/.test(haystack)) {
+      score += 40;
+    }
+    if (/shampoo|scalp|coconut/.test(query.toLowerCase()) && /shampoo|scalp|coconut/.test(haystack)) {
+      score += 40;
+    }
+    if (/body\s*wash|bodywash|kokum/.test(query.toLowerCase()) && /body\s*wash|bodywash|kokum/.test(haystack)) {
+      score += 40;
+    }
+    return { image, score: score - index * 0.01 };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.image ?? null;
+}
+
+function productReferenceAudit(
+  image: ProductImageInput | null
+): AdVisualPromptAudit["productReference"] | undefined {
+  if (!image) return undefined;
+  return {
+    id: image.ref.id,
+    name: image.ref.name,
+    sourceKind: image.ref.sourceKind,
+    url: image.ref.url,
+    sourcePageUrl: image.ref.sourcePageUrl,
+    visualSummary: image.ref.visualSummary,
+    tags: image.ref.tags,
+  };
+}
+
+function buildMidjourneyScenePrompt(
+  scenePrompt: string,
+  surface: "ad" | "website" | undefined
+): string {
+  const params =
+    surface === "website"
+      ? "--ar 16:9 --v 7 --raw --s 50 --c 8 --no text typography logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider"
+      : "--ar 1:1 --v 7 --raw --s 50 --c 10 --no text typography logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider";
+  return `${scenePrompt}\n${params}`;
+}
+
+function buildGeminiProductSwapPrompt(
+  scenePrompt: string,
+  productReference: ProductImageInput | null
+): string {
+  return [
+    "Image 1 is the Midjourney scene.",
+    productReference
+      ? `Image 2 is the actual product photo: ${productReference.ref.name}.`
+      : "No product reference image was provided.",
+    "Replace only the placeholder product in Image 1 with the product from Image 2.",
+    "Keep the model, face, pose, crop, background, lighting, shadows, hand placement, and camera angle from Image 1.",
+    "Match the product perspective, scale, occlusion, reflections, and shadows so it looks physically present in the scene.",
+    "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions exactly as visible in Image 2.",
+    "Do not add or create any headline, CTA, caption, poster, black panel, template, frame, UI, watermark, extra label text, or graphic design.",
+    `Scene intent: ${scenePrompt}.`,
+  ].join("\n");
+}
+
+function buildOpenAIProductSwapPrompt(
+  scenePrompt: string,
+  productReference: ProductImageInput | null,
+  hasScene: boolean
+): string {
+  return hasScene
+    ? buildGeminiProductSwapPrompt(scenePrompt, productReference)
+    : [
+        productReference
+          ? `Use the provided product image as the exact product reference: ${productReference.ref.name}.`
+          : "Create the product scene from the prompt.",
+        scenePrompt,
+        "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions when a product reference is provided.",
+        "No headline, CTA, caption, poster, black panel, template, frame, UI, watermark, or graphic design.",
+      ].join("\n");
 }
 
 function collectStringUrls(value: unknown, urls: string[] = []): string[] {
@@ -425,10 +597,10 @@ async function runMidjourneyActor(prompt: string): Promise<string | null> {
 
 async function callGeminiImageComposite(args: {
   projectId: string;
-  prompt: string;
+  scenePrompt: string;
   sceneDataUrl: string;
   productImages: ProductImageInput[];
-}): Promise<string> {
+}): Promise<{ dataUrl: string; prompt: string }> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
   const model = (process.env.GEMINI_IMAGE_MODEL || "gemini-3.1-flash-image")
@@ -439,7 +611,11 @@ async function callGeminiImageComposite(args: {
 
   const productReferences = args.productImages
     .filter((image) => image.dataUrl || image.buffer)
-    .slice(0, 4);
+    .slice(0, 1);
+  const geminiPrompt = buildGeminiProductSwapPrompt(
+    args.scenePrompt,
+    productReferences[0] ?? null
+  );
   const imageParts = [
     { inlineData: { mimeType: scene.mimeType, data: scene.data } },
     ...productReferences.flatMap((image) => {
@@ -471,20 +647,7 @@ async function callGeminiImageComposite(args: {
             role: "user",
             parts: [
               {
-                text: [
-                  "Create the final paid-social product advertising image through a product-fidelity edit.",
-                  OHNEIS_PRODUCT_SWAP_METHOD,
-                  "Image 1 is the Midjourney art-direction scene. Preserve its lighting, camera language, model pose, hand placement, mood, background, composition, and copy space.",
-                  "Images 2+ are the real product source images: actual uploaded product photos first, plus source-site product or overview images when available.",
-                  "Replace every Midjourney-generated placeholder product, package, bottle, tube, jar, garment, prop product, or label surface with the matching real product from images 2+. The final product must look like the actual reference product, not a Midjourney approximation.",
-                  "Make the replacement photorealistic: correct product geometry, material, color, finish, cap/closure, proportions, shadows, reflections, occlusion by fingers/hands, and perspective in the scene.",
-                  "If the real reference product has visible brand-critical marks, symbols, logos, color blocking, or label shapes, preserve them on the swapped product. Do not invent new logo/text; preserve only what the references show.",
-                  "Output only the final photorealistic image. Do not wrap it in an ad card, poster, template, split panel, slider, UI screen, headline area, CTA bar, badge, watermark, caption, or any graphic overlay.",
-                  "Do not add readable typography, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly asked for in-image text. Existing product label/mark details from the reference are allowed only as part of the real product surface.",
-                  "Use ingredient/source-site props only when they are explicitly requested by this variant; never repeat the same prop motif across the campaign merely because it appears in a reference image.",
-                  `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
-                  args.prompt,
-                ].join("\n"),
+                text: geminiPrompt,
               },
               ...imageParts,
             ],
@@ -536,9 +699,12 @@ async function callGeminiImageComposite(args: {
             : null;
       if (inlineData?.data) {
         console.info("[design] Gemini product composite generated.");
-        return `data:${inlineData.mimeType || "image/png"};base64,${
-          inlineData.data
-        }`;
+        return {
+          dataUrl: `data:${inlineData.mimeType || "image/png"};base64,${
+            inlineData.data
+          }`,
+          prompt: geminiPrompt,
+        };
       }
     }
   }
@@ -548,28 +714,19 @@ async function callGeminiImageComposite(args: {
 async function callOpenAIAdVisualImage(args: {
   projectId: string;
   type: CollateralType;
-  prompt: string;
+  scenePrompt: string;
   productImages: ProductImageInput[];
   sceneDataUrl?: string;
-}): Promise<string> {
+}): Promise<{ dataUrl: string; prompt: string }> {
   ensureFileGlobal();
   const productReferences = args.productImages
     .filter((image) => image.dataUrl || image.buffer)
-    .slice(0, 4);
-  const prompt = args.sceneDataUrl
-    ? [
-        args.prompt,
-        OHNEIS_PRODUCT_SWAP_METHOD,
-        OHNEIS_OPENAI_IMAGE_FALLBACK_METHOD,
-        "Use the first input image as the art-direction scene. Preserve its composition, lighting, model pose, background, and copy space.",
-        "Use the remaining input images as real product references. Replace any generated placeholder product in the scene with the real product, matching product geometry, color, material, finish, proportions, and scene perspective.",
-        "Preserve visible brand-critical marks, symbols, logos, label shapes, color blocking, and packaging proportions from the real reference product. Do not invent new text or logos.",
-        "Output only the final photorealistic image. No ad card, poster layout, split panel, slider, headline area, CTA bar, badge, watermark, caption, UI, or graphic overlay.",
-        "Use ingredient/source-site props only when this exact creative variant asks for them; do not repeat the same prop motif across every campaign image.",
-        "Do not add readable typography, screenshots, UI, sliders, captions, labels, or overlapping text inside the image unless the founder explicitly requested in-image text. Existing product label/mark details from the reference are allowed only as part of the real product surface.",
-        `Product reference map:\n${productReferencePromptNotes(productReferences)}`,
-      ].join("\n")
-    : args.prompt;
+    .slice(0, 1);
+  const prompt = buildOpenAIProductSwapPrompt(
+    args.scenePrompt,
+    productReferences[0] ?? null,
+    Boolean(args.sceneDataUrl)
+  );
   const scene = args.sceneDataUrl ? dataUrlParts(args.sceneDataUrl) : null;
   const imageInputs = [
     ...(scene
@@ -649,7 +806,7 @@ async function callOpenAIAdVisualImage(args: {
       ? "[design] OpenAI image edit generated visual."
       : "[design] OpenAI image generation produced visual."
   );
-  return `data:image/png;base64,${b64}`;
+  return { dataUrl: `data:image/png;base64,${b64}`, prompt };
 }
 
 function baseParams(
@@ -2187,98 +2344,66 @@ export async function callAdVisualImage(args: {
   copy: CollateralContent;
   productImages?: ProductImageInput[];
   surface?: "ad" | "website";
-}): Promise<{ dataUrl: string; prompt: string }> {
-  const usableRefs = (args.productImages ?? [])
-    .filter((image) => image.dataUrl || image.buffer)
-    .slice(0, 4);
-  const productNotes = (args.productImages ?? [])
-    .map((image, index) => {
-      const tags = image.ref.tags?.length ? ` Tags: ${image.ref.tags.join(", ")}.` : "";
-      const summary = image.ref.visualSummary
-        ? ` Summary: ${image.ref.visualSummary}`
-        : "";
-      return `Product reference ${index + 1} (${productReferenceRole(image)}): ${
-        image.ref.name
-      }.${summary}${tags}`;
-    })
-    .join("\n");
-  const prompt = [
-    args.surface === "website"
-      ? "Create the main website hero visual for a premium product landing page."
-      : `Create the main advertising visual for a ${args.type} paid ad campaign creative.`,
-    `Founder visual brief: ${args.visualBrief}`,
-    OHNEIS_AD_VISUAL_METHOD,
-    OHNEIS_MIDJOURNEY_PROMPT_METHOD,
-    `Venture: ${args.profile.product || args.profile.category || "brand"}.`,
-    `Category: ${args.profile.category || "unknown"}.`,
-    productNotes,
-    "Reference policy: uploaded product photos are the product-identity source; scraped/site images are secondary context. Do not let one scraped ingredient, prop, or overview image dominate every campaign variant.",
-    "Campaign diversity policy: every post in a campaign pack must have a different concept, hook job, scene type, camera distance, pose/action, prop logic, and composition. Keep the brand grade coherent, but do not recycle the same tabletop/ingredient/coconut/fruit/plant/shower motif unless this specific variant asks for it.",
-    args.brandKit?.brandIdentity?.positioning
-      ? `Positioning: ${args.brandKit.brandIdentity.positioning}.`
-      : "",
-    `Brand palette: primary ${args.tokens.palette.primary}, secondary ${args.tokens.palette.secondary}, accent ${args.tokens.palette.accent}, light ${args.tokens.palette.neutralLight}, dark ${args.tokens.palette.neutralDark}.`,
-    args.surface === "website"
-      ? `Landing-page headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`
-      : `Ad headline that will be overlaid separately: ${args.copy.headline || args.copy.brandName}.`,
-    "Create a product-in-scene art direction that matches the visual brief: composition, model pose, lighting, props, background, camera/lens, mood, and copy space.",
-    "Midjourney is only responsible for the artistic scene and may use a plausible placeholder product based on the product description. Exact product fidelity happens later in Gemini with the real product and overview images.",
-    "Do not create readable text, logos, watermarks, UI, sliders, captions, labels, template panels, poster layouts, CTA bars, or typography inside the generated image unless the founder explicitly asked for in-image text. If text is explicitly requested, reserve it for the final Gemini edit, not the Midjourney scene. Leave clean areas for separately overlaid ad copy.",
-    "No social-media mockup, no website screenshot, no before/after slider, no ad-card frame, no graphic design layout. This must be only a photoreal scene plate.",
-    args.surface === "website"
-      ? "Make it polished, commercial, photorealistic, crop-safe for desktop and mobile hero use, and specific to this exact product page. Keep at least one natural clean area for overlaid landing-page copy."
-      : "Make it polished, commercial, photorealistic, and specific to this exact campaign variant.",
-  ]
-    .filter(Boolean)
-    .join("\n");
+}): Promise<AdVisualResult> {
+  const productReference = selectProductReference({
+    productImages: args.productImages,
+    visualBrief: args.visualBrief,
+    copy: args.copy,
+    profile: args.profile,
+  });
+  const productRefs = productReference ? [productReference] : [];
+  const scenePrompt = scenePromptFromVisualBrief(
+    args.visualBrief,
+    productReference?.ref.name ||
+      args.profile.product ||
+      args.profile.category ||
+      "product"
+  );
+  const promptAudit: AdVisualPromptAudit = {
+    scenePrompt,
+    productReference: productReferenceAudit(productReference),
+  };
 
   if (args.type === "ad") {
-    const midjourneyParameters =
-      args.surface === "website"
-        ? "--ar 16:9 --v 7 --raw --s 75 --c 12 --no text typography captions subtitles UI screenshot split-screen slider poster flyer ad-layout CTA watermark fake-logo"
-        : "--ar 1:1 --v 7 --raw --s 75 --c 18 --no text typography captions subtitles UI screenshot split-screen slider poster flyer ad-layout CTA watermark fake-logo";
-    const midjourneyPrompt = [
-      args.surface === "website"
-        ? "Midjourney task::2 generate only the full-bleed art-direction scene for a premium website hero. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage."
-        : "Midjourney task::2 generate only the art-direction scene plate for this social post. Do not attempt exact product reproduction; use the product description and reference notes as loose guidance for product category, scale, and usage.",
-      "Photographic composition::1.6 no graphic design, no template, no readable text, no fake logo, no UI.",
-      "Variant uniqueness::1.4 this frame must be visually distinct from the other campaign posts: different pose/action, crop distance, scene, prop logic, and visual rhythm.",
-      prompt,
-      "No readable text, UI, sliders, captions, watermarks, typography, poster layout, CTA bar, or social-media mockup in the scene.",
-      midjourneyParameters,
-    ]
-      .filter(Boolean)
-      .join("\n");
+    const midjourneyPrompt = buildMidjourneyScenePrompt(
+      scenePrompt,
+      args.surface
+    );
+    promptAudit.midjourneyPrompt = midjourneyPrompt;
     try {
       const midjourneyUrl = await runMidjourneyActor(midjourneyPrompt);
       if (midjourneyUrl) {
         const sceneDataUrl = await fetchImageAsDataUrl(midjourneyUrl);
         try {
-          const dataUrl = await callGeminiImageComposite({
+          const gemini = await callGeminiImageComposite({
             projectId: args.projectId,
-            prompt,
+            scenePrompt,
             sceneDataUrl,
-            productImages: usableRefs,
+            productImages: productRefs,
           });
+          promptAudit.geminiPrompt = gemini.prompt;
           return {
-            dataUrl,
-            prompt: `${prompt}\n\nMidjourney scene prompt:\n${midjourneyPrompt}`,
+            dataUrl: gemini.dataUrl,
+            prompt: gemini.prompt,
+            generationPrompt: promptAudit,
           };
         } catch (geminiError) {
           console.error(
             "[design] Gemini product-composite failed; falling back to OpenAI image edit:",
             geminiError
           );
-          const dataUrl = await callOpenAIAdVisualImage({
+          const openai = await callOpenAIAdVisualImage({
             projectId: args.projectId,
             type: args.type,
-            prompt,
-            productImages: usableRefs,
+            scenePrompt,
+            productImages: productRefs,
             sceneDataUrl,
           });
+          promptAudit.openaiPrompt = openai.prompt;
           return {
-            dataUrl,
-            prompt: `${prompt}\n\nMidjourney scene prompt:\n${midjourneyPrompt}`,
+            dataUrl: openai.dataUrl,
+            prompt: openai.prompt,
+            generationPrompt: promptAudit,
           };
         }
       }
@@ -2290,13 +2415,18 @@ export async function callAdVisualImage(args: {
     }
   }
 
-  const dataUrl = await callOpenAIAdVisualImage({
+  const openai = await callOpenAIAdVisualImage({
     projectId: args.projectId,
     type: args.type,
-    prompt,
-    productImages: usableRefs,
+    scenePrompt,
+    productImages: productRefs,
   });
-  return { dataUrl, prompt };
+  promptAudit.openaiPrompt = openai.prompt;
+  return {
+    dataUrl: openai.dataUrl,
+    prompt: openai.prompt,
+    generationPrompt: promptAudit,
+  };
 }
 
 /**

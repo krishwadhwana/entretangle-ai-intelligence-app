@@ -1681,6 +1681,25 @@ export const DesignAssetSchema = z.object({
   generationRunCreatedAt: z.string().optional(),
   generationRunStamp: z.string().optional(),
   templateFrameEnabled: z.boolean().optional(),
+  generationPrompt: z
+    .object({
+      scenePrompt: z.string().optional(),
+      midjourneyPrompt: z.string().optional(),
+      geminiPrompt: z.string().optional(),
+      openaiPrompt: z.string().optional(),
+      productReference: z
+        .object({
+          id: z.string(),
+          name: z.string(),
+          sourceKind: z.string().optional(),
+          url: z.string().optional(),
+          sourcePageUrl: z.string().optional(),
+          visualSummary: z.string().optional(),
+          tags: z.array(z.string()).optional(),
+        })
+        .optional(),
+    })
+    .optional(),
   createdAt: z.string(),
 });
 export type DesignAsset = z.infer<typeof DesignAssetSchema>;
