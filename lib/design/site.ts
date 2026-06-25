@@ -69,15 +69,20 @@ function polishCss(): string {
 <style data-et-site-polish>
 html,body{max-width:100%;overflow-x:hidden}
 body *{box-sizing:border-box}
-header,nav,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0}
-header nav,.site-header,.navbar,.et-product-hero__nav{display:flex;align-items:center;justify-content:space-between;gap:clamp(10px,2vw,24px);flex-wrap:wrap}
+header,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0;min-height:72px}
+header,header nav,.site-header,.navbar,.et-product-hero__nav{display:flex;align-items:center;justify-content:space-between;gap:clamp(14px,2.5vw,32px);flex-wrap:nowrap}
+header>*,header nav>*,.site-header>*,.navbar>*,.et-product-hero__nav>*{min-width:0}
 header a,nav a,.site-header a,.navbar a,.et-product-hero__nav a{white-space:nowrap}
+header :where([class*="brand"],[class*="logo"],.wordmark),.site-header :where([class*="brand"],[class*="logo"],.wordmark),.navbar :where([class*="brand"],[class*="logo"],.wordmark){display:flex;align-items:center;max-width:min(24ch,34vw);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:clamp(24px,2.4vw,42px)!important;line-height:1!important;letter-spacing:0!important}
+header :where([class*="brand"],[class*="logo"],.wordmark):has(> :nth-child(2)) > :where(span,small,p):first-child,.site-header :where([class*="brand"],[class*="logo"],.wordmark):has(> :nth-child(2)) > :where(span,small,p):first-child,.navbar :where([class*="brand"],[class*="logo"],.wordmark):has(> :nth-child(2)) > :where(span,small,p):first-child{display:none!important}
+header :where(h1,h2),.site-header :where(h1,h2),.navbar :where(h1,h2){margin:0!important;font-size:clamp(24px,2.4vw,42px)!important;line-height:1!important;max-width:min(24ch,34vw)!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+header nav,.site-header nav,.navbar nav{margin-left:auto;justify-content:flex-end}
 main>section:first-of-type,[class*="hero"],.et-product-hero{overflow:hidden}
 main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(42px,7vw,96px)!important;line-height:.95!important;letter-spacing:0!important;max-width:min(12ch,92vw)!important;text-wrap:balance;overflow-wrap:break-word;hyphens:auto}
 main>section:first-of-type p,[class*="hero"] p,.et-product-hero p{max-width:min(640px,92vw)}
 .et-product-hero__copy{width:min(680px,100%)!important;padding-top:clamp(112px,14vw,170px)!important}
 .et-product-hero__nav span{display:block;max-width:min(34ch,62vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media (max-width:760px){main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:108px!important}.et-product-hero__nav{align-items:flex-start}}
+@media (max-width:760px){header,.site-header,.navbar,.et-product-hero__nav{min-height:64px;gap:12px;flex-wrap:wrap}header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.site-header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.navbar :where([class*="brand"],[class*="logo"],.wordmark,h1,h2){max-width:58vw!important;font-size:clamp(22px,8vw,34px)!important}main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:108px!important}.et-product-hero__nav{align-items:flex-start}}
 </style>`;
 }
 

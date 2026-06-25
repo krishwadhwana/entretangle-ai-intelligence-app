@@ -1703,7 +1703,10 @@ Hard requirements:
   overlapping the nav, product image, buttons, or next section.
 - Header/nav must be compact and non-overlapping: use a short brand wordmark,
   2-4 nav links max, and no long product names in the nav. If the scraped
-  evidence has a brandName, use that for the wordmark/chrome.
+  evidence has a brandName, use that for the wordmark/chrome. Use EXACTLY ONE
+  brand mark in the header: do not place a small all-caps brand label next to a
+  second larger logo/wordmark, and do not repeat the same brand text twice in
+  the top bar.
 - Use the token palette via CSS custom properties (:root { --primary: … }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
