@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { runDesignStudioJob } from "@/lib/design/jobs";
+import { currentDeployInfo } from "@/lib/deployInfo";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -107,9 +108,10 @@ export async function POST(
         visualBrief: body.data.visualBrief,
         sourceRunId: body.data.sourceRunId,
         sourceWebsiteUrl: body.data.sourceWebsiteUrl,
+        requestedDeploy: currentDeployInfo("web"),
         ...(body.data.content ? { content: body.data.content } : {}),
       },
-      { dedupe: false, cancelQueued: true }
+      { dedupe: false, cancelQueued: true, cancelRunning: true }
     );
     return NextResponse.json(
       { jobId: job.id, alreadyQueued: job.alreadyQueued },
