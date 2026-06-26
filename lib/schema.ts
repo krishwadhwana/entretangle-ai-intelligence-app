@@ -1690,7 +1690,12 @@ export const DesignAssetSchema = z.object({
   content: CollateralContentSchema,
   visualBrief: z.string().optional(),
   templateBrief: z.string().optional(),
+  // The generated hero image. Historically a base64 data URL stored inline
+  // (bloating the owner_dashboard JSONB); now the bytes live in object storage
+  // under visualImageKey and visualImageDataUrl holds a same-origin serving URL.
+  // Old rows keep their data: URLs and still render — both forms are supported.
   visualImageDataUrl: z.string().optional(),
+  visualImageKey: z.string().optional(),
   generationRunId: z.string().optional(),
   generationRunLabel: z.string().optional(),
   generationRunCreatedAt: z.string().optional(),

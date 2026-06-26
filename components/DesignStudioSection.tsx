@@ -652,9 +652,15 @@ function downloadDataUrl(dataUrl: string, filename: string) {
 
 function downloadVisualImage(asset: DesignAsset) {
   if (!asset.visualImageDataUrl) return;
+  // visualImageDataUrl is either a base64 data URL (legacy rows) or a
+  // same-origin serving URL (image now lives in object storage). Both work as
+  // an <a href> download; derive the extension from whichever form we have.
+  const ext = asset.visualImageDataUrl.startsWith("data:")
+    ? dataUrlExtension(asset.visualImageDataUrl)
+    : asset.visualImageKey?.split(".").pop()?.toLowerCase() || "png";
   downloadDataUrl(
     asset.visualImageDataUrl,
-    `${asset.id}-generated-image.${dataUrlExtension(asset.visualImageDataUrl)}`
+    `${asset.id}-generated-image.${ext}`
   );
 }
 
