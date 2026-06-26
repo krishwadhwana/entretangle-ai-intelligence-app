@@ -272,6 +272,11 @@ type AdVisualResult = {
   generationPrompt: AdVisualPromptAudit;
 };
 
+type AdVisualInstructionMode = {
+  forbidHumans: boolean;
+  productOnly: boolean;
+};
+
 function compactPromptLine(value: string): string {
   return value.replace(/\s+/g, " ").trim().replace(/\.$/, "");
 }
@@ -284,9 +289,56 @@ function lineAfterLabeledPrefix(value: string): string {
   return value.replace(/^[A-Za-z ]+:\s*/i, "").trim();
 }
 
+function adVisualInstructionMode(visualBrief: string): AdVisualInstructionMode {
+  const text = visualBrief.toLowerCase();
+  const forbidHumans =
+    /\bno[-\s]*(?:humans?|people|persons?|models?|faces?|hands?|body\s*parts?|bodies)\b/.test(
+      text
+    ) ||
+    /\bwithout\s+(?:any\s+)?(?:humans?|people|persons?|models?|faces?|hands?|body\s*parts?|bodies)\b/.test(
+      text
+    ) ||
+    /\b(?:only|just)\s+(?:nature|natural\s+scenery|the\s+environment)\s+and\s+(?:the\s+)?products?\b/.test(
+      text
+    ) ||
+    /\bproducts?[-\s]*only\b/.test(text);
+  const productOnly =
+    forbidHumans ||
+    /\b(?:only|just)\s+(?:the\s+)?products?\b/.test(text) ||
+    /\bstill[-\s]*life\b/.test(text);
+  return { forbidHumans, productOnly };
+}
+
+function noHumanScenePrompt(sceneHint: string, productName: string): string {
+  const cleanHint = compactPromptLine(
+    sceneHint
+      .replace(/\bNO[-\s]*HUMANS?\b/gi, "")
+      .replace(
+        /\bno[-\s]*(?:humans?|people|persons?|models?|faces?|hands?|body\s*parts?|bodies)\b/gi,
+        ""
+      )
+      .replace(
+        /\bwithout\s+(?:any\s+)?(?:humans?|people|persons?|models?|faces?|hands?|body\s*parts?|bodies)\b/gi,
+        ""
+      )
+      .replace(
+        /\b(?:only|just)\s+(?:nature|natural\s+scenery|the\s+environment)\s+and\s+(?:the\s+)?products?\b/gi,
+        "natural surroundings with the product as the only subject"
+      )
+      .replace(/\bproducts?[-\s]*only\b/gi, "product-only")
+  );
+  const base =
+    cleanHint ||
+    `an artistic product-only still life for ${productName} in natural surroundings`;
+  return compactPromptLine(
+    `Photorealistic product-only still life for ${productName}: ${base}. No humans, people, models, faces, hands, arms, legs, bodies, skin, portraits, or body parts. The product is the only subject with natural non-human surroundings.`
+  );
+}
+
 function scenePromptFromVisualBrief(
   visualBrief: string,
-  productName: string
+  productName: string,
+  instructionMode = adVisualInstructionMode(visualBrief)
 ): string {
   const lines = visualBrief
     .split(/\n+/)
@@ -305,6 +357,19 @@ function scenePromptFromVisualBrief(
   const variant = lines.find((line) => /^Variant role:/i.test(line));
   const style = lines.find((line) => /^Style note:/i.test(line));
   const styleNote = style ? lineAfterLabeledPrefix(style) : "";
+  if (instructionMode.forbidHumans) {
+    const userScene =
+      styleNote ||
+      direct ||
+      lines.find(
+        (line) =>
+          !/^Variant role:/i.test(line) &&
+          !/^Composition hint:/i.test(line) &&
+          !/^Product reference target:/i.test(line)
+      ) ||
+      "";
+    return noHumanScenePrompt(userScene, productName).slice(0, 520);
+  }
   const styleIsUseful =
     styleNote &&
     !/polished product-led|model-product|highly artistic|product-led campaign|no readable text|no generated image text|captions?|typography|template|layout|logo/i.test(
@@ -467,19 +532,42 @@ function productReferenceAudit(
 
 function buildMidjourneyScenePrompt(
   scenePrompt: string,
-  surface: "ad" | "website" | undefined
+  surface: "ad" | "website" | undefined,
+  instructionMode?: AdVisualInstructionMode
 ): string {
-  const params =
-    surface === "website"
-      ? "--ar 16:9 --v 7 --raw --s 50 --c 8 --no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider ingredient props coconut shells fruit slices figs product-only still-life carton packaging"
-      : "--ar 1:1 --v 7 --raw --s 50 --c 10 --no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider ingredient props coconut shells fruit slices figs product-only still-life carton packaging";
+  const params = [
+    surface === "website" ? "--ar 16:9" : "--ar 1:1",
+    "--v 7 --raw --s 50",
+    surface === "website" ? "--c 8" : "--c 10",
+    instructionMode?.forbidHumans
+      ? "--no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider humans people person model face hands arms legs body skin hair portrait selfie"
+      : "--no text typography fake-logo watermark poster flyer ad-layout CTA UI screenshot split-screen slider ingredient props coconut shells fruit slices figs product-only still-life carton packaging",
+  ].join(" ");
   return `${scenePrompt}\n${params}`;
 }
 
 function buildGeminiProductSwapPrompt(
   scenePrompt: string,
-  productReference: ProductImageInput | null
+  productReference: ProductImageInput | null,
+  instructionMode?: AdVisualInstructionMode
 ): string {
+  if (instructionMode?.forbidHumans) {
+    return [
+      "Image 1 is the generated product-only scene.",
+      productReference
+        ? `Image 2 is the actual product photo: ${productReference.ref.name}.`
+        : "No product reference image was provided.",
+      "Replace only the placeholder product in Image 1 with the product from Image 2.",
+      "Keep the product-only composition, natural surroundings, surface, crop, background, lighting, shadows, and camera angle from Image 1.",
+      "If Image 1 contains any person, model, face, hand, arm, leg, body, skin, portrait, or body part, remove it completely.",
+      "The final image must contain only the product and non-human environment.",
+      "Match the product perspective, scale, occlusion, reflections, and shadows so it looks physically present in the scene.",
+      "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions exactly as visible in Image 2.",
+      "The final bottle must show the real front mark/logo from Image 2; do not omit, blur, hide, simplify, or invent it.",
+      "Do not add or create any headline, CTA, caption, poster, black panel, template, frame, UI, watermark, fake logo, extra label text, or graphic design.",
+      `Scene intent: ${scenePrompt}.`,
+    ].join("\n");
+  }
   return [
     "Image 1 is the Midjourney scene.",
     productReference
@@ -500,10 +588,23 @@ function buildGeminiProductSwapPrompt(
 function buildOpenAIProductSwapPrompt(
   scenePrompt: string,
   productReference: ProductImageInput | null,
-  hasScene: boolean
+  hasScene: boolean,
+  instructionMode?: AdVisualInstructionMode
 ): string {
   return hasScene
-    ? buildGeminiProductSwapPrompt(scenePrompt, productReference)
+    ? buildGeminiProductSwapPrompt(scenePrompt, productReference, instructionMode)
+    : instructionMode?.forbidHumans
+      ? [
+          productReference
+            ? `Use the provided product image as the exact product reference: ${productReference.ref.name}.`
+            : "Create the product scene from the prompt.",
+          scenePrompt,
+          "Create a photorealistic product-only still life. No humans, people, models, faces, hands, arms, legs, bodies, skin, portraits, or body parts.",
+          "The final image must contain only the product and non-human natural surroundings.",
+          "Preserve the real product logo, mark, label artwork, color, cap, bottle shape, and proportions when a product reference is provided.",
+          "Keep the real front product mark visible. Do not omit, blur, hide, simplify, or invent it.",
+          "No headline, CTA, caption, poster, black panel, template, frame, UI, watermark, fake logo, or graphic design.",
+        ].join("\n")
     : [
         productReference
           ? `Use the provided product image as the exact product reference: ${productReference.ref.name}.`
@@ -659,6 +760,7 @@ async function callGeminiImageComposite(args: {
   scenePrompt: string;
   sceneDataUrl: string;
   productImages: ProductImageInput[];
+  instructionMode?: AdVisualInstructionMode;
 }): Promise<{ dataUrl: string; prompt: string }> {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured.");
@@ -673,7 +775,8 @@ async function callGeminiImageComposite(args: {
     .slice(0, 1);
   const geminiPrompt = buildGeminiProductSwapPrompt(
     args.scenePrompt,
-    productReferences[0] ?? null
+    productReferences[0] ?? null,
+    args.instructionMode
   );
   const imageParts = [
     { inlineData: { mimeType: scene.mimeType, data: scene.data } },
@@ -776,6 +879,7 @@ async function callOpenAIAdVisualImage(args: {
   scenePrompt: string;
   productImages: ProductImageInput[];
   sceneDataUrl?: string;
+  instructionMode?: AdVisualInstructionMode;
 }): Promise<{ dataUrl: string; prompt: string }> {
   ensureFileGlobal();
   const productReferences = args.productImages
@@ -784,7 +888,8 @@ async function callOpenAIAdVisualImage(args: {
   const prompt = buildOpenAIProductSwapPrompt(
     args.scenePrompt,
     productReferences[0] ?? null,
-    Boolean(args.sceneDataUrl)
+    Boolean(args.sceneDataUrl),
+    args.instructionMode
   );
   const scene = args.sceneDataUrl ? dataUrlParts(args.sceneDataUrl) : null;
   const imageInputs = [
@@ -2411,6 +2516,7 @@ export async function callAdVisualImage(args: {
   productImages?: ProductImageInput[];
   surface?: "ad" | "website";
 }): Promise<AdVisualResult> {
+  const instructionMode = adVisualInstructionMode(args.visualBrief);
   const productReference = selectProductReference({
     productImages: args.productImages,
     visualBrief: args.visualBrief,
@@ -2423,7 +2529,8 @@ export async function callAdVisualImage(args: {
     productReference?.ref.name ||
       args.profile.product ||
       args.profile.category ||
-      "product"
+      "product",
+    instructionMode
   );
   const promptAudit: AdVisualPromptAudit = {
     scenePrompt,
@@ -2433,7 +2540,8 @@ export async function callAdVisualImage(args: {
   if (args.type === "ad") {
     const midjourneyPrompt = buildMidjourneyScenePrompt(
       scenePrompt,
-      args.surface
+      args.surface,
+      instructionMode
     );
     promptAudit.midjourneyPrompt = midjourneyPrompt;
     try {
@@ -2446,6 +2554,7 @@ export async function callAdVisualImage(args: {
             scenePrompt,
             sceneDataUrl,
             productImages: productRefs,
+            instructionMode,
           });
           promptAudit.geminiPrompt = gemini.prompt;
           return {
@@ -2464,6 +2573,7 @@ export async function callAdVisualImage(args: {
             scenePrompt,
             productImages: productRefs,
             sceneDataUrl,
+            instructionMode,
           });
           promptAudit.openaiPrompt = openai.prompt;
           return {
@@ -2486,6 +2596,7 @@ export async function callAdVisualImage(args: {
     type: args.type,
     scenePrompt,
     productImages: productRefs,
+    instructionMode,
   });
   promptAudit.openaiPrompt = openai.prompt;
   return {
