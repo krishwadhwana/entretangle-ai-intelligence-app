@@ -1606,12 +1606,16 @@ export const DesignPaletteColorSchema = z.object({
   usage: z.string().default(""), // where to use it
 });
 
-// A user-uploaded font file, stored inline as a base64 data URI so it persists
-// in Postgres (no external blob storage) and renders anywhere the tokens load.
+// A user-uploaded font file. The bytes live in object storage (R2) under
+// `key`, with `url` a same-origin serving URL used in @font-face. `dataUrl` is
+// legacy (base64 inline in Postgres) — kept optional so old rows still render
+// until migrated; new uploads externalize to storage and leave it empty.
 export const CustomFontSchema = z.object({
   id: z.string(),
   family: z.string(), // CSS font-family name to reference this face
-  dataUrl: z.string(), // "data:font/woff2;base64,..."
+  dataUrl: z.string().default(""), // legacy "data:font/woff2;base64,..."
+  url: z.string().optional(), // serving URL when externalized to storage
+  key: z.string().optional(), // object-storage key
   format: z.string(), // @font-face format() keyword: woff2|woff|truetype|opentype
   mimeType: z.string(),
   size: z.number().int().nonnegative(),
@@ -1684,7 +1688,12 @@ export const DesignAssetSchema = z.object({
   type: CollateralTypeSchema,
   title: z.string(),
   format: z.literal("svg").default("svg"),
-  svg: z.string(),
+  // The rendered, self-contained SVG. Heavy (it bakes in the hero image), so
+  // the bytes are stored in object storage under svgKey and this is left empty
+  // on new/migrated rows; legacy rows keep it inline. Read it via the
+  // design/asset-svg serving route, which falls back to this field.
+  svg: z.string().default(""),
+  svgKey: z.string().optional(), // object-storage key for the rendered SVG
   width: z.number(),
   height: z.number(),
   content: CollateralContentSchema,
@@ -1770,7 +1779,11 @@ export type LogoAsset = z.infer<typeof LogoAssetSchema>;
 
 export const SiteFileSchema = z.object({
   path: z.string().min(1).max(180),
-  content: z.string(),
+  // content is the file's text; for generated sites it can embed base64 images,
+  // so the bytes are stored under contentKey and content is left empty on
+  // new/migrated rows. Legacy rows keep content inline.
+  content: z.string().default(""),
+  contentKey: z.string().optional(), // object-storage key for the file bytes
   contentType: z.string().max(80).default("text/html"),
 });
 export type SiteFile = z.infer<typeof SiteFileSchema>;
@@ -1782,7 +1795,11 @@ export const SiteAssetSchema = z.object({
   id: z.string(),
   title: z.string(),
   brandName: z.string(),
-  html: z.string(),
+  // The index.html for legacy preview/deploy. Stored in object storage under
+  // htmlKey (left empty on new/migrated rows); legacy rows keep it inline.
+  // Read via the design/site-file serving route, which falls back to this.
+  html: z.string().default(""),
+  htmlKey: z.string().optional(), // object-storage key for index.html
   files: z.array(SiteFileSchema).default([]),
   deployUrl: z.string().nullable().default(null),
   generationRunId: z.string().optional(),

@@ -70,6 +70,13 @@ import {
   type WorkspaceNodeWire,
 } from "./schema";
 import { blockToWire, cohortToWire, personaToWire } from "./wire";
+import {
+  deleteDesignAssetObjects,
+  deleteSiteObjects,
+  externalizeDesignAsset,
+  externalizeFonts,
+  externalizeSiteAsset,
+} from "./design/assetStorage";
 
 // ---------------------------------------------------------------------------
 // Every operation on the `projects` table — the durable workspace each
@@ -1611,14 +1618,81 @@ export async function saveDesignTokens(
   generatedAt: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  // Move any inline (base64) uploaded fonts out to object storage first.
+  const customFonts = await externalizeFonts(
+    id,
+    tokens.typography.customFonts ?? [],
+  );
   owner.designStudio = DesignStudioSectionSchema.parse({
     ...owner.designStudio,
-    tokens,
+    tokens: {
+      ...tokens,
+      typography: { ...tokens.typography, customFonts },
+    },
     generatedAt,
     sourceRunId,
   });
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
+}
+
+export type AssetMigrationResult = {
+  assets: number;
+  sites: number;
+  fonts: number;
+  changed: boolean;
+};
+
+/**
+ * One-time migration: move any still-inline Design Studio bytes (rendered SVGs,
+ * hero images, generated site html/files, uploaded fonts) for a single project
+ * out of the owner_dashboard JSONB and into object storage. Idempotent — skips
+ * projects that are already externalized — so it is safe to re-run.
+ */
+export async function migrateProjectAssetsToStorage(
+  id: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<AssetMigrationResult> {
+  const owner = await readOwnerDashboard(id);
+  const ds = owner.designStudio;
+
+  const assetNeedsMigration = (a: DesignAsset) =>
+    (a.svg && !a.svgKey) ||
+    (!a.visualImageKey && a.visualImageDataUrl?.startsWith("data:"));
+  const siteNeedsMigration = (s: SiteAsset) =>
+    (s.html && !s.htmlKey) ||
+    s.files.some((f) => f.content && !f.contentKey);
+  const fontNeedsMigration = (f: { key?: string; dataUrl?: string }) =>
+    !f.key && Boolean(f.dataUrl);
+
+  const fonts = ds.tokens?.typography.customFonts ?? [];
+  const counts: AssetMigrationResult = {
+    assets: ds.assets.filter(assetNeedsMigration).length,
+    sites: ds.sites.filter(siteNeedsMigration).length,
+    fonts: fonts.filter(fontNeedsMigration).length,
+    changed: false,
+  };
+  if (opts.dryRun) return counts;
+  if (!counts.assets && !counts.sites && !counts.fonts) return counts;
+
+  ds.assets = await Promise.all(
+    ds.assets.map((a) => externalizeDesignAsset(id, a)),
+  );
+  ds.sites = await Promise.all(
+    ds.sites.map((s) => externalizeSiteAsset(id, s)),
+  );
+  if (ds.tokens && fonts.length) {
+    ds.tokens.typography.customFonts = await externalizeFonts(id, fonts);
+  }
+  await writeOwnerDashboard(id, owner);
+  counts.changed = true;
+  return counts;
+}
+
+/** All project ids (for batch migrations / maintenance scripts). */
+export async function listAllProjectIds(): Promise<string[]> {
+  const rows = await prisma.project.findMany({ select: { id: true } });
+  return rows.map((r) => r.id);
 }
 
 export async function getDesignStudio(
@@ -1638,9 +1712,10 @@ export async function saveDesignAsset(
   id: string,
   asset: DesignAsset,
 ): Promise<DesignStudioSection> {
+  const stored = await externalizeDesignAsset(id, asset);
   const owner = await readOwnerDashboard(id);
-  const rest = owner.designStudio.assets.filter((a) => a.id !== asset.id);
-  owner.designStudio.assets = [asset, ...rest];
+  const rest = owner.designStudio.assets.filter((a) => a.id !== stored.id);
+  owner.designStudio.assets = [stored, ...rest];
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
 }
@@ -1651,10 +1726,12 @@ export async function deleteDesignAsset(
   assetId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  const removed = owner.designStudio.assets.find((a) => a.id === assetId);
   owner.designStudio.assets = owner.designStudio.assets.filter(
     (a) => a.id !== assetId,
   );
   await writeOwnerDashboard(id, owner);
+  if (removed) await deleteDesignAssetObjects(removed);
   return owner.designStudio;
 }
 
@@ -1688,9 +1765,10 @@ export async function saveSiteAsset(
   id: string,
   site: SiteAsset,
 ): Promise<DesignStudioSection> {
+  const stored = await externalizeSiteAsset(id, site);
   const owner = await readOwnerDashboard(id);
-  const rest = owner.designStudio.sites.filter((s) => s.id !== site.id);
-  owner.designStudio.sites = [site, ...rest];
+  const rest = owner.designStudio.sites.filter((s) => s.id !== stored.id);
+  owner.designStudio.sites = [stored, ...rest];
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
 }
@@ -1715,10 +1793,12 @@ export async function deleteSiteAsset(
   siteId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  const removed = owner.designStudio.sites.find((s) => s.id === siteId);
   owner.designStudio.sites = owner.designStudio.sites.filter(
     (s) => s.id !== siteId,
   );
   await writeOwnerDashboard(id, owner);
+  if (removed) await deleteSiteObjects(removed);
   return owner.designStudio;
 }
 

@@ -41,7 +41,6 @@ import {
   readProductImageFile,
   scrapedProductImageCandidates,
 } from "../productImages";
-import { putObject } from "../storage";
 import type {
   BrandKit,
   ClientProfile,
@@ -602,39 +601,6 @@ function dataUrlByteSize(dataUrl: string): number {
   return Buffer.byteLength(match[1], "base64");
 }
 
-const VISUAL_MIME_EXT: Record<string, string> = {
-  "image/png": "png",
-  "image/jpeg": "jpg",
-  "image/webp": "webp",
-  "image/gif": "gif",
-};
-
-// Move a generated hero image out of the JSONB row and into object storage:
-// upload the bytes under design-assets/<projectId>/<assetId>.<ext> and return
-// the storage key + a same-origin serving URL. Returns null (caller keeps the
-// inline data URL) if the input isn't a base64 data URL or upload fails.
-async function externalizeVisualImage(
-  projectId: string,
-  assetId: string,
-  dataUrl: string,
-): Promise<{ key: string; url: string } | null> {
-  const match = dataUrl.match(/^data:([^;,]+);base64,(.+)$/);
-  if (!match) return null;
-  const ext = VISUAL_MIME_EXT[match[1].toLowerCase()] ?? "png";
-  const key = `design-assets/${projectId}/${assetId}.${ext}`;
-  try {
-    await putObject(key, Buffer.from(match[2], "base64"), match[1]);
-  } catch (e) {
-    console.warn("[design] failed to externalize visual image", e);
-    return null;
-  }
-  return {
-    key,
-    url: `/api/projects/${encodeURIComponent(
-      projectId,
-    )}/design/asset-image/${encodeURIComponent(assetId)}`,
-  };
-}
 
 async function generateWebsiteHeroVisual(args: {
   projectId: string;
@@ -862,20 +828,12 @@ export async function runDesignStudioJob(args: {
         ? fallbackAdRunMeta(payload.useTemplates)
         : null;
     const id = assetId(payload.type, content.brandName);
-    // Store the hero image in object storage and reference it by URL rather
-    // than embedding the (large) base64 in the JSONB row. On failure (or no
-    // storage configured locally) externalizeVisualImage returns null and we
-    // fall back to keeping the inline data URL.
-    const externalVisual = visual?.dataUrl
-      ? await externalizeVisualImage(args.projectId, id, visual.dataUrl)
-      : null;
+    // The hero image (visualImageDataUrl) and the rendered svg are heavy; both
+    // are moved to object storage centrally by saveDesignAsset (which sets
+    // visualImageKey / svgKey and a serving URL). Here we just pass the raw
+    // data URL + svg through.
     const visualImageFields = visual?.dataUrl
-      ? externalVisual
-        ? {
-            visualImageDataUrl: externalVisual.url,
-            visualImageKey: externalVisual.key,
-          }
-        : { visualImageDataUrl: visual.dataUrl }
+      ? { visualImageDataUrl: visual.dataUrl }
       : {};
     const asset = DesignAssetSchema.parse({
       id,

@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertCircle,
   Archive,
@@ -48,9 +55,32 @@ import {
   googleFontUrlForFamilies,
   googleFontUrlForFamily,
 } from "@/lib/design/fontLibrary";
+import {
+  assetSvgUrl,
+  siteFileUrl,
+} from "@/lib/design/assetUrls";
 
-// Max uploaded font size. Fonts ride inline (base64) in the tokens JSON, so keep
-// them small enough to stay well under request/JSONB limits.
+// Provides the current projectId to deeply-nested asset/site cards so they can
+// build serving URLs for externalized (R2-stored) svg/html/font bytes.
+const DesignProjectContext = createContext<string | null>(null);
+
+// The asset's self-contained SVG text. Externalized rows keep it in object
+// storage (svgKey) and ship empty `svg`; fetch it from the serving route.
+// Legacy/hydrated rows still have it inline.
+async function loadAssetSvg(
+  projectId: string | null,
+  asset: DesignAsset,
+): Promise<string> {
+  if (asset.svg) return asset.svg;
+  if (asset.svgKey && projectId) {
+    const res = await fetch(assetSvgUrl(projectId, asset.id));
+    if (res.ok) return res.text();
+  }
+  return "";
+}
+
+// Max uploaded font size. Externalized to object storage on save, so keep them
+// small enough to stay well under request limits.
 const MAX_CUSTOM_FONT_BYTES = 2 * 1024 * 1024;
 
 const AD_TYPE: CollateralType = "ad";
@@ -626,13 +656,6 @@ function downloadPngString(svg: string, width: number, height: number, id: strin
   img.src = url;
 }
 
-function downloadSvg(asset: DesignAsset) {
-  downloadSvgString(asset.svg, asset.id);
-}
-
-function downloadPng(asset: DesignAsset) {
-  downloadPngString(asset.svg, asset.width, asset.height, asset.id);
-}
 
 function dataUrlExtension(dataUrl: string): string {
   const mime = dataUrl.match(/^data:([^;,]+)[;,]/)?.[1]?.toLowerCase();
@@ -890,11 +913,18 @@ function AssetCard({
   asset: DesignAsset;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
+  // Externalized rows serve the SVG from object storage; legacy/hydrated rows
+  // still carry it inline as a data URL.
+  const previewSrc =
+    asset.svgKey && projectId
+      ? assetSvgUrl(projectId, asset.id)
+      : svgPreviewSrc(asset.svg);
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
       <div className="flex items-center justify-center bg-neutral-50 p-3">
         <img
-          src={svgPreviewSrc(asset.svg)}
+          src={previewSrc}
           alt={asset.title}
           className="h-auto max-w-full"
         />
@@ -903,14 +933,23 @@ function AssetCard({
         <p className="truncate text-[11px] text-neutral-500">{asset.title}</p>
         <div className="flex shrink-0 items-center gap-1">
           <button
-            onClick={() => downloadSvg(asset)}
+            onClick={async () =>
+              downloadSvgString(await loadAssetSvg(projectId, asset), asset.id)
+            }
             title="Download SVG (editable / Figma-ready)"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => downloadPng(asset)}
+            onClick={async () =>
+              downloadPngString(
+                await loadAssetSvg(projectId, asset),
+                asset.width,
+                asset.height,
+                asset.id,
+              )
+            }
             title="Download PNG"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
@@ -1064,22 +1103,61 @@ function LogoCard({
   );
 }
 
-function downloadHtml(site: SiteAsset, file?: SiteFile) {
+// A site file's text. Externalized rows ship empty content + a key; fetch it
+// from the serving route (which resolves htmlKey/contentKey or legacy inline).
+async function loadSiteFileText(
+  projectId: string | null,
+  site: SiteAsset,
+  file: SiteFile,
+): Promise<string> {
+  if (file.content) return file.content;
+  if (projectId) {
+    const res = await fetch(siteFileUrl(projectId, site.id, file.path));
+    if (res.ok) return res.text();
+  }
+  return "";
+}
+
+// All of a site's files with their content hydrated from storage.
+async function loadSiteFilesHydrated(
+  projectId: string | null,
+  site: SiteAsset,
+): Promise<SiteFile[]> {
+  return Promise.all(
+    siteFiles(site).map(async (file) => ({
+      ...file,
+      content: await loadSiteFileText(projectId, site, file),
+    })),
+  );
+}
+
+async function downloadHtml(
+  projectId: string | null,
+  site: SiteAsset,
+  file?: SiteFile,
+) {
   const target = file ?? siteFiles(site)[0];
+  const content = await loadSiteFileText(projectId, site, target);
   downloadBlob(
-    new Blob([target.content], { type: target.contentType || "text/html" }),
+    new Blob([content], { type: target.contentType || "text/html" }),
     file ? siteFileDownloadName(site, file) : siteDownloadName(site)
   );
 }
 
-function downloadSiteZip(site: SiteAsset) {
-  downloadBlob(makeZipBlob(siteFiles(site), site.createdAt), siteZipDownloadName(site));
+async function downloadSiteZip(projectId: string | null, site: SiteAsset) {
+  const files = await loadSiteFilesHydrated(projectId, site);
+  downloadBlob(makeZipBlob(files, site.createdAt), siteZipDownloadName(site));
 }
 
-function openHtmlPreview(site: SiteAsset, file?: SiteFile) {
+async function openHtmlPreview(
+  projectId: string | null,
+  site: SiteAsset,
+  file?: SiteFile,
+) {
   const target = file ?? siteFiles(site)[0];
+  const content = await loadSiteFileText(projectId, site, target);
   const url = URL.createObjectURL(
-    new Blob([target.content], { type: target.contentType || "text/html" })
+    new Blob([content], { type: target.contentType || "text/html" })
   );
   window.open(url, "_blank", "noopener,noreferrer");
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
@@ -1100,8 +1178,15 @@ function SiteCard({
   onDeploy: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
   const [loaded, setLoaded] = useState(false);
-  const hasHtml = site.html.trim().length > 0;
+  // Externalized rows ship empty html + an htmlKey served from storage.
+  const externalized = Boolean(site.htmlKey);
+  const hasHtml = site.html.trim().length > 0 || externalized;
+  const previewProps =
+    externalized && projectId
+      ? { src: siteFileUrl(projectId, site.id) }
+      : { srcDoc: site.html };
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
@@ -1112,7 +1197,7 @@ function SiteCard({
             <iframe
               key={`${site.id}-${site.createdAt}`}
               title={site.title}
-              srcDoc={site.html}
+              {...previewProps}
               sandbox="allow-forms allow-popups"
               onLoad={() => setLoaded(true)}
               className="block h-72 w-full border-0 bg-white"
@@ -1161,14 +1246,14 @@ function SiteCard({
             </a>
           ) : null}
           <button
-            onClick={() => downloadHtml(site)}
+            onClick={() => void downloadHtml(projectId, site)}
             title={`Download ${siteDownloadName(site)}`}
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => openHtmlPreview(site)}
+            onClick={() => void openHtmlPreview(projectId, site)}
             disabled={!hasHtml}
             title="Open preview in a new tab"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
@@ -1284,16 +1369,42 @@ function SiteHistoryBrowser({
   onDeploy: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
   const activeSite =
     sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
   const files = activeSite ? siteFiles(activeSite) : [];
   const activeFile =
     files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
   const [loaded, setLoaded] = useState(false);
+  // Hydrate the active file's text for the inline preview when it's stored in
+  // object storage (empty content + a key) rather than inline.
+  const [activeContent, setActiveContent] = useState("");
 
   useEffect(() => {
     setLoaded(false);
   }, [activeSite?.id, activeFile?.path]);
+
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeSite || !activeFile) {
+      setActiveContent("");
+      return;
+    }
+    if (activeFile.content) {
+      setActiveContent(activeFile.content);
+      return;
+    }
+    void loadSiteFileText(projectId, activeSite, activeFile).then((text) => {
+      if (!cancelled) setActiveContent(text);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Key on stable primitives — activeSite/activeFile are recomputed each
+    // render (siteFiles() builds a fresh array), so depending on them directly
+    // would re-fetch in a loop.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, activeSite?.id, activeFile?.path, activeFile?.content]);
 
   useEffect(() => {
     if (activeFile && activeFile.path !== selectedPath) {
@@ -1389,21 +1500,21 @@ function SiteHistoryBrowser({
                 </a>
               ) : null}
               <button
-                onClick={() => downloadHtml(activeSite, activeFile)}
+                onClick={() => void downloadHtml(projectId, activeSite, activeFile)}
                 title={`Download ${activeFile.path}`}
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
                 <FileCode2 className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => downloadSiteZip(activeSite)}
+                onClick={() => void downloadSiteZip(projectId, activeSite)}
                 title={`Download ${siteZipDownloadName(activeSite)}`}
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
                 <Archive className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => openHtmlPreview(activeSite, activeFile)}
+                onClick={() => void openHtmlPreview(projectId, activeSite, activeFile)}
                 title="Open selected file in a new tab"
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
@@ -1437,7 +1548,7 @@ function SiteHistoryBrowser({
             <iframe
               key={`${activeSite.id}-${activeFile.path}`}
               title={`${activeSite.title} ${activeFile.path}`}
-              srcDoc={activeFile.content}
+              srcDoc={activeContent}
               sandbox="allow-forms allow-popups"
               onLoad={() => setLoaded(true)}
               className="block h-full w-full border-0 bg-white"
@@ -2256,6 +2367,7 @@ export default function DesignStudioSection({
   );
 
   return (
+    <DesignProjectContext.Provider value={projectId}>
     <div className="mx-auto max-w-3xl p-6">
       {FONT_PREVIEW_CSS ? <style>{FONT_PREVIEW_CSS}</style> : null}
       {customFontCss ? <style>{customFontCss}</style> : null}
@@ -2860,5 +2972,6 @@ export default function DesignStudioSection({
         </div>
       )}
     </div>
+    </DesignProjectContext.Provider>
   );
 }
