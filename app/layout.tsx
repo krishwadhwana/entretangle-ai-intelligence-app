@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Suspense } from "react";
 import AppHeader from "@/components/AppHeader";
 import "./globals.css";
@@ -7,6 +7,13 @@ export const metadata: Metadata = {
   title: "EntreTangle",
   description:
     "Agent teams research your business brief and converge into a queryable world model.",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  // Allow users to zoom (accessibility) while keeping a sensible default.
+  maximumScale: 5,
 };
 
 export default function RootLayout({

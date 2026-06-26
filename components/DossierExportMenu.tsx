@@ -161,7 +161,7 @@ export default function DossierExportMenu({
         {label}
       </button>
       {open ? (
-        <div className="absolute right-0 z-[1300] mt-2 w-80 rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-xl">
+        <div className="absolute right-0 z-[1300] mt-2 w-[calc(100vw-2rem)] max-w-80 rounded-xl border border-neutral-200 bg-white p-3 text-xs shadow-xl">
           <div className="flex items-start justify-between gap-2">
             <div>
               <p className="font-semibold text-neutral-900">PDF export</p>

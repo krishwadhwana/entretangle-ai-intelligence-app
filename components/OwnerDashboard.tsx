@@ -113,9 +113,9 @@ export default function OwnerDashboard({
   }, [projectId, runId]);
 
   return (
-    <div className="absolute inset-0 flex bg-white pt-12">
+    <div className="absolute inset-0 flex flex-col md:flex-row bg-white pt-12">
       {/* Section rail */}
-      <nav className="w-48 shrink-0 border-r border-neutral-200 bg-neutral-50/60 p-3">
+      <nav className="w-full md:w-48 shrink-0 border-b md:border-b-0 md:border-r border-neutral-200 bg-neutral-50/60 p-3">
         <div className="mb-2 flex items-center gap-1.5 px-1 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
           <LayoutDashboard className="h-3.5 w-3.5" /> Owner Dashboard
         </div>

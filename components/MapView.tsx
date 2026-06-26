@@ -434,8 +434,8 @@ export default function MapView({
       </MapContainer>
 
       {/* Colour-mode toggle + legend: by income segment or by GoI region (zone). */}
-      <div className="absolute right-3 top-3 z-[1000] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
-        <div className="flex items-center gap-1.5 text-[11px]">
+      <div className="absolute right-3 top-16 sm:top-3 z-[1000] max-w-[calc(100%-24px)] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
+        <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <div className="flex items-center gap-1">
             <span className="text-neutral-400">Colour:</span>
             {(["segment", "zone"] as const).map((m) => (
