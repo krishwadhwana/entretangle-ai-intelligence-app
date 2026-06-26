@@ -59,10 +59,9 @@ export type LaunchContext = {
   // financial model did not provide fixed costs. Keeps launch payback from being
   // pure inventory recovery on otherwise full-scale scenarios.
   fixedCostsPerMonthFloor?: number | null;
-  // Up-front launch reserve to pay back before the Cash payback card
-  // turns green. This represents setup, initial operating runway, creative,
-  // sampling and launch-management capital that does not appear as one month's
-  // product inventory.
+  // Optional explicit up-front setup spend to pay back before the Cash payback
+  // card turns green. Do not use this for an automatically invented runway
+  // buffer: fixed costs and ad spend are already charged step by step.
   launchInvestmentFloor?: number | null;
   // Fraction of the whole audience this run covers (regional scope). 1 = whole.
   // A regional run is a PROPORTIONAL SLICE: the auto-sized reachable pool, the ad
@@ -2064,7 +2063,7 @@ function buildAssumptions(
     confidence: launchReserveWasFounderEntered ? 0.7 : 0.45,
     basis: launchReserveWasFounderEntered
       ? "Founder-entered launch/setup cash reserve that cash payback must recover."
-      : "Computed launch setup, operating runway, creative/sampling and launch-management reserve that cash payback must recover.",
+      : "No explicit one-off launch reserve was entered; cash payback uses operating cash flows, inventory purchases, and any explicit setup spend.",
   });
   if (inputs.businessModel === "rental") {
     const rentalAssetDaysPerBooking =

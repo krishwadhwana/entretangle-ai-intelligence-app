@@ -2309,6 +2309,7 @@ const FALLBACK_DESIGN_TOKENS: DesignTokens = {
     weights: ["400", "600", "700"],
     pairingRationale:
       "A geometric heading over a neutral grotesque body reads as modern and trustworthy.",
+    customFonts: [],
   },
   logo: {
     direction: "Clean wordmark in the heading family with a tight, confident set.",

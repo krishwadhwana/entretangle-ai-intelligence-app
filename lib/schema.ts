@@ -1606,6 +1606,19 @@ export const DesignPaletteColorSchema = z.object({
   usage: z.string().default(""), // where to use it
 });
 
+// A user-uploaded font file, stored inline as a base64 data URI so it persists
+// in Postgres (no external blob storage) and renders anywhere the tokens load.
+export const CustomFontSchema = z.object({
+  id: z.string(),
+  family: z.string(), // CSS font-family name to reference this face
+  dataUrl: z.string(), // "data:font/woff2;base64,..."
+  format: z.string(), // @font-face format() keyword: woff2|woff|truetype|opentype
+  mimeType: z.string(),
+  size: z.number().int().nonnegative(),
+  uploadedAt: z.string(),
+});
+export type CustomFont = z.infer<typeof CustomFontSchema>;
+
 export const DesignTokensSchema = z.object({
   palette: z.object({
     primary: z.string(),
@@ -1622,6 +1635,7 @@ export const DesignTokensSchema = z.object({
     bodyGoogleUrl: z.string().nullable().default(null),
     weights: z.array(z.string()).default([]), // e.g. ["400", "600", "700"]
     pairingRationale: z.string().default(""),
+    customFonts: z.array(CustomFontSchema).default([]), // user-uploaded faces
   }),
   logo: z.object({
     direction: z.string(), // the concept, in words
@@ -2383,8 +2397,8 @@ export const LaunchSimInputsSchema = z.object({
   shippingPerOrder: z.number().nonnegative().default(120),
   paymentFeePct: z.number().min(0).max(1).default(0.02),
   fixedCostsPerMonth: z.number().nonnegative().default(0),
-  // Up-front launch/setup cash reserve. null → computed by the route from fixed
-  // costs + media runway; 0 → explicitly no reserve.
+  // Up-front launch/setup cash spend. null → no explicit one-off reserve; enter
+  // a real setup/runway amount only when it should be recovered in cash payback.
   launchInvestmentReserve: z.number().nonnegative().nullable().default(null),
 
   // --- rental / asset-utilisation model ---

@@ -53,6 +53,7 @@ import type {
   LaunchSimRecord,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
+import { hasExplicitMonthlyGrowthPct } from "@/lib/launchGrowth";
 
 // ---------------------------------------------------------------------------
 // Launch Simulation view. Feed cost / sale price / ad spend, fast-forward the
@@ -974,7 +975,7 @@ export default function LaunchSimulation({
                 <NullableNumField
                   label="Launch reserve"
                   unit={engineCurrency}
-                  help="Blank = auto reserve. Enter 0 to remove it, or enter your actual setup/runway cash."
+                  help="Optional one-time setup/runway spend that cash payback must recover. Leave blank unless you have an actual amount."
                   value={inputs.launchInvestmentReserve}
                   onChange={(v) => set("launchInvestmentReserve", v)}
                   small
@@ -1585,7 +1586,7 @@ function Results({
         )}`
       : null,
     launchReserveAssumption
-      ? `Launch reserve: ${formatAssumptionValue(
+      ? `Explicit launch reserve: ${formatAssumptionValue(
           launchReserveAssumption.value,
           launchReserveAssumption.unit,
           fmt
@@ -1662,8 +1663,10 @@ function Results({
     setKError(null);
     try {
       const mergedInputs: LaunchSimInputs = { ...record.inputs };
+      const explicitGrowthPct = hasExplicitMonthlyGrowthPct(knowledge);
       proposal.changes.forEach((c, i) => {
         if (accepted.has(i)) {
+          if (c.field === "monthlyGrowthPct" && !explicitGrowthPct) return;
           (mergedInputs as Record<string, unknown>)[c.field] = c.proposedValue;
         }
       });
@@ -2758,10 +2761,7 @@ function buildPaybackSensitivityRows(
   );
   const currentFixed = inputs.fixedCostsPerMonth ?? 0;
   const baseFixed = launchBaseFixedCost(inputs.currency, inputs.businessModel);
-  const baseReserve =
-    raw.launchInvestmentReserve == null
-      ? launchReserveFor(inputs.businessModel, inputs.adSpendPerMonth, baseFixed)
-      : raw.launchInvestmentReserve;
+  const baseReserve = raw.launchInvestmentReserve ?? 0;
   const hasFounderActuals =
     raw.fixedCostsPerMonth > 0 || raw.launchInvestmentReserve != null;
 
@@ -2773,7 +2773,7 @@ function buildPaybackSensitivityRows(
       value: result.summary.breakEvenLabel ?? "Never",
       sub: `peak ${fmt.money(result.summary.peakCapitalNeeded)}`,
       tone: currentTone,
-      title: `Current fixed costs ${fmt.money(currentFixed)}/month; launch reserve ${fmt.money(currentReserve)}.`,
+      title: `Current fixed costs ${fmt.money(currentFixed)}/month; explicit launch reserve ${fmt.money(currentReserve)}.`,
     },
   ];
 
@@ -2793,7 +2793,7 @@ function buildPaybackSensitivityRows(
       adjustedPayback(result, baseFixed, baseReserve, currentReserve),
       currentStep,
       fmt,
-      `Fixed costs set to ${fmt.money(baseFixed)}/month; reserve recalculated to ${fmt.money(baseReserve)}.`
+      `Fixed costs set to ${fmt.money(baseFixed)}/month; explicit reserve stays at ${fmt.money(baseReserve)}.`
     )
   );
 
@@ -2806,8 +2806,8 @@ function buildPaybackSensitivityRows(
           tone: currentTone,
           title: `Using entered fixed costs ${fmt.money(raw.fixedCostsPerMonth)}/month and ${
             raw.launchInvestmentReserve == null
-              ? "auto launch reserve"
-              : `${fmt.money(raw.launchInvestmentReserve)} launch reserve`
+              ? "no explicit launch reserve"
+              : `${fmt.money(raw.launchInvestmentReserve)} explicit launch reserve`
           }.`,
         }
       : {
@@ -2895,21 +2895,6 @@ function launchBaseFixedCost(
   const modelMultiplier =
     businessModel === "saas" || businessModel === "services" ? 0.8 : 1;
   return Math.round(base * modelMultiplier);
-}
-
-function launchReserveFor(
-  businessModel: LaunchSimInputs["businessModel"],
-  adSpendPerMonth: number,
-  fixedCostsPerMonth: number
-): number {
-  if (usesFounderCostFloor(businessModel)) return 0;
-  const runwayMonths =
-    businessModel === "saas" || businessModel === "services" ? 4 : 6;
-  const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
-  return Math.round(
-    Math.max(0, fixedCostsPerMonth) * runwayMonths +
-      Math.max(0, adSpendPerMonth) * launchMediaMonths
-  );
 }
 
 function usesFounderCostFloor(businessModel: LaunchSimInputs["businessModel"]): boolean {
@@ -4249,9 +4234,9 @@ function buildAdvancedSettingsBullets(
     `Operations & costs - Fixed costs: ${moneyPer(used.fixedCostsPerMonth, "month")}`,
     `Operations & costs - Launch reserve: ${
       used.launchInvestmentReserve == null
-        ? "Auto"
+        ? "None"
         : fmt.money(used.launchInvestmentReserve)
-    }${auto(raw.launchInvestmentReserve == null, "auto-resolved")}`,
+    }${auto(raw.launchInvestmentReserve == null, "not entered")}`,
     `Operations & costs - Initial inventory: ${fmt.num(used.initialInventoryUnits ?? 0)} units${auto(raw.initialInventoryUnits == null, "auto-sized")}`,
     `Operations & costs - Reordering: ${used.reorderEnabled ? "On" : "Off"}`,
     `Operations & costs - Reorder lead: ${fmt.num(used.reorderLeadTimeDays)} days`,

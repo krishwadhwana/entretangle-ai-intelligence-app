@@ -298,3 +298,60 @@ export function googleFontUrlForFamilies(families: string[]): string | null {
 export function googleFontUrlForFamily(family: string): string | null {
   return googleFontUrlForFamilies([family]);
 }
+
+// Accepted upload types -> CSS @font-face format() keyword.
+const FONT_FORMAT_BY_MIME: Record<string, string> = {
+  "font/woff2": "woff2",
+  "font/woff": "woff",
+  "font/ttf": "truetype",
+  "font/otf": "opentype",
+  "application/font-woff2": "woff2",
+  "application/font-woff": "woff",
+  "application/x-font-ttf": "truetype",
+  "application/x-font-otf": "opentype",
+  "application/font-sfnt": "truetype",
+};
+
+const FONT_FORMAT_BY_EXT: Record<string, string> = {
+  woff2: "woff2",
+  woff: "woff",
+  ttf: "truetype",
+  otf: "opentype",
+};
+
+// Resolve the @font-face format() keyword from a file's mime type / name.
+// Returns null for unsupported types so callers can reject the upload.
+export function fontFaceFormat(
+  mimeType: string,
+  fileName: string
+): string | null {
+  const byMime = FONT_FORMAT_BY_MIME[mimeType.trim().toLowerCase()];
+  if (byMime) return byMime;
+  const ext = fileName.split(".").pop()?.trim().toLowerCase() ?? "";
+  return FONT_FORMAT_BY_EXT[ext] ?? null;
+}
+
+// Derive a clean CSS family name from an uploaded file name.
+export function familyFromFileName(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, "");
+  const cleaned = base
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned || "Custom font";
+}
+
+type CustomFontFace = { family: string; dataUrl: string; format: string };
+
+// Build @font-face rules so uploaded fonts render in previews and assets.
+export function customFontFaceCss(
+  fonts: ReadonlyArray<CustomFontFace>
+): string {
+  return fonts
+    .filter((font) => font.family.trim() && font.dataUrl)
+    .map((font) => {
+      const family = font.family.replace(/"/g, "");
+      return `@font-face{font-family:"${family}";src:url("${font.dataUrl}") format("${font.format}");font-weight:100 900;font-display:swap;}`;
+    })
+    .join("\n");
+}

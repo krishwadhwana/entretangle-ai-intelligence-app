@@ -3101,75 +3101,117 @@ function IntakePageInner() {
     };
   }
 
-  // Preload lightweight project previews so sidebar switching is instant and
-  // does not re-enter the whole page loading state.
+  // Load the dashboard from the fast summary endpoint first. Full previews are
+  // useful for run counts and rich project cards, but the all-preview read can
+  // be slow on large workspaces, so it must never gate the dashboard itself.
   useEffect(() => {
     let cancelled = false;
+
+    function hydrateProjectPreviews() {
+      setLoadingPreviews(true);
+      fetch("/api/projects?previews=1")
+        .then(async (previewRes) => {
+          if (!previewRes.ok) return;
+          const previews = ((await previewRes.json()).projects ??
+            []) as ProjectData[];
+          if (cancelled) return;
+          setProjectPreviews(previews);
+          setProjects((current) => {
+            const summaryById = new Map(
+              current.map((project) => [project.id, project]),
+            );
+            for (const preview of previews) {
+              summaryById.set(preview.id, toProjectSummary(preview));
+            }
+            return Array.from(summaryById.values()).sort(
+              (a, b) =>
+                new Date(b.updatedAt).getTime() -
+                new Date(a.updatedAt).getTime(),
+            );
+          });
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          if (!cancelled) setLoadingPreviews(false);
+        });
+    }
+
+    function loadProjectDetailInBackground(id: string) {
+      const controller = new AbortController();
+      const timeout = window.setTimeout(() => controller.abort(), 12_000);
+      fetch(`/api/projects/${encodeURIComponent(id)}`, {
+        signal: controller.signal,
+      })
+        .then(async (detailRes) => {
+          const detailData = await detailRes.json().catch(() => ({}));
+          if (!detailRes.ok || !detailData.project || cancelled) return;
+          const activeProjectParam = new URL(window.location.href).searchParams.get(
+            "project",
+          );
+          if (activeProjectParam !== id) return;
+          const project = detailData.project as ProjectData;
+          setProjectPreviews((current) => [
+            project,
+            ...current.filter((item) => item.id !== project.id),
+          ]);
+          applyProject(project, false);
+          setView("project");
+        })
+        .catch(() => undefined)
+        .finally(() => {
+          window.clearTimeout(timeout);
+        });
+    }
+
     (async () => {
       setLoading(true);
       setError(null);
       try {
-        if (!projectParam) {
-          const summaryRes = await fetch("/api/projects");
-          if (!summaryRes.ok) {
-            throw new Error(`Failed to load projects (${summaryRes.status})`);
-          }
-          const summaries = ((await summaryRes.json()).projects ??
-            []) as ProjectSummary[];
+        // The first request after the serverless function goes cold can take
+        // several seconds and occasionally fails while the DB connection warms
+        // up. Retry a couple of times before surfacing an error so a transient
+        // cold start self-heals instead of stranding the dashboard.
+        let summaryRes: Response | null = null;
+        for (let attempt = 0; attempt < 3; attempt++) {
           if (cancelled) return;
-          setProjects(summaries);
-          if (summaries.length === 0) {
-            setProjectPreviews([]);
-            clearProjectState();
+          try {
+            summaryRes = await fetch("/api/projects");
+            if (summaryRes.ok) break;
+            if (summaryRes.status < 500) break; // client error — don't retry
+          } catch {
+            summaryRes = null; // network blip — retry
           }
-          setView("dashboard");
-          setLoading(false);
-
-          setLoadingPreviews(true);
-          fetch("/api/projects?previews=1")
-            .then(async (previewRes) => {
-              if (!previewRes.ok) return;
-              const previews = ((await previewRes.json()).projects ??
-                []) as ProjectData[];
-              if (cancelled) return;
-              setProjectPreviews(previews);
-              setProjects(previews.map(toProjectSummary));
-            })
-            .catch(() => undefined)
-            .finally(() => {
-              if (!cancelled) setLoadingPreviews(false);
-            });
-          return;
+          if (attempt < 2) await new Promise((r) => setTimeout(r, 600 * (attempt + 1)));
         }
-
-        const res = await fetch("/api/projects?previews=1");
-        if (!res.ok) throw new Error(`Failed to load projects (${res.status})`);
-        let previews = ((await res.json()).projects ?? []) as ProjectData[];
+        if (!summaryRes || !summaryRes.ok) {
+          throw new Error(`Failed to load projects (${summaryRes?.status ?? "network error"})`);
+        }
+        const summaries = ((await summaryRes.json()).projects ??
+          []) as ProjectSummary[];
         if (cancelled) return;
-        setProjectPreviews(previews);
-        setProjects(previews.map(toProjectSummary));
-        if (previews.length === 0) {
+        setProjects(summaries);
+        if (summaries.length === 0) {
+          setProjectPreviews([]);
           clearProjectState();
           setView("dashboard");
           return;
         }
-        // Resolution order: explicit ?project= → the last project this browser
-        // was working on (localStorage pin) → most-recently-updated.
-        // The localStorage pin makes a reload deterministic: it restores the
-        // SAME project (and its in-progress questionnaire) regardless of which
-        // other project was updated most recently by a background run.
-        const pinnedId =
-          projectParam ||
-          (typeof window !== "undefined"
-            ? window.localStorage.getItem(ACTIVE_PROJECT_KEY)
-            : null);
-        const proj = previews.find((p) => p.id === pinnedId) ?? previews[0];
-        applyProject(proj, false);
-        setView(
-          projectParam && previews.some((p) => p.id === projectParam)
-            ? "project"
-            : "dashboard",
-        );
+
+        if (!projectParam) {
+          setView("dashboard");
+          hydrateProjectPreviews();
+          return;
+        }
+
+        if (!summaries.some((project) => project.id === projectParam)) {
+          setView("dashboard");
+          hydrateProjectPreviews();
+          return;
+        }
+
+        setView("dashboard");
+        loadProjectDetailInBackground(projectParam);
+        hydrateProjectPreviews();
       } catch (err) {
         if (!cancelled)
           setError(
@@ -3220,6 +3262,9 @@ function IntakePageInner() {
       const id = (event as CustomEvent<{ id?: string }>).detail?.id;
       if (id) switchProject(id);
     }
+    function onShowDashboard() {
+      showDashboard();
+    }
     function onProjectCreated(event: Event) {
       const proj = (event as CustomEvent<{ project?: ProjectData }>).detail
         ?.project;
@@ -3260,11 +3305,13 @@ function IntakePageInner() {
     }
     window.addEventListener("popstate", onPopState);
     window.addEventListener("et:switch-project", onSwitchProject);
+    window.addEventListener("et:show-dashboard", onShowDashboard);
     window.addEventListener("et:project-created", onProjectCreated);
     window.addEventListener("et:project-deleted", onProjectDeleted);
     return () => {
       window.removeEventListener("popstate", onPopState);
       window.removeEventListener("et:switch-project", onSwitchProject);
+      window.removeEventListener("et:show-dashboard", onShowDashboard);
       window.removeEventListener("et:project-created", onProjectCreated);
       window.removeEventListener("et:project-deleted", onProjectDeleted);
     };
@@ -3352,6 +3399,7 @@ function IntakePageInner() {
   }
 
   function showDashboard() {
+    setError(null);
     const snapshot = currentProjectSnapshot();
     if (snapshot) {
       setProjectPreviews((prev) =>

@@ -42,8 +42,11 @@ export function ProjectSelector({
 
   useEffect(() => {
     void refresh();
+  }, [pathname]);
+
+  useEffect(() => {
     setLocalSelectedId(selectedParam);
-  }, [pathname, selectedParam]);
+  }, [selectedParam]);
 
   useEffect(() => {
     function onProjectSelected(event: Event) {
@@ -229,11 +232,23 @@ export default function AppHeader() {
     }
   }
 
+  function openDashboard() {
+    if (pathname === "/") {
+      window.dispatchEvent(new CustomEvent("et:show-dashboard"));
+    } else {
+      router.push("/");
+    }
+  }
+
   return (
     <header className="flex h-12 shrink-0 items-center justify-between border-b border-neutral-200 bg-white px-4">
-      <a href="/" className="text-sm font-semibold tracking-tight">
+      <button
+        type="button"
+        onClick={openDashboard}
+        className="text-sm font-semibold tracking-tight hover:text-neutral-600"
+      >
         EntreTangle
-      </a>
+      </button>
       <div className="flex items-center gap-2">
         <button
           type="button"

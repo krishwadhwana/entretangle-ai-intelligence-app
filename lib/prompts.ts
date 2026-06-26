@@ -1211,11 +1211,12 @@ You may ONLY change these fields (units in brackets):
 - viralityK [word-of-mouth: new-aware per recent buyer]
 - organicReachPerStep [non-ad new awareness per step]
 - targetingQuality [0–1, ad targeting precision]
-- monthlyGrowthPct [observed/explicit net month-over-month demand/acquisition growth %, e.g. 2 = +2% MoM; otherwise leave untouched so the engine derives it from the simulated audience]
-- launchInvestmentReserve [currency, upfront setup/runway reserve; 0 means no reserve, null/unset means auto-computed]
+- monthlyGrowthPct [observed/explicit net month-over-month demand/acquisition growth %, e.g. 2 = +2% MoM; ONLY propose this when the founder explicitly gives a monthly growth percentage such as "5% MoM" or "3 percent per month"; otherwise leave untouched so the engine derives it from the simulated audience/product]
+- launchInvestmentReserve [currency, explicit upfront setup/runway spend that cash payback must recover; leave null/unset unless the founder states a real one-time amount; 0 means explicitly no reserve]
 
 RULES — stay honest, do not bias toward a "better" result:
 - Only propose a change a field's value the new knowledge (or the benchmark priors) genuinely supports. Leave everything else untouched — an empty change list is a valid answer.
+- Do NOT infer monthlyGrowthPct from qualitative repeat, virality, enthusiasm, retention, or product-category facts. Use repeatRateMult, viralityK, organicReachPerStep, or targetingQuality for those signals. monthlyGrowthPct is reserved for an explicitly stated custom monthly growth percentage.
 - A change may move a number in EITHER direction. Justify each one from the EVIDENCE the founder gave (or the benchmark range), never from a desire to make the launch look good.
 - Stay within the plausible benchmark range unless the founder states a HARD number (e.g. "our actual return rate is 9%"); if you go outside a range, say why in the rationale.
 - Each change needs a one-sentence rationale tying the specific evidence to the specific knob and direction, plus a confidence 0–1 (lower when you're extrapolating).

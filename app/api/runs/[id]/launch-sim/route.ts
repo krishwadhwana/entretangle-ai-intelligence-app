@@ -293,14 +293,7 @@ export async function GET(
       inputs.businessModel,
       inputs.adSpendPerMonth
     );
-    const effectiveFixedCosts = Math.max(
-      inputs.fixedCostsPerMonth,
-      scenarioFixedCostFloor
-    );
-    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(
-      inputs,
-      effectiveFixedCosts
-    );
+    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(inputs);
     return {
       id: r.id,
       runId: r.runId,
@@ -407,14 +400,7 @@ export async function POST(
       inputs.businessModel,
       inputs.adSpendPerMonth
     );
-    const effectiveFixedCosts = Math.max(
-      inputs.fixedCostsPerMonth,
-      scenarioFixedCostFloor
-    );
-    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(
-      inputs,
-      effectiveFixedCosts
-    );
+    const scenarioLaunchInvestmentFloor = resolveLaunchInvestmentReserve(inputs);
     const result = simulateLaunch(scoped.personas, inputs, {
       reachableProspectsPerMonth,
       audienceShare: scoped.share,
@@ -776,21 +762,6 @@ function launchOperatingCostFloorPerMonth(
   return Math.round(Math.max(baseFloor, campaignOps));
 }
 
-function launchInvestmentFloor(
-  businessModel: LaunchBusinessModel,
-  adSpendPerMonth: number,
-  fixedCostsPerMonth: number
-): number {
-  if (usesFounderCostFloor(businessModel)) return 0;
-  const runwayMonths =
-    businessModel === "saas" || businessModel === "services" ? 4 : 6;
-  const launchMediaMonths = adSpendPerMonth > 0 ? 3 : 0;
-  return Math.round(
-    Math.max(0, fixedCostsPerMonth * runwayMonths) +
-      Math.max(0, adSpendPerMonth) * launchMediaMonths
-  );
-}
-
 function usesFounderCostFloor(businessModel: LaunchBusinessModel): boolean {
   return [
     "rental",
@@ -802,17 +773,12 @@ function usesFounderCostFloor(businessModel: LaunchBusinessModel): boolean {
   ].includes(businessModel);
 }
 
-function resolveLaunchInvestmentReserve(
-  inputs: LaunchSimInputs,
-  fixedCostsPerMonth: number
-): number {
-  return inputs.launchInvestmentReserve == null
-    ? launchInvestmentFloor(
-        inputs.businessModel,
-        inputs.adSpendPerMonth,
-        fixedCostsPerMonth
-      )
-    : inputs.launchInvestmentReserve;
+function resolveLaunchInvestmentReserve(inputs: LaunchSimInputs): number {
+  // Blank means no explicit one-off setup spend. Earlier builds auto-created a
+  // six-month runway reserve and subtracted it from cumulative cash, which made
+  // profitable scenarios show "Cash payback: Never" even after operating cash
+  // had paid back. Monthly fixed costs and ad spend are already charged in P&L.
+  return inputs.launchInvestmentReserve ?? 0;
 }
 
 function applyLegacyAcquisitionDefault(

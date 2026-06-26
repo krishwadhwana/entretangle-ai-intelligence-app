@@ -13,6 +13,7 @@ import type {
 } from "@/lib/schema";
 import {
   RotateCcw,
+  ArrowLeft,
   Coins,
   Users,
   Layers,
@@ -232,6 +233,9 @@ export default function RunDashboard({
 }: Props) {
   const isExportRun = mode === "export";
   const router = useRouter();
+  const projectWorkspaceHref = projectId
+    ? `/?project=${encodeURIComponent(projectId)}`
+    : "/";
   const { state, patchState, replay, replaying, hydrated } =
     useRunEvents(runId);
   const [view, setView] = useState<
@@ -845,6 +849,12 @@ export default function RunDashboard({
           <a href="/" className="text-sm font-semibold tracking-tight">
             EntreTangle
           </a>
+          <a
+            href={projectWorkspaceHref}
+            className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400"
+          >
+            <ArrowLeft className="h-3 w-3" /> Workspace
+          </a>
           <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
           <p
             className="min-w-0 max-w-md flex-1 truncate text-xs text-neutral-500"
@@ -871,6 +881,12 @@ export default function RunDashboard({
       <header className="flex flex-wrap items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
         <a href="/" className="text-sm font-semibold tracking-tight">
           EntreTangle
+        </a>
+        <a
+          href={projectWorkspaceHref}
+          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400"
+        >
+          <ArrowLeft className="h-3 w-3" /> Workspace
         </a>
         <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
         <p

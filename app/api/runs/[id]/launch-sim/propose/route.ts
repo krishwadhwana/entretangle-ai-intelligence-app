@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
 import { callAssumptionUpdate } from "@/lib/llm";
+import { removeImplicitMonthlyGrowthChanges } from "@/lib/launchGrowth";
 import { ClientProfileSchema } from "@/lib/schema";
 import { benchmarksForProfile } from "@/lib/datasources/benchmarks";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -64,7 +65,9 @@ export async function POST(
       context,
       body.data.knowledge
     );
-    return NextResponse.json({ update });
+    return NextResponse.json({
+      update: removeImplicitMonthlyGrowthChanges(update, body.data.knowledge),
+    });
   } catch (e) {
     const { payload, status } = toProviderErrorPayload(e, "propose failed");
     return NextResponse.json(payload, { status });

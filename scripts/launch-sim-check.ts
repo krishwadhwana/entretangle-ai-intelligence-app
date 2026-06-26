@@ -16,6 +16,10 @@
 // predictiveness bug (ambient nondeterminism leaked into the model).
 
 import { simulateLaunch, type LaunchPersona } from "../lib/launchSim";
+import {
+  hasExplicitMonthlyGrowthPct,
+  removeImplicitMonthlyGrowthChanges,
+} from "../lib/launchGrowth";
 import { LaunchSimInputsSchema, LaunchSimResultSchema } from "../lib/schema";
 
 let failures = 0;
@@ -115,6 +119,11 @@ const fixedCostFloored = simulateLaunch(
 assert(
   fixedCostFloored.resolvedInputs.fixedCostsPerMonth === 123456,
   "missing fixed costs use the route-supplied operating-cost floor"
+);
+assert(
+  fixedCostFloored.assumptions.find((x) => x.key === "launchInvestmentReserve")
+    ?.value === 0,
+  "blank launch reserve does not create automatic runway debt"
 );
 const explicitFixedCost = simulateLaunch(
   personas,
@@ -478,6 +487,45 @@ const weakLaunch = simulateLaunch(
 assert(
   (weakLaunch.resolvedInputs.monthlyGrowthPct ?? 0) < 0,
   "weak audience fit can derive negative monthly growth"
+);
+
+assert(
+  hasExplicitMonthlyGrowthPct("we are seeing 5% MoM demand growth"),
+  "explicit MoM percentage is accepted as a custom growth override"
+);
+assert(
+  !hasExplicitMonthlyGrowthPct("customers rebuy every 4 months and returns are 9%"),
+  "repeat and return-rate facts do not count as custom monthly growth"
+);
+const filteredGrowthUpdate = removeImplicitMonthlyGrowthChanges(
+  {
+    summary: "test",
+    changes: [
+      {
+        field: "monthlyGrowthPct",
+        label: "MoM growth",
+        currentValue: null,
+        proposedValue: 5,
+        rationale: "qualitative repeat signal",
+        confidence: 0.5,
+      },
+      {
+        field: "repeatRateMult",
+        label: "Repeat rate",
+        currentValue: 1,
+        proposedValue: 1.4,
+        rationale: "repeat purchase fact",
+        confidence: 0.7,
+      },
+    ],
+    caveats: [],
+  },
+  "customers rebuy every 4 months"
+);
+assert(
+  filteredGrowthUpdate.changes.length === 1 &&
+    filteredGrowthUpdate.changes[0]?.field === "repeatRateMult",
+  "implicit growth proposals are filtered while other justified changes remain"
 );
 
 const delayedInventory = simulateLaunch(

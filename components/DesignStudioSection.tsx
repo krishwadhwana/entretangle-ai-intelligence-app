@@ -26,9 +26,11 @@ import {
   Save,
   Trash2,
   Type,
+  Upload,
 } from "lucide-react";
 import type {
   CollateralType,
+  CustomFont,
   DesignAsset,
   DesignStudioSection as DesignStudioState,
   DesignTokens,
@@ -38,11 +40,18 @@ import type {
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
 import {
+  customFontFaceCss,
   DESIGN_FONT_OPTIONS,
+  familyFromFileName,
   fontCssStack,
+  fontFaceFormat,
   googleFontUrlForFamilies,
   googleFontUrlForFamily,
 } from "@/lib/design/fontLibrary";
+
+// Max uploaded font size. Fonts ride inline (base64) in the tokens JSON, so keep
+// them small enough to stay well under request/JSONB limits.
+const MAX_CUSTOM_FONT_BYTES = 2 * 1024 * 1024;
 
 const AD_TYPE: CollateralType = "ad";
 const AD_CAMPAIGN_PACK_TYPE = "ad-campaign" as const;
@@ -351,10 +360,40 @@ function Field({
   );
 }
 
-function fontOptionsForRole(role: "heading" | "body", current: string) {
-  const options = DESIGN_FONT_OPTIONS.filter(
-    (font) => font.role === role || font.role === "both"
+type FontPickerOption = {
+  family: string;
+  role: "heading" | "body";
+  category: string;
+  stack: string;
+  custom?: boolean;
+};
+
+function fontOptionsForRole(
+  role: "heading" | "body",
+  current: string,
+  customFonts: CustomFont[]
+): FontPickerOption[] {
+  const customOptions: FontPickerOption[] = customFonts.map((font) => ({
+    family: font.family,
+    role,
+    category: "Uploaded font",
+    stack: fontCssStack(font.family, role),
+    custom: true,
+  }));
+  const customFamilies = new Set(
+    customOptions.map((font) => font.family.toLowerCase())
   );
+  const standard: FontPickerOption[] = DESIGN_FONT_OPTIONS.filter(
+    (font) =>
+      (font.role === role || font.role === "both") &&
+      !customFamilies.has(font.family.toLowerCase())
+  ).map((font) => ({
+    family: font.family,
+    role,
+    category: font.category,
+    stack: font.stack,
+  }));
+  const options = [...customOptions, ...standard];
   if (
     current.trim() &&
     !options.some(
@@ -378,20 +417,44 @@ function FontPicker({
   label,
   value,
   role,
+  customFonts,
   onChange,
+  onUpload,
+  uploading,
 }: {
   label: string;
   value: string;
   role: "heading" | "body";
+  customFonts: CustomFont[];
   onChange: (value: string) => void;
+  onUpload: (file: File) => void;
+  uploading: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const options = fontOptionsForRole(role, value);
+  const [query, setQuery] = useState("");
+  const fileInputId = `font-upload-${role}`;
+  const options = fontOptionsForRole(role, value, customFonts);
   const current =
     options.find(
       (font) => font.family.toLowerCase() === value.trim().toLowerCase()
     ) ?? options[0];
   const stack = fontCssStack(current?.family || value, role);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? options.filter((font) => font.family.toLowerCase().includes(q))
+    : options;
+  const exactMatch = options.some(
+    (font) => font.family.toLowerCase() === q
+  );
+
+  const applyTyped = () => {
+    const typed = query.trim();
+    if (!typed) return;
+    onChange(typed);
+    setQuery("");
+    setOpen(false);
+  };
 
   return (
     <div className="relative">
@@ -417,37 +480,101 @@ function FontPicker({
         <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
       </button>
       {open ? (
-        <div className="absolute z-40 mt-1 max-h-80 w-full overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-xl">
-          {options.map((font) => {
-            const selected =
-              font.family.toLowerCase() === value.trim().toLowerCase();
-            return (
-              <button
-                key={`${role}-${font.family}`}
-                type="button"
-                onClick={() => {
-                  onChange(font.family);
-                  setOpen(false);
-                }}
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
-                  selected
-                    ? "bg-indigo-50 text-indigo-700"
-                    : "text-neutral-800 hover:bg-neutral-50"
-                }`}
-              >
-                <span
-                  className="min-w-0 flex-1 truncate text-[20px] leading-tight"
-                  style={{ fontFamily: fontCssStack(font.family, role) }}
-                >
-                  Fresh rituals
-                </span>
-                <span className="w-28 shrink-0 truncate text-[11px] text-neutral-500">
-                  {font.family}
-                </span>
-                {selected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
-              </button>
-            );
-          })}
+        <div className="absolute z-40 mt-1 w-full rounded-xl border border-neutral-200 bg-white p-1 shadow-xl">
+          <div className="flex items-center gap-1.5 p-1">
+            <input
+              type="text"
+              value={query}
+              autoFocus
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  applyTyped();
+                }
+              }}
+              placeholder="Type a font name…"
+              className="min-w-0 flex-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[12px] outline-none focus:border-indigo-400"
+            />
+            <label
+              htmlFor={fileInputId}
+              className="flex shrink-0 cursor-pointer items-center gap-1 rounded-lg border border-neutral-200 px-2.5 py-1.5 text-[11px] font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50"
+              title="Upload .woff2, .woff, .ttf or .otf"
+            >
+              {uploading ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Upload className="h-3.5 w-3.5" />
+              )}
+              Upload
+            </label>
+            <input
+              id={fileInputId}
+              type="file"
+              accept=".woff2,.woff,.ttf,.otf,font/woff2,font/woff,font/ttf,font/otf"
+              className="hidden"
+              disabled={uploading}
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) onUpload(file);
+                e.target.value = "";
+              }}
+            />
+          </div>
+          {query.trim() && !exactMatch ? (
+            <button
+              type="button"
+              onClick={applyTyped}
+              className="flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[12px] text-indigo-700 transition-colors hover:bg-indigo-50"
+            >
+              <Check className="h-3.5 w-3.5 shrink-0" />
+              Use “{query.trim()}”
+            </button>
+          ) : null}
+          <div className="max-h-72 overflow-auto">
+            {filtered.length === 0 ? (
+              <p className="px-3 py-2 text-[12px] text-neutral-400">
+                No matching fonts.
+              </p>
+            ) : (
+              filtered.map((font) => {
+                const selected =
+                  font.family.toLowerCase() === value.trim().toLowerCase();
+                return (
+                  <button
+                    key={`${role}-${font.family}`}
+                    type="button"
+                    onClick={() => {
+                      onChange(font.family);
+                      setQuery("");
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                      selected
+                        ? "bg-indigo-50 text-indigo-700"
+                        : "text-neutral-800 hover:bg-neutral-50"
+                    }`}
+                  >
+                    <span
+                      className="min-w-0 flex-1 truncate text-[20px] leading-tight"
+                      style={{ fontFamily: font.stack }}
+                    >
+                      Fresh rituals
+                    </span>
+                    {font.custom ? (
+                      <span className="shrink-0 rounded bg-indigo-100 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-indigo-600">
+                        Uploaded
+                      </span>
+                    ) : null}
+                    <span className="w-24 shrink-0 truncate text-[11px] text-neutral-500">
+                      {font.family}
+                    </span>
+                    {selected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                  </button>
+                );
+              })
+            )}
+          </div>
         </div>
       ) : null}
     </div>
@@ -1341,6 +1468,9 @@ export default function DesignStudioSection({
     DesignJobProgressEntry[]
   >([]);
   const [tokenDraft, setTokenDraft] = useState<DesignTokens | null>(null);
+  const [uploadingFont, setUploadingFont] = useState<"heading" | "body" | null>(
+    null
+  );
   const [tokenGuidance, setTokenGuidance] = useState("");
   const [sourceWebsiteUrl, setSourceWebsiteUrl] = useState("");
   const [logoBrief, setLogoBrief] = useState("");
@@ -1966,6 +2096,73 @@ export default function DesignStudioSection({
     []
   );
 
+  const uploadCustomFont = useCallback(
+    async (key: "headingFamily" | "bodyFamily", file: File) => {
+      const role = key === "headingFamily" ? "heading" : "body";
+      const format = fontFaceFormat(file.type, file.name);
+      if (!format) {
+        setError("Unsupported font file. Upload .woff2, .woff, .ttf, or .otf.");
+        return;
+      }
+      if (file.size > MAX_CUSTOM_FONT_BYTES) {
+        setError("Font file is too large (max 2MB). Try a .woff2 export.");
+        return;
+      }
+      setUploadingFont(role);
+      setError(null);
+      try {
+        const dataUrl = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+          reader.readAsDataURL(file);
+        });
+        const family = familyFromFileName(file.name);
+        const font: CustomFont = {
+          id:
+            typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? crypto.randomUUID()
+              : `font-${file.name}-${file.size}`,
+          family,
+          dataUrl,
+          format,
+          mimeType: file.type || `font/${format}`,
+          size: file.size,
+          uploadedAt: new Date().toISOString(),
+        };
+        const urlKey =
+          key === "headingFamily" ? "headingGoogleUrl" : "bodyGoogleUrl";
+        setTokenDraft((prev) => {
+          if (!prev) return prev;
+          const existing = prev.typography.customFonts ?? [];
+          const customFonts = [
+            font,
+            ...existing.filter(
+              (f) => f.family.toLowerCase() !== family.toLowerCase()
+            ),
+          ];
+          return {
+            ...prev,
+            typography: {
+              ...prev.typography,
+              customFonts,
+              [key]: family,
+              [urlKey]: null, // uploaded face — no Google URL
+              weights: prev.typography.weights.length
+                ? prev.typography.weights
+                : ["400", "500", "600", "700"],
+            },
+          };
+        });
+      } catch {
+        setError("Could not read that font file.");
+      } finally {
+        setUploadingFont(null);
+      }
+    },
+    []
+  );
+
   const updateLogo = useCallback(
     (key: keyof DesignTokens["logo"], value: string | string[]) => {
       setTokenDraft((prev) =>
@@ -1998,6 +2195,10 @@ export default function DesignStudioSection({
 
   const tokens = tokenDraft ?? studio?.tokens ?? null;
   const palette = tokens?.palette;
+  const customFontCss = useMemo(
+    () => customFontFaceCss(tokens?.typography.customFonts ?? []),
+    [tokens?.typography.customFonts]
+  );
   const tokensDirty = useMemo(
     () =>
       Boolean(tokenDraft && JSON.stringify(tokenDraft) !== JSON.stringify(studio?.tokens ?? null)),
@@ -2051,6 +2252,7 @@ export default function DesignStudioSection({
   return (
     <div className="mx-auto max-w-3xl p-6">
       {FONT_PREVIEW_CSS ? <style>{FONT_PREVIEW_CSS}</style> : null}
+      {customFontCss ? <style>{customFontCss}</style> : null}
       <div className="mb-5">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-800">
@@ -2271,13 +2473,19 @@ export default function DesignStudioSection({
                 label="Heading font"
                 value={tokens.typography.headingFamily}
                 role="heading"
+                customFonts={tokens.typography.customFonts ?? []}
+                uploading={uploadingFont === "heading"}
                 onChange={(v) => updateTypographyFamily("headingFamily", v)}
+                onUpload={(file) => void uploadCustomFont("headingFamily", file)}
               />
               <FontPicker
                 label="Body font"
                 value={tokens.typography.bodyFamily}
                 role="body"
+                customFonts={tokens.typography.customFonts ?? []}
+                uploading={uploadingFont === "body"}
                 onChange={(v) => updateTypographyFamily("bodyFamily", v)}
+                onUpload={(file) => void uploadCustomFont("bodyFamily", file)}
               />
             </div>
             <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-4">
