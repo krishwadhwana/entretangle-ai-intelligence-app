@@ -1676,6 +1676,7 @@ export const DesignAssetSchema = z.object({
   content: CollateralContentSchema,
   visualBrief: z.string().optional(),
   templateBrief: z.string().optional(),
+  visualImageDataUrl: z.string().optional(),
   generationRunId: z.string().optional(),
   generationRunLabel: z.string().optional(),
   generationRunCreatedAt: z.string().optional(),
@@ -1698,6 +1699,13 @@ export const DesignAssetSchema = z.object({
           tags: z.array(z.string()).optional(),
         })
         .optional(),
+    })
+    .optional(),
+  collateralPrompt: z
+    .object({
+      system: z.string().optional(),
+      user: z.string().optional(),
+      brief: z.string().optional(),
     })
     .optional(),
   createdAt: z.string(),

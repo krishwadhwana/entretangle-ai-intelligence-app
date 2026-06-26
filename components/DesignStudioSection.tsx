@@ -13,6 +13,7 @@ import {
   FolderTree,
   Globe,
   Hexagon,
+  Image as ImageIcon,
   Info,
   Link2,
   Loader2,
@@ -387,12 +388,55 @@ function downloadPng(asset: DesignAsset) {
   downloadPngString(asset.svg, asset.width, asset.height, asset.id);
 }
 
+function dataUrlExtension(dataUrl: string): string {
+  const mime = dataUrl.match(/^data:([^;,]+)[;,]/)?.[1]?.toLowerCase();
+  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/svg+xml") return "svg";
+  return "png";
+}
+
+function downloadDataUrl(dataUrl: string, filename: string) {
+  const a = document.createElement("a");
+  a.href = dataUrl;
+  a.download = filename;
+  a.click();
+}
+
+function downloadVisualImage(asset: DesignAsset) {
+  if (!asset.visualImageDataUrl) return;
+  downloadDataUrl(
+    asset.visualImageDataUrl,
+    `${asset.id}-generated-image.${dataUrlExtension(asset.visualImageDataUrl)}`
+  );
+}
+
 function downloadPromptAudit(asset: DesignAsset) {
-  if (!asset.generationPrompt) return;
+  if (!asset.generationPrompt && !asset.collateralPrompt) return;
   downloadBlob(
-    new Blob([JSON.stringify(asset.generationPrompt, null, 2)], {
-      type: "application/json",
-    }),
+    new Blob(
+      [
+        JSON.stringify(
+          {
+            id: asset.id,
+            title: asset.title,
+            type: asset.type,
+            createdAt: asset.createdAt,
+            visualBrief: asset.visualBrief,
+            templateBrief: asset.templateBrief,
+            content: asset.content,
+            generationPrompt: asset.generationPrompt ?? null,
+            collateralPrompt: asset.collateralPrompt ?? null,
+          },
+          null,
+          2
+        ),
+      ],
+      {
+        type: "application/json",
+      }
+    ),
     `${asset.id}-prompts.json`
   );
 }
@@ -620,10 +664,19 @@ function AssetCard({
           >
             <FileImage className="h-3.5 w-3.5" />
           </button>
-          {asset.generationPrompt ? (
+          {asset.visualImageDataUrl ? (
+            <button
+              onClick={() => downloadVisualImage(asset)}
+              title="Download generated image"
+              className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            >
+              <ImageIcon className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          {asset.generationPrompt || asset.collateralPrompt ? (
             <button
               onClick={() => downloadPromptAudit(asset)}
-              title="Download generation prompts"
+              title="Download generation and collateral prompts"
               className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
             >
               <Type className="h-3.5 w-3.5" />

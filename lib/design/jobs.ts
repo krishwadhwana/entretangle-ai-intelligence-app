@@ -29,6 +29,7 @@ import {
   saveSiteAsset,
   saveWebsiteAnalysis,
 } from "../store";
+import { COLLATERAL_COPY_SYSTEM, collateralCopyUser } from "../prompts";
 import {
   ensureProductImageryHtml,
   looksLikeHtmlDoc,
@@ -673,6 +674,23 @@ export async function runDesignStudioJob(args: {
       project.websiteAnalysis,
       payload.sourceWebsiteUrl
     );
+    const copyBrief = [
+      payload.brief,
+      templateBrief ? `Template direction: ${templateBrief}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+    const collateralPrompt = {
+      system: COLLATERAL_COPY_SYSTEM,
+      user: collateralCopyUser(
+        payload.type,
+        profile,
+        brandKit,
+        copyBrief,
+        websiteAnalysis
+      ),
+      brief: copyBrief,
+    };
     const content =
       payload.content ??
       (await callCollateralCopy(
@@ -681,9 +699,7 @@ export async function runDesignStudioJob(args: {
         payload.type,
         profile,
         brandKit,
-        [payload.brief, templateBrief ? `Template direction: ${templateBrief}` : ""]
-          .filter(Boolean)
-          .join("\n"),
+        copyBrief,
         websiteAnalysis
       ));
     const shouldGenerateVisual =
@@ -742,6 +758,7 @@ export async function runDesignStudioJob(args: {
       content,
       ...(visualBriefWithTemplate ? { visualBrief: visualBriefWithTemplate } : {}),
       ...(templateBrief ? { templateBrief } : {}),
+      ...(visual?.dataUrl ? { visualImageDataUrl: visual.dataUrl } : {}),
       ...(payload.generationRunId || generatedRunMeta
         ? {
             generationRunId:
@@ -771,6 +788,7 @@ export async function runDesignStudioJob(args: {
       ...(visual?.generationPrompt
         ? { generationPrompt: visual.generationPrompt }
         : {}),
+      collateralPrompt,
       createdAt: new Date().toISOString(),
     });
     const studio = await saveDesignAsset(args.projectId, asset);
