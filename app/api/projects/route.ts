@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { withDbRetry } from "@/lib/db";
 import {
   createProject,
   getLatestProjectLean,
@@ -14,13 +15,30 @@ export const dynamic = "force-dynamic";
 //   persona arrays stripped — the list UI only needs counts; full agent
 //   output stays saved in the DB).
 export async function GET(req: NextRequest) {
-  if (req.nextUrl.searchParams.get("previews")) {
-    return NextResponse.json({ projects: await listProjectPreviews() });
+  try {
+    if (req.nextUrl.searchParams.get("previews")) {
+      return NextResponse.json({
+        projects: await withDbRetry(() => listProjectPreviews()),
+      });
+    }
+    if (req.nextUrl.searchParams.get("latest")) {
+      return NextResponse.json({
+        project: await withDbRetry(() => getLatestProjectLean()),
+      });
+    }
+    return NextResponse.json({
+      projects: await withDbRetry(() => listProjects()),
+    });
+  } catch (e) {
+    // A cold serverless instance whose first DB connection failed even after
+    // retries. Log it (so it's visible in Vercel logs) and return a clean
+    // error the dashboard can surface instead of an opaque framework 500.
+    console.error("[projects] GET failed", e);
+    return NextResponse.json(
+      { error: "Failed to load projects", projects: [] },
+      { status: 503 }
+    );
   }
-  if (req.nextUrl.searchParams.get("latest")) {
-    return NextResponse.json({ project: await getLatestProjectLean() });
-  }
-  return NextResponse.json({ projects: await listProjects() });
 }
 
 const CreateProjectSchema = z.object({
