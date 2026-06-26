@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { withDbRetry } from "@/lib/db";
 import {
   deleteProjectWorkspaceItem,
   deleteProject,
@@ -36,11 +37,22 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
-  const project = await getProjectLean(params.id);
-  if (!project) {
-    return NextResponse.json({ error: "not found" }, { status: 404 });
+  try {
+    const project = await withDbRetry(() => getProjectLean(params.id));
+    if (!project) {
+      return NextResponse.json({ error: "not found" }, { status: 404 });
+    }
+    return NextResponse.json({ project });
+  } catch (e) {
+    // Same cold-start transient connection failure the list endpoint guards
+    // against — retried above, and surfaced as a clean 503 (not an opaque 500)
+    // when even the retries can't reach the Railway proxy.
+    console.error("[projects/:id] GET failed", e);
+    return NextResponse.json(
+      { error: "Failed to open project" },
+      { status: 503 },
+    );
   }
-  return NextResponse.json({ project });
 }
 
 // PATCH accepts any subset; each present field is saved immediately.

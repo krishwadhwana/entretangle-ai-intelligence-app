@@ -2950,6 +2950,10 @@ function IntakePageInner() {
   const [busy, setBusy] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Tracks the id of a project whose full data is being fetched on open. Drives
+  // the "Opening project…" overlay; tapping the overlay aborts the fetch.
+  const [openingProject, setOpeningProject] = useState<string | null>(null);
+  const openProjectAbortRef = useRef<AbortController | null>(null);
   // Follow-up composer state
   const [focusQuestion, setFocusQuestion] = useState("");
   const [additionalContext, setAdditionalContext] = useState("");
@@ -3359,12 +3363,28 @@ function IntakePageInner() {
     [],
   );
 
+  // Tapping the loading overlay cancels an in-flight open and stays put on the
+  // dashboard. The aborted fetch lands in switchProject's catch, which detects
+  // the abort and bails without surfacing an error.
+  function cancelOpenProject() {
+    openProjectAbortRef.current?.abort();
+    openProjectAbortRef.current = null;
+    setOpeningProject(null);
+    setError(null);
+    setView("dashboard");
+  }
+
   async function switchProject(id: string) {
     let target = projectPreviews.find((p) => p.id === id);
     if (!target) {
       setError(null);
+      const controller = new AbortController();
+      openProjectAbortRef.current = controller;
+      setOpeningProject(id);
       try {
-        const res = await fetch(`/api/projects/${id}`);
+        const res = await fetch(`/api/projects/${id}`, {
+          signal: controller.signal,
+        });
         const data = await res.json().catch(() => ({}));
         if (!res.ok || !data.project) {
           throw new Error(`Failed to open project (${res.status})`);
@@ -3376,8 +3396,15 @@ function IntakePageInner() {
             : [target, ...prev],
         );
       } catch (err) {
+        // User tapped the overlay to cancel — not a real error.
+        if (controller.signal.aborted) return;
         setError(err instanceof Error ? err.message : "Failed to open project");
         return;
+      } finally {
+        if (openProjectAbortRef.current === controller) {
+          openProjectAbortRef.current = null;
+        }
+        setOpeningProject(null);
       }
     }
     if (!target) return;
@@ -5517,6 +5544,28 @@ function IntakePageInner() {
   if (view === "dashboard" || !projectId) {
     return (
       <main className="min-h-full bg-[#f6f7f9] text-neutral-900">
+        {openingProject && (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Opening project — tap anywhere to cancel and return to the dashboard"
+            onClick={cancelOpenProject}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " " || e.key === "Escape") {
+                cancelOpenProject();
+              }
+            }}
+            className="fixed inset-0 z-[1300] flex cursor-pointer flex-col items-center justify-center gap-4 bg-neutral-950/40 px-4 backdrop-blur-sm"
+          >
+            <div className="flex flex-col items-center gap-3 rounded-2xl bg-white px-8 py-7 shadow-xl">
+              <Loader2 className="h-6 w-6 animate-spin text-neutral-800" />
+              <p className="text-sm font-medium text-neutral-800">
+                Opening project…
+              </p>
+              <p className="text-xs text-neutral-400">Tap anywhere to cancel</p>
+            </div>
+          </div>
+        )}
         <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6">
           <header className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:flex lg:items-center lg:justify-between">
             <div className="max-w-3xl">
@@ -5859,11 +5908,29 @@ function IntakePageInner() {
                               ? projectLatestRun(p)
                               : null;
                             return (
-                              <tr key={p.id} className="hover:bg-neutral-50">
+                              <tr
+                                key={p.id}
+                                role="button"
+                                tabIndex={0}
+                                onClick={() => switchProject(p.id)}
+                                onKeyDown={(event) => {
+                                  if (event.target !== event.currentTarget)
+                                    return;
+                                  if (
+                                    event.key === "Enter" ||
+                                    event.key === " "
+                                  ) {
+                                    event.preventDefault();
+                                    switchProject(p.id);
+                                  }
+                                }}
+                                className="cursor-pointer hover:bg-neutral-50 focus:bg-neutral-50 focus:outline-none"
+                              >
                                 <td className="px-3 py-2">
                                   <input
                                     type="checkbox"
                                     checked={compareIds.has(p.id)}
+                                    onClick={(event) => event.stopPropagation()}
                                     onChange={() => toggleCompareProject(p.id)}
                                     title="Select project"
                                     className="h-4 w-4 rounded accent-indigo-600"
@@ -5874,7 +5941,10 @@ function IntakePageInner() {
                                     <ProjectMark project={p} size="sm" />
                                     <button
                                       type="button"
-                                      onClick={() => switchProject(p.id)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        switchProject(p.id);
+                                      }}
                                       className="min-w-0 text-left"
                                     >
                                       <span className="block truncate font-semibold text-neutral-950">
@@ -5900,11 +5970,12 @@ function IntakePageInner() {
                                     return parent || organizer.folderId ? (
                                       <button
                                         type="button"
-                                        onClick={() =>
+                                        onClick={(event) => {
+                                          event.stopPropagation();
                                           setDashboardFolderFilter(
                                             parent?.id ?? organizer.folderId ?? "all",
-                                          )
-                                        }
+                                          );
+                                        }}
                                         className={`inline-flex max-w-[170px] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium ${dashboardFolderTone(
                                           "neutral",
                                         )}`}
@@ -5958,7 +6029,8 @@ function IntakePageInner() {
                                   <div className="flex items-center justify-end gap-1">
                                     <button
                                       type="button"
-                                      onClick={() => {
+                                      onClick={(event) => {
+                                        event.stopPropagation();
                                         const node = placementByProjectId.get(p.id);
                                         if (node) openWorkspaceNodeNote(node);
                                         else openProjectNote(p);
@@ -5975,7 +6047,10 @@ function IntakePageInner() {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => switchProject(p.id)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        switchProject(p.id);
+                                      }}
                                       title="Open workspace"
                                       className="rounded-md p-1.5 text-neutral-400 hover:bg-indigo-50 hover:text-indigo-600"
                                     >
@@ -5983,7 +6058,10 @@ function IntakePageInner() {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => promptRenameProject(p)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        promptRenameProject(p);
+                                      }}
                                       title="Rename project"
                                       className="rounded-md p-1.5 text-neutral-400 hover:bg-neutral-100 hover:text-indigo-600"
                                     >
@@ -5991,7 +6069,10 @@ function IntakePageInner() {
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => deleteProject(p.id)}
+                                      onClick={(event) => {
+                                        event.stopPropagation();
+                                        deleteProject(p.id);
+                                      }}
                                       title="Delete project"
                                       className="rounded-md p-1.5 text-neutral-400 hover:bg-red-50 hover:text-red-600"
                                     >
