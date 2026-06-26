@@ -182,12 +182,12 @@ export default function RunCanvas({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
+      <header className="flex flex-wrap items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
         <a href="/" className="text-sm font-semibold tracking-tight">
           Agent Canvas
         </a>
         <p
-          className="max-w-xl flex-1 truncate text-xs text-neutral-500"
+          className="min-w-0 max-w-xl flex-1 truncate text-xs text-neutral-500"
           title={brief}
         >
           {brief}

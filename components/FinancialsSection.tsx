@@ -681,7 +681,7 @@ export default function FinancialsSection({
   }, [ms]);
 
   return (
-    <div className="px-6 pb-12 pt-6">
+    <div className="px-4 pb-12 pt-6 md:px-6">
       <div className="mx-auto max-w-4xl">
         {/* Header */}
         <div className="flex items-start justify-between gap-4">

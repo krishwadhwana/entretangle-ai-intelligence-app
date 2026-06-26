@@ -841,13 +841,13 @@ export default function RunDashboard({
   if (!hydrated) {
     return (
       <div className="flex h-full flex-col">
-        <header className="flex items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
+        <header className="flex flex-wrap items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
           <a href="/" className="text-sm font-semibold tracking-tight">
             EntreTangle
           </a>
           <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
           <p
-            className="max-w-md flex-1 truncate text-xs text-neutral-500"
+            className="min-w-0 max-w-md flex-1 truncate text-xs text-neutral-500"
             title={brief}
           >
             {brief}
@@ -868,13 +868,13 @@ export default function RunDashboard({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
+      <header className="flex flex-wrap items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
         <a href="/" className="text-sm font-semibold tracking-tight">
           EntreTangle
         </a>
         <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
         <p
-          className="max-w-md flex-1 truncate text-xs text-neutral-500"
+          className="min-w-0 max-w-md flex-1 truncate text-xs text-neutral-500"
           title={brief}
         >
           {brief}
@@ -1022,7 +1022,7 @@ export default function RunDashboard({
 
       {/* Live progress while the simulation is working */}
       {progress.inProgress && (
-        <div className="flex items-center gap-3 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2 text-[11px] text-neutral-700">
+        <div className="flex flex-wrap items-center gap-3 border-b border-indigo-100 bg-indigo-50/70 px-4 py-2 text-[11px] text-neutral-700">
           <Loader2 className="h-3.5 w-3.5 animate-spin text-indigo-600" />
           <span className="font-medium">{state.phaseLabel}</span>
           {progress.desksTotal > 0 && (

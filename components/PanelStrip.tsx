@@ -1101,7 +1101,7 @@ export default function PanelStrip({
 
   return (
     <div className="border-b border-neutral-200 bg-neutral-50/60">
-      <div className="flex items-center gap-1.5 overflow-visible px-4 py-2">
+      <div className="flex flex-wrap items-center gap-1.5 overflow-visible px-4 py-2">
         <span className="shrink-0 pr-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
           Views
         </span>
