@@ -8,6 +8,7 @@
 .codex
 .env
 .env.local
+.env.*-backup
 .git
 .github
 .next
