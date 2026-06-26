@@ -30,6 +30,9 @@ import {
 import { AssetLibraryStatusSchema } from "@/lib/schema";
 
 export const dynamic = "force-dynamic";
+// Headroom so a heavy project read can never be killed mid-query into a 500.
+// The real fix is the persona-strip in getProjectLean; this is a safety net.
+export const maxDuration = 60;
 
 // Lean read: persona arrays stripped from the snapshot (the UI needs counts,
 // not 6000 agents per run). Full agent output stays saved in the DB.

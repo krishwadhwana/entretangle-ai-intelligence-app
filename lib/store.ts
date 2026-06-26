@@ -2032,14 +2032,86 @@ function stripPersonas(project: ProjectFull): ProjectFull {
   };
 }
 
-export async function getLatestProjectLean(): Promise<ProjectFull | null> {
-  const p = await getLatestProject();
-  return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
+// The persona arrays inside simulation_runs[].results.cohorts[].personas hold
+// thousands of synthetic agents per run — megabytes the UI never needs (the
+// counts come from results.audienceAggregate). Loading the whole project row
+// and stripping personas in JS meant Postgres shipped, and Node parsed, ALL of
+// it first: a single project took >90s and timed the serverless function out
+// into a 500.
+//
+// The fix strips the persona arrays *in Postgres* via this jsonb rewrite, so
+// only the small remainder crosses the wire. IMPORTANT: it must run as its OWN
+// single-column SELECT — folding it into a SELECT that also returns the other
+// project columns makes the planner evaluate the rewrite pathologically (>2min
+// measured). So the lean read is two cheap queries (small columns via Prisma +
+// this stripped column) combined in JS, not one wide SELECT.
+const STRIP_SIMULATION_RUNS_SQL = `COALESCE((
+  SELECT jsonb_agg(
+    CASE
+      WHEN jsonb_typeof(run #> '{results,cohorts}') = 'array' THEN
+        jsonb_set(run, '{results,cohorts}', (
+          SELECT COALESCE(
+            jsonb_agg(jsonb_set(cohort, '{personas}', '[]'::jsonb) ORDER BY c_ord),
+            '[]'::jsonb)
+          FROM jsonb_array_elements(run #> '{results,cohorts}')
+               WITH ORDINALITY AS c(cohort, c_ord)))
+      ELSE run
+    END
+    ORDER BY r_ord)
+  FROM jsonb_array_elements(simulation_runs) WITH ORDINALITY AS r(run, r_ord)
+), '[]'::jsonb)`;
+
+// Every project column EXCEPT the heavy simulation_runs blob.
+const LEAN_META_SELECT = {
+  id: true,
+  name: true,
+  createdAt: true,
+  updatedAt: true,
+  interviewTranscript: true,
+  ventureProfile: true,
+  audienceConfig: true,
+  ownerDashboard: true,
+  websiteAnalysis: true,
+} satisfies Prisma.ProjectSelect;
+
+type LeanMeta = Prisma.ProjectGetPayload<{ select: typeof LEAN_META_SELECT }>;
+
+function leanRowToFull(
+  meta: LeanMeta,
+  simulationRuns: Prisma.JsonValue,
+): ProjectFull {
+  return toFull({ ...meta, simulationRuns });
+}
+
+// Persona-stripped simulation_runs for one project, shipped from Postgres at a
+// fraction of the raw size. id is bound as $1 (no injection).
+async function strippedSimulationRuns(id: string): Promise<Prisma.JsonValue> {
+  const rows = await prisma.$queryRawUnsafe<
+    { simulation_runs: Prisma.JsonValue }[]
+  >(
+    `SELECT ${STRIP_SIMULATION_RUNS_SQL} AS simulation_runs FROM projects WHERE id = $1`,
+    id,
+  );
+  return rows[0]?.simulation_runs ?? [];
 }
 
 export async function getProjectLean(id: string): Promise<ProjectFull | null> {
-  const p = await getProject(id);
-  return p ? stripPersonas(await withLiveRunSummaries(p)) : null;
+  const [meta, simulationRuns] = await Promise.all([
+    prisma.project.findUnique({ where: { id }, select: LEAN_META_SELECT }),
+    strippedSimulationRuns(id),
+  ]);
+  if (!meta) return null;
+  return stripPersonas(
+    await withLiveRunSummaries(leanRowToFull(meta, simulationRuns)),
+  );
+}
+
+export async function getLatestProjectLean(): Promise<ProjectFull | null> {
+  const latest = await prisma.project.findFirst({
+    orderBy: { updatedAt: "desc" },
+    select: { id: true },
+  });
+  return latest ? getProjectLean(latest.id) : null;
 }
 
 // Owner Dashboard only needs the small owner_dashboard JSON — NOT the giant
@@ -2106,10 +2178,22 @@ export async function getOwnerDashboardRunSlice(
 }
 
 export async function listProjectPreviews(): Promise<ProjectFull[]> {
-  const rows = await prisma.project.findMany({
-    orderBy: { updatedAt: "desc" },
-  });
-  const projects = rows.map(toFull);
+  // Same persona-strip-in-Postgres fix as getProjectLean, across all projects:
+  // hydrating 27 by loading every persona blob and stripping in JS took ~85s.
+  // Two queries (small columns + stripped runs) merged by id.
+  const [metas, runRows] = await Promise.all([
+    prisma.project.findMany({
+      orderBy: { updatedAt: "desc" },
+      select: LEAN_META_SELECT,
+    }),
+    prisma.$queryRawUnsafe<{ id: string; simulation_runs: Prisma.JsonValue }[]>(
+      `SELECT id, ${STRIP_SIMULATION_RUNS_SQL} AS simulation_runs FROM projects`,
+    ),
+  ]);
+  const runsById = new Map(runRows.map((r) => [r.id, r.simulation_runs]));
+  const projects = metas.map((m) =>
+    leanRowToFull(m, runsById.get(m.id) ?? []),
+  );
   const withRuns = await Promise.all(projects.map(withLiveRunSummaries));
   return withRuns.map(stripPersonas);
 }
