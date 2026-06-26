@@ -488,37 +488,42 @@ function displayStatusForLiveRun(row: {
   return Date.now() - newestUpdate > staleAfterMs ? "cancelled" : "cancelling";
 }
 
-/**
- * Merge live Run rows into the saved project snapshots so the home page can
- * show queued/planning/running runs before the final snapshot is appended.
- */
-async function withLiveRunSummaries(
-  project: ProjectFull,
-): Promise<ProjectFull> {
-  const rows = await prisma.run.findMany({
-    where: { projectId: project.id },
-    orderBy: { createdAt: "asc" },
+// The run-row shape the live-run merge needs. Shared by the single-project and
+// batched-list paths so both issue the same select (incl. projectId, used to
+// group rows back to their project in the batched path).
+const LIVE_RUN_SELECT = {
+  id: true,
+  projectId: true,
+  brief: true,
+  clientProfile: true,
+  status: true,
+  focusQuestion: true,
+  additionalContext: true,
+  mode: true,
+  sourceRunId: true,
+  tokensUsed: true,
+  costUsd: true,
+  createdAt: true,
+  jobs: {
     select: {
-      id: true,
-      brief: true,
-      clientProfile: true,
       status: true,
-      focusQuestion: true,
-      additionalContext: true,
-      mode: true,
-      sourceRunId: true,
-      tokensUsed: true,
-      costUsd: true,
-      createdAt: true,
-      jobs: {
-        select: {
-          status: true,
-          cancelRequested: true,
-          updatedAt: true,
-        },
-      },
+      cancelRequested: true,
+      updatedAt: true,
     },
-  });
+  },
+} satisfies Prisma.RunSelect;
+
+type LiveRunRow = Prisma.RunGetPayload<{ select: typeof LIVE_RUN_SELECT }>;
+
+/**
+ * Merge already-fetched live Run rows into a project's saved snapshots. Pure
+ * (no DB) so the same logic serves both the single-project read and the
+ * batched list read below.
+ */
+function mergeLiveRunRows(
+  project: ProjectFull,
+  rows: LiveRunRow[],
+): ProjectFull {
   if (rows.length === 0) return project;
 
   const byRunId = new Map<string, SimulationRunRecord>();
@@ -557,6 +562,50 @@ async function withLiveRunSummaries(
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     ),
   };
+}
+
+/**
+ * Merge live Run rows into one project's saved snapshots so the UI can show
+ * queued/planning/running runs before the final snapshot is appended.
+ */
+async function withLiveRunSummaries(
+  project: ProjectFull,
+): Promise<ProjectFull> {
+  const rows = await prisma.run.findMany({
+    where: { projectId: project.id },
+    orderBy: { createdAt: "asc" },
+    select: LIVE_RUN_SELECT,
+  });
+  return mergeLiveRunRows(project, rows);
+}
+
+/**
+ * Batched version of withLiveRunSummaries for the project list: ONE query for
+ * every project's runs instead of one-per-project. The per-project fan-out
+ * (Promise.all(projects.map(withLiveRunSummaries))) opened a DB connection per
+ * project at once, which exhausts a small serverless connection pool (Neon's
+ * default ~5) and surfaces as P2024 "Timed out fetching a connection from the
+ * pool" on the home page.
+ */
+async function withLiveRunSummariesBatch(
+  projects: ProjectFull[],
+): Promise<ProjectFull[]> {
+  if (projects.length === 0) return projects;
+  const rows = await prisma.run.findMany({
+    where: { projectId: { in: projects.map((p) => p.id) } },
+    orderBy: { createdAt: "asc" },
+    select: LIVE_RUN_SELECT,
+  });
+  const rowsByProject = new Map<string, LiveRunRow[]>();
+  for (const row of rows) {
+    if (!row.projectId) continue;
+    const bucket = rowsByProject.get(row.projectId);
+    if (bucket) bucket.push(row);
+    else rowsByProject.set(row.projectId, [row]);
+  }
+  return projects.map((project) =>
+    mergeLiveRunRows(project, rowsByProject.get(project.id) ?? []),
+  );
 }
 
 export async function listProjects(): Promise<ProjectSummary[]> {
@@ -2194,7 +2243,9 @@ export async function listProjectPreviews(): Promise<ProjectFull[]> {
   const projects = metas.map((m) =>
     leanRowToFull(m, runsById.get(m.id) ?? []),
   );
-  const withRuns = await Promise.all(projects.map(withLiveRunSummaries));
+  // One query for every project's live runs (see withLiveRunSummariesBatch),
+  // not one query per project — the latter exhausted the connection pool.
+  const withRuns = await withLiveRunSummariesBatch(projects);
   return withRuns.map(stripPersonas);
 }
 
