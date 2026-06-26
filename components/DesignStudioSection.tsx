@@ -1376,35 +1376,21 @@ function SiteHistoryBrowser({
   const activeFile =
     files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
   const [loaded, setLoaded] = useState(false);
-  // Hydrate the active file's text for the inline preview when it's stored in
-  // object storage (empty content + a key) rather than inline.
-  const [activeContent, setActiveContent] = useState("");
+  // Preview the active file: externalized rows are served from object storage
+  // by URL (an <iframe src> — robust for the multi-MB pages that break when
+  // inlined into srcDoc); legacy rows still have their content inline.
+  const filePreviewProps =
+    activeSite && activeFile
+      ? activeFile.content
+        ? { srcDoc: activeFile.content }
+        : projectId
+          ? { src: siteFileUrl(projectId, activeSite.id, activeFile.path) }
+          : { srcDoc: "" }
+      : { srcDoc: "" };
 
   useEffect(() => {
     setLoaded(false);
   }, [activeSite?.id, activeFile?.path]);
-
-  useEffect(() => {
-    let cancelled = false;
-    if (!activeSite || !activeFile) {
-      setActiveContent("");
-      return;
-    }
-    if (activeFile.content) {
-      setActiveContent(activeFile.content);
-      return;
-    }
-    void loadSiteFileText(projectId, activeSite, activeFile).then((text) => {
-      if (!cancelled) setActiveContent(text);
-    });
-    return () => {
-      cancelled = true;
-    };
-    // Key on stable primitives — activeSite/activeFile are recomputed each
-    // render (siteFiles() builds a fresh array), so depending on them directly
-    // would re-fetch in a loop.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, activeSite?.id, activeFile?.path, activeFile?.content]);
 
   useEffect(() => {
     if (activeFile && activeFile.path !== selectedPath) {
@@ -1548,7 +1534,7 @@ function SiteHistoryBrowser({
             <iframe
               key={`${activeSite.id}-${activeFile.path}`}
               title={`${activeSite.title} ${activeFile.path}`}
-              srcDoc={activeContent}
+              {...filePreviewProps}
               sandbox="allow-forms allow-popups"
               onLoad={() => setLoaded(true)}
               className="block h-full w-full border-0 bg-white"
