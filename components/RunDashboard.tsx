@@ -21,7 +21,6 @@ import {
   GitBranchPlus,
   Loader2,
   Play,
-  Rocket,
   Ship,
   Square,
   MapPin,
@@ -916,22 +915,6 @@ export default function RunDashboard({
         >
           <GitBranchPlus className="h-3 w-3" /> Audience branch
         </button>
-        <button
-          onClick={() => selectMainView("launch")}
-          disabled={!canLaunch}
-          className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
-            view === "launch"
-              ? "bg-indigo-600 text-white"
-              : "border border-indigo-300 text-indigo-700 hover:border-indigo-500"
-          } disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-transparent disabled:text-neutral-400 disabled:opacity-60`}
-          title={
-            canLaunch
-              ? "Simulate the product launch over this audience"
-              : "Available after the audience has finished simulating"
-          }
-        >
-          <Rocket className="h-3 w-3" /> Launch Simulation
-        </button>
         <DossierExportMenu
           projectId={projectId}
           busy={dossierBusy}
@@ -956,24 +939,6 @@ export default function RunDashboard({
               <Ship className="h-3 w-3" />
             )}
             Test in another market
-          </button>
-        ) : null}
-        {isExportRun ? (
-          <button
-            onClick={() => selectMainView("export")}
-            disabled={!canLaunch}
-            className={`flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-semibold ${
-              view === "export"
-                ? "bg-indigo-600 text-white"
-                : "border border-indigo-300 text-indigo-700 hover:border-indigo-500"
-            } disabled:cursor-not-allowed disabled:border-neutral-300 disabled:bg-transparent disabled:text-neutral-400 disabled:opacity-60`}
-            title={
-              canLaunch
-                ? "Cross-border landed cost, pricing & viability"
-                : "Available after the audience has finished simulating"
-            }
-          >
-            <Ship className="h-3 w-3" /> Export Viability
           </button>
         ) : null}
         <span
@@ -1153,11 +1118,15 @@ export default function RunDashboard({
           view === "know-how" ||
           view === "insights" ||
           view === "playbook" ||
-          view === "owner"
+          view === "owner" ||
+          view === "launch" ||
+          view === "export"
             ? view
             : null
         }
         onSelectMainView={selectMainView}
+        canLaunch={canLaunch}
+        isExportRun={isExportRun}
       />
 
       <div className="relative flex-1">
@@ -1216,7 +1185,11 @@ export default function RunDashboard({
         ) : view === "owner" ? (
           null
         ) : view === "launch" ? (
-          <LaunchSimulation runId={runId} projectId={projectId} />
+          <LaunchSimulation
+            runId={runId}
+            projectId={projectId}
+            onBack={() => selectMainView("geo")}
+          />
         ) : view === "export" ? (
           <ExportViability runId={runId} targetMarket={targetMarket} />
         ) : view === "know-how" ? (

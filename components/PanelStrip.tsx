@@ -20,6 +20,8 @@ import {
   MessageSquareText,
   Printer,
   RefreshCw,
+  Rocket,
+  Ship,
   Sparkles,
 } from "lucide-react";
 import type { Block, Domain } from "@/lib/schema";
@@ -946,6 +948,8 @@ type Props = {
     | "insights"
     | "playbook"
     | "owner"
+    | "launch"
+    | "export"
     | null;
   onSelectMainView: (
     view:
@@ -955,7 +959,13 @@ type Props = {
       | "insights"
       | "playbook"
       | "owner"
+      | "launch"
+      | "export"
   ) => void;
+  // Launch Simulation / Export Viability live in the strip as gated outcome
+  // sections; they unlock once the audience has finished simulating.
+  canLaunch: boolean;
+  isExportRun: boolean;
 };
 
 /**
@@ -1069,6 +1079,8 @@ export default function PanelStrip({
   onSelectPanel,
   activeView,
   onSelectMainView,
+  canLaunch,
+  isExportRun,
 }: Props) {
   const byDomain = useBlocksByDomain(state);
   const [researchOpen, setResearchOpen] = useState(false);
@@ -1184,6 +1196,43 @@ export default function PanelStrip({
           )}
         </div>
         <div className="flex-1" />
+        <button
+          onClick={() => canLaunch && onSelectMainView("launch")}
+          disabled={!canLaunch}
+          title={
+            canLaunch
+              ? "Simulate the product launch over this audience"
+              : "Available after the audience has finished simulating"
+          }
+          className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-300 ${
+            activeView === "launch"
+              ? "border-indigo-600 bg-indigo-600 text-white"
+              : "border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50"
+          }`}
+        >
+          <Rocket className="h-3.5 w-3.5" />
+          Launch Simulation
+        </button>
+        {isExportRun && (
+          <button
+            onClick={() => canLaunch && onSelectMainView("export")}
+            disabled={!canLaunch}
+            title={
+              canLaunch
+                ? "Cross-border landed cost, pricing & viability"
+                : "Available after the audience has finished simulating"
+            }
+            className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors disabled:cursor-not-allowed disabled:border-neutral-200 disabled:bg-white disabled:text-neutral-300 ${
+              activeView === "export"
+                ? "border-indigo-600 bg-indigo-600 text-white"
+                : "border-indigo-300 bg-white text-indigo-700 hover:bg-indigo-50"
+            }`}
+          >
+            <Ship className="h-3.5 w-3.5" />
+            Export Viability
+          </button>
+        )}
+        <div className="mx-1 h-5 w-px shrink-0 bg-neutral-200" />
         <button
           onClick={() => onSelectPanel("conclusion")}
           className={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition-colors ${

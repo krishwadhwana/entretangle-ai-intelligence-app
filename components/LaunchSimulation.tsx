@@ -23,6 +23,7 @@ import {
 } from "recharts";
 import {
   Rocket,
+  ArrowLeft,
   Play,
   Pause,
   RotateCcw,
@@ -344,9 +345,12 @@ function inventorylessModel(businessModel: LaunchSimInputs["businessModel"]): bo
 export default function LaunchSimulation({
   runId,
   projectId,
+  onBack,
 }: {
   runId: string;
   projectId: string | null;
+  // Return to the run's main dashboard view (the strip's other sections).
+  onBack?: () => void;
 }) {
   const [inputs, setInputs] = useState<LaunchSimInputs>(DEFAULT_INPUTS);
   const [defaults, setDefaults] = useState<Defaults | null>(null);
@@ -614,6 +618,16 @@ export default function LaunchSimulation({
       <div className="mx-auto max-w-6xl space-y-5 p-5">
         {/* Header */}
         <div className="flex items-center gap-2">
+          {onBack && (
+            <button
+              type="button"
+              onClick={onBack}
+              className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 hover:text-indigo-700"
+              title="Back to the run dashboard"
+            >
+              <ArrowLeft className="h-3 w-3" /> Dashboard
+            </button>
+          )}
           <Rocket className="h-5 w-5 text-indigo-600" />
           <h1 className="text-base font-semibold text-neutral-900">
             Launch Simulation
