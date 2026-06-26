@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertCircle,
   Archive,
+  Check,
+  ChevronDown,
   Clock,
   Code2,
   Download,
@@ -21,6 +23,7 @@ import {
   Palette,
   RefreshCw,
   Rocket,
+  Save,
   Trash2,
   Type,
 } from "lucide-react";
@@ -34,6 +37,12 @@ import type {
   SiteFile,
 } from "@/lib/schema";
 import { providerErrorMessage } from "@/lib/providerErrors";
+import {
+  DESIGN_FONT_OPTIONS,
+  fontCssStack,
+  googleFontUrlForFamilies,
+  googleFontUrlForFamily,
+} from "@/lib/design/fontLibrary";
 
 const AD_TYPE: CollateralType = "ad";
 const AD_CAMPAIGN_PACK_TYPE = "ad-campaign" as const;
@@ -107,6 +116,13 @@ const AD_CAMPAIGN_VARIANTS = [
       "model-led bathroom ritual portrait, no product-only still life",
   },
 ];
+
+const FONT_PREVIEW_URL = googleFontUrlForFamilies(
+  DESIGN_FONT_OPTIONS.map((font) => font.family)
+);
+const FONT_PREVIEW_CSS = FONT_PREVIEW_URL
+  ? `@import url("${FONT_PREVIEW_URL}");`
+  : "";
 
 function seededIndex(seed: string, offset: number, length: number): number {
   if (length <= 1) return 0;
@@ -332,6 +348,109 @@ function Field({
         className="w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
       />
     </label>
+  );
+}
+
+function fontOptionsForRole(role: "heading" | "body", current: string) {
+  const options = DESIGN_FONT_OPTIONS.filter(
+    (font) => font.role === role || font.role === "both"
+  );
+  if (
+    current.trim() &&
+    !options.some(
+      (font) => font.family.toLowerCase() === current.trim().toLowerCase()
+    )
+  ) {
+    return [
+      {
+        family: current.trim(),
+        role,
+        category: "Current custom",
+        stack: fontCssStack(current, role),
+      },
+      ...options,
+    ];
+  }
+  return options;
+}
+
+function FontPicker({
+  label,
+  value,
+  role,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  role: "heading" | "body";
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const options = fontOptionsForRole(role, value);
+  const current =
+    options.find(
+      (font) => font.family.toLowerCase() === value.trim().toLowerCase()
+    ) ?? options[0];
+  const stack = fontCssStack(current?.family || value, role);
+
+  return (
+    <div className="relative">
+      <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+        {label}
+      </span>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-3 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-left outline-none transition-colors hover:border-indigo-300 focus:border-indigo-400"
+      >
+        <span className="min-w-0">
+          <span
+            className="block truncate text-[18px] leading-tight text-neutral-900"
+            style={{ fontFamily: stack }}
+          >
+            {value || current?.family || "Select font"}
+          </span>
+          <span className="block truncate text-[10px] uppercase tracking-wide text-neutral-400">
+            {current?.category || "Font"}
+          </span>
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 text-neutral-400" />
+      </button>
+      {open ? (
+        <div className="absolute z-40 mt-1 max-h-80 w-full overflow-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-xl">
+          {options.map((font) => {
+            const selected =
+              font.family.toLowerCase() === value.trim().toLowerCase();
+            return (
+              <button
+                key={`${role}-${font.family}`}
+                type="button"
+                onClick={() => {
+                  onChange(font.family);
+                  setOpen(false);
+                }}
+                className={`flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                  selected
+                    ? "bg-indigo-50 text-indigo-700"
+                    : "text-neutral-800 hover:bg-neutral-50"
+                }`}
+              >
+                <span
+                  className="min-w-0 flex-1 truncate text-[20px] leading-tight"
+                  style={{ fontFamily: fontCssStack(font.family, role) }}
+                >
+                  Fresh rituals
+                </span>
+                <span className="w-28 shrink-0 truncate text-[11px] text-neutral-500">
+                  {font.family}
+                </span>
+                {selected ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1817,6 +1936,36 @@ export default function DesignStudioSection({
     []
   );
 
+  const updateTypographyFamily = useCallback(
+    (key: "headingFamily" | "bodyFamily", value: string) => {
+      setTokenDraft((prev) => {
+        if (!prev) return prev;
+        const urlKey =
+          key === "headingFamily" ? "headingGoogleUrl" : "bodyGoogleUrl";
+        const previousFamily = prev.typography[key];
+        const nextTypography = {
+          ...prev.typography,
+          [key]: value,
+          [urlKey]: googleFontUrlForFamily(value),
+          weights: prev.typography.weights.length
+            ? prev.typography.weights
+            : ["400", "500", "600", "700"],
+        };
+        if (
+          key === "headingFamily" &&
+          previousFamily &&
+          prev.typography.pairingRationale
+            .toLowerCase()
+            .includes(previousFamily.toLowerCase())
+        ) {
+          nextTypography.pairingRationale = `${value} sets the headline voice while ${nextTypography.bodyFamily} keeps product copy clear and usable.`;
+        }
+        return { ...prev, typography: nextTypography };
+      });
+    },
+    []
+  );
+
   const updateLogo = useCallback(
     (key: keyof DesignTokens["logo"], value: string | string[]) => {
       setTokenDraft((prev) =>
@@ -1849,6 +1998,11 @@ export default function DesignStudioSection({
 
   const tokens = tokenDraft ?? studio?.tokens ?? null;
   const palette = tokens?.palette;
+  const tokensDirty = useMemo(
+    () =>
+      Boolean(tokenDraft && JSON.stringify(tokenDraft) !== JSON.stringify(studio?.tokens ?? null)),
+    [studio?.tokens, tokenDraft]
+  );
   const adAssets = useMemo(
     () => assets.filter((asset) => asset.type === AD_TYPE),
     [assets]
@@ -1896,6 +2050,7 @@ export default function DesignStudioSection({
 
   return (
     <div className="mx-auto max-w-3xl p-6">
+      {FONT_PREVIEW_CSS ? <style>{FONT_PREVIEW_CSS}</style> : null}
       <div className="mb-5">
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold text-neutral-800">
@@ -1960,10 +2115,15 @@ export default function DesignStudioSection({
           {tokens ? (
             <button
               onClick={saveTokenDraft}
-              disabled={generating || !projectId || !tokenDraft}
-              className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+              disabled={generating || !projectId || !tokenDraft || !tokensDirty}
+              className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-2 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
             >
-              Save token edits
+              {generating ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Save className="h-3.5 w-3.5" />
+              )}
+              {tokensDirty ? "Save token edits" : "Saved"}
             </button>
           ) : null}
         </div>
@@ -2086,21 +2246,38 @@ export default function DesignStudioSection({
           ) : null}
 
           <section>
-            <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-              <Type className="h-3.5 w-3.5" /> Typography
-            </p>
+            <div className="mb-2 flex items-center justify-between gap-3">
+              <p className="flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+                <Type className="h-3.5 w-3.5" /> Typography
+              </p>
+              <button
+                type="button"
+                onClick={saveTokenDraft}
+                disabled={generating || !projectId || !tokenDraft || !tokensDirty}
+                className="flex items-center gap-1.5 rounded-lg border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 disabled:opacity-50"
+              >
+                {generating ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : tokensDirty ? (
+                  <Save className="h-3.5 w-3.5" />
+                ) : (
+                  <Check className="h-3.5 w-3.5" />
+                )}
+                {tokensDirty ? "Save fonts" : "Fonts saved"}
+              </button>
+            </div>
             <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <Field
+              <FontPicker
                 label="Heading font"
                 value={tokens.typography.headingFamily}
-                onChange={(v) => updateTypography("headingFamily", v)}
-                placeholder="Playfair Display"
+                role="heading"
+                onChange={(v) => updateTypographyFamily("headingFamily", v)}
               />
-              <Field
+              <FontPicker
                 label="Body font"
                 value={tokens.typography.bodyFamily}
-                onChange={(v) => updateTypography("bodyFamily", v)}
-                placeholder="Inter"
+                role="body"
+                onChange={(v) => updateTypographyFamily("bodyFamily", v)}
               />
             </div>
             <div className="mt-3 rounded-xl border border-neutral-200 bg-white p-4">
@@ -2112,7 +2289,10 @@ export default function DesignStudioSection({
                   <p
                     className="text-3xl font-bold leading-tight text-neutral-900"
                     style={{
-                      fontFamily: `${tokens.typography.headingFamily}, Georgia, serif`,
+                      fontFamily: fontCssStack(
+                        tokens.typography.headingFamily,
+                        "heading"
+                      ),
                     }}
                   >
                     Fresh rituals for modern brands
@@ -2120,7 +2300,7 @@ export default function DesignStudioSection({
                   <p
                     className="mt-3 text-[13px] leading-relaxed text-neutral-600"
                     style={{
-                      fontFamily: `${tokens.typography.bodyFamily}, Inter, Arial, sans-serif`,
+                      fontFamily: fontCssStack(tokens.typography.bodyFamily, "body"),
                     }}
                   >
                     A quick look at how the selected body face reads across
@@ -2131,7 +2311,7 @@ export default function DesignStudioSection({
                 <div
                   className="rounded-lg border border-neutral-100 bg-neutral-50 p-3 text-neutral-800"
                   style={{
-                    fontFamily: `${tokens.typography.bodyFamily}, Inter, Arial, sans-serif`,
+                    fontFamily: fontCssStack(tokens.typography.bodyFamily, "body"),
                   }}
                 >
                   <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -2140,7 +2320,10 @@ export default function DesignStudioSection({
                   <p
                     className="mt-2 text-xl leading-snug text-neutral-900"
                     style={{
-                      fontFamily: `${tokens.typography.headingFamily}, Georgia, serif`,
+                      fontFamily: fontCssStack(
+                        tokens.typography.headingFamily,
+                        "heading"
+                      ),
                     }}
                   >
                     {tokens.typography.headingFamily}

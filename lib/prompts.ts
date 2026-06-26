@@ -1719,10 +1719,25 @@ Hard requirements:
   the sole header logo/wordmark instead of recreating the brand in text. If
   brandAssets.logoImageDataUrl is provided, use that exact image as the sole
   header logo/wordmark.
+- Navigation labels must be unique. Never output duplicate links such as
+  "SHOP" and "SHOP" or visual artifacts like "SHOP-". If two links go to the
+  same destination, keep the stronger one and remove the duplicate.
+- Every CTA that looks clickable must actually navigate without JavaScript:
+  use an <a href="..."> pointing to an existing section id in the same file or
+  to one of the returned HTML filenames. Do not use inert <button> elements,
+  empty href values, href="#", or nonexistent anchors for CTAs such as "Read
+  the clean-care guide".
+- Product grids must use consistent image frames. Do not make the final SKU or
+  travel-size product visually larger just because its source image has a
+  different aspect ratio; keep product cards aligned with equal image boxes and
+  object-fit: contain/cover as appropriate.
 - Use the token palette via CSS custom properties (:root { --primary: ... }) and
   the token heading/body fonts. Ensure strong contrast and AA legibility. Avoid
   one-note palettes and avoid making the site mostly purple/blue gradients,
   beige/tan, dark slate, or brown/orange unless the tokens truly demand it.
+- Use the current designTokens.typography.headingFamily and bodyFamily exactly.
+  Do not keep stale font names from previous generations; for example, if the
+  heading token is Butler, do not write Fraunces anywhere in CSS or copy.
 - Mobile-first responsive (a sensible @media breakpoint). Accessible semantic
   HTML (header/nav, main, sections, footer; alt text on any inline SVG via
   role/aria-label).

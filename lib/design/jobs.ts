@@ -210,6 +210,7 @@ type WebsiteLogoAsset = {
   logoSvg: string | null;
   logoImageDataUrl: string | null;
   sourceUrl?: string;
+  sourceKind?: "standalone-logo" | "package-crop";
 };
 
 function logoImageCandidates(
@@ -234,42 +235,116 @@ function logoMimeFromUrl(url: string): string | null {
   return null;
 }
 
-async function fetchWebsiteLogoAsset(
+function imageDataUrl(mimeType: string, buffer: Buffer): string {
+  return `data:${mimeType};base64,${buffer.toString("base64")}`;
+}
+
+function svgDataUrl(svg: string): string {
+  return `data:image/svg+xml;base64,${Buffer.from(svg, "utf8").toString("base64")}`;
+}
+
+function packageLogoCropDataUrl(sourceDataUrl: string, brandName: string): string {
+  const label = brandName.replace(/"/g, "&quot;");
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="190" viewBox="0 0 640 190" role="img" aria-label="${label} source wordmark"><defs><clipPath id="crop"><rect x="0" y="0" width="640" height="190" rx="12"/></clipPath></defs><g clip-path="url(#crop)"><image href="${sourceDataUrl}" x="-90" y="-215" width="820" height="820" preserveAspectRatio="xMidYMid slice"/></g></svg>`;
+  return svgDataUrl(svg);
+}
+
+function packageLogoCandidates(
   websiteAnalysis: WebsiteAnalysis | null
+): WebsiteCollectedImage[] {
+  const info = websiteAnalysis?.infoCollected;
+  if (!info) return [];
+  const images: WebsiteCollectedImage[] = [
+    ...info.productImages.filter((image) =>
+      ["product", "lifestyle", "other"].includes(image.kind)
+    ),
+    ...info.products
+      .filter((product) => product.imageUrl)
+      .map((product) => ({
+        url: product.imageUrl || "",
+        alt: product.name,
+        caption: product.description || product.priceText,
+        sourceUrl: product.url,
+        kind: "product" as const,
+      })),
+  ];
+  const seen = new Set<string>();
+  return images.filter((image) => {
+    if (!/^https?:\/\//i.test(image.url) || seen.has(image.url)) return false;
+    seen.add(image.url);
+    return true;
+  });
+}
+
+async function fetchImageCandidate(
+  url: string,
+  maxBytes = 2 * 1024 * 1024
+): Promise<{ mimeType: string; buffer: Buffer } | null> {
+  try {
+    const response = await fetch(url, {
+      redirect: "follow",
+      headers: {
+        Accept: "image/svg+xml,image/png,image/jpeg,image/webp,image/gif,*/*",
+      },
+      signal: AbortSignal.timeout(8_000),
+    });
+    if (!response.ok) return null;
+    const mimeType =
+      response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
+      logoMimeFromUrl(url) ||
+      "";
+    const buffer = Buffer.from(await response.arrayBuffer());
+    if (!buffer.length || buffer.length > maxBytes) return null;
+    return { mimeType, buffer };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchWebsiteLogoAsset(
+  websiteAnalysis: WebsiteAnalysis | null,
+  brandName: string
 ): Promise<WebsiteLogoAsset | null> {
   for (const image of logoImageCandidates(websiteAnalysis).slice(0, 4)) {
     if (!/^https?:\/\//i.test(image.url)) continue;
-    try {
-      const response = await fetch(image.url, {
-        redirect: "follow",
-        headers: {
-          Accept: "image/svg+xml,image/png,image/jpeg,image/webp,image/gif,*/*",
-        },
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!response.ok) continue;
-      const mimeType =
-        response.headers.get("content-type")?.split(";")[0]?.trim().toLowerCase() ||
-        logoMimeFromUrl(image.url) ||
-        "";
-      const buffer = Buffer.from(await response.arrayBuffer());
-      if (!buffer.length || buffer.length > 2 * 1024 * 1024) continue;
-
-      if (mimeType === "image/svg+xml" || image.url.toLowerCase().includes(".svg")) {
-        const logoSvg = sanitizeSvg(buffer.toString("utf8"));
-        if (logoSvg) return { logoSvg, logoImageDataUrl: null, sourceUrl: image.url };
-        continue;
-      }
-      if (/^image\/(?:png|jpe?g|webp|gif)$/i.test(mimeType)) {
+    const fetched = await fetchImageCandidate(image.url);
+    if (!fetched) continue;
+    const { mimeType, buffer } = fetched;
+    if (mimeType === "image/svg+xml" || image.url.toLowerCase().includes(".svg")) {
+      const logoSvg = sanitizeSvg(buffer.toString("utf8"));
+      if (logoSvg) {
         return {
-          logoSvg: null,
-          logoImageDataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+          logoSvg,
+          logoImageDataUrl: null,
           sourceUrl: image.url,
+          sourceKind: "standalone-logo",
         };
       }
-    } catch {
-      // Try the next collected logo candidate.
+      continue;
     }
+    if (/^image\/(?:png|jpe?g|webp|gif)$/i.test(mimeType)) {
+      return {
+        logoSvg: null,
+        logoImageDataUrl: imageDataUrl(mimeType, buffer),
+        sourceUrl: image.url,
+        sourceKind: "standalone-logo",
+      };
+    }
+  }
+  for (const image of packageLogoCandidates(websiteAnalysis).slice(0, 4)) {
+    const fetched = await fetchImageCandidate(image.url, 4 * 1024 * 1024);
+    if (!fetched || !/^image\/(?:png|jpe?g|webp)$/i.test(fetched.mimeType)) {
+      continue;
+    }
+    return {
+      logoSvg: null,
+      logoImageDataUrl: packageLogoCropDataUrl(
+        imageDataUrl(fetched.mimeType, fetched.buffer),
+        brandName
+      ),
+      sourceUrl: image.url,
+      sourceKind: "package-crop",
+    };
   }
   return null;
 }
@@ -451,6 +526,8 @@ function normalizeSiteFiles(args: {
   heroSubhead: string;
   logoSvg: string | null;
   logoImageDataUrl: string | null;
+  headingFamily: string | null;
+  bodyFamily: string | null;
 }): SiteFile[] {
   const rawFiles = args.out.files.map((file, index) => ({
     ...file,
@@ -506,6 +583,8 @@ function normalizeSiteFiles(args: {
           logoSvg: args.logoSvg,
           logoImageDataUrl: args.logoImageDataUrl,
           heroSubhead: args.heroSubhead,
+          headingFamily: args.headingFamily,
+          bodyFamily: args.bodyFamily,
         }
       )
     );
@@ -851,7 +930,7 @@ export async function runDesignStudioJob(args: {
   const siteProductImages = [websiteHeroVisual, ...productImages].slice(0, 6);
   const brandName = websiteBrandName(profile, project.name, websiteAnalysis);
   const heroSubhead = websiteHeroSubhead(profile, project.name, websiteAnalysis);
-  const sourceLogo = await fetchWebsiteLogoAsset(websiteAnalysis);
+  const sourceLogo = await fetchWebsiteLogoAsset(websiteAnalysis, brandName);
   const generatedLogoSvg = websiteLogoSvg(project.ownerDashboard?.designStudio?.logos);
   const logoSvg = sourceLogo?.logoSvg ?? generatedLogoSvg;
   const logoImageDataUrl = sourceLogo?.logoImageDataUrl ?? null;
@@ -859,7 +938,9 @@ export async function runDesignStudioJob(args: {
     await appendJobProgress(args.jobId, {
       label: "Using source-site logo",
       detail:
-        "Found and embedded the actual logo collected from Overview, so the website header uses the brand's real mark.",
+        sourceLogo.sourceKind === "package-crop"
+          ? "No standalone logo file was collected, so the website header is using a cropped source package wordmark instead of an invented text mark."
+          : "Found and embedded the actual logo collected from Overview, so the website header uses the brand's real mark.",
       code: `brandAssets.logoSourceUrl = "${sourceLogo.sourceUrl ?? "overview"}";`,
       status: "running",
     });
@@ -904,6 +985,8 @@ export async function runDesignStudioJob(args: {
     heroSubhead,
     logoSvg,
     logoImageDataUrl,
+    headingFamily: tokens.typography.headingFamily,
+    bodyFamily: tokens.typography.bodyFamily,
   });
   const html = files.find((file) => file.path === "index.html")?.content ?? files[0].content;
   if (!looksLikeHtmlDoc(html)) throw new Error("The generated site was malformed.");

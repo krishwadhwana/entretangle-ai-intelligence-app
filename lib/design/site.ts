@@ -1,3 +1,5 @@
+import { fontCssStack, googleFontUrlForFamilies } from "./fontLibrary";
+
 // Sanitize an LLM-authored landing page before it is previewed in an iframe,
 // downloaded, or deployed. The HTML comes from our own model call (not user
 // input), but we still strip all active content so a generated page is a pure
@@ -46,6 +48,8 @@ type SitePolishOptions = {
   logoSvg?: string | null;
   logoImageDataUrl?: string | null;
   heroSubhead?: string | null;
+  headingFamily?: string | null;
+  bodyFamily?: string | null;
 };
 
 function compactWhitespace(value: string): string {
@@ -82,8 +86,10 @@ body *{box-sizing:border-box}
 .et-site-header{position:absolute;top:0;left:0;right:0;z-index:20;display:flex;align-items:center;justify-content:space-between;gap:clamp(18px,3vw,44px);min-height:82px;padding:clamp(18px,2.6vw,32px) clamp(22px,6vw,88px);color:#fff;background:linear-gradient(180deg,rgba(0,0,0,.28),rgba(0,0,0,0));pointer-events:auto}
 .et-site-logo{display:inline-flex;align-items:center;width:min(220px,34vw);height:52px;color:inherit;text-decoration:none}
 .et-site-logo svg,.et-site-logo img{display:block;width:100%;height:100%;max-height:52px;object-fit:contain;object-position:left center;overflow:visible}
+.et-site-logo--text{display:block;max-width:min(220px,34vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--heading-font,inherit);font-size:clamp(18px,2.2vw,30px);font-weight:900;line-height:1;letter-spacing:.03em;text-transform:uppercase}
 .et-site-header nav{display:flex;align-items:center;justify-content:flex-end;gap:clamp(18px,3vw,42px);margin-left:auto}
 .et-site-header nav a{color:inherit;text-decoration:none;font-size:12px;font-weight:850;letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+.et-site-header~main .et-product-hero__nav{display:none!important}
 header,.site-header,.navbar,.et-product-hero__nav{max-width:100%;min-width:0;min-height:72px}
 header,header nav,.site-header,.navbar,.et-product-hero__nav{display:flex;align-items:center;justify-content:space-between;gap:clamp(14px,2.5vw,32px);flex-wrap:nowrap}
 header>*,header nav>*,.site-header>*,.navbar>*,.et-product-hero__nav>*{min-width:0}
@@ -98,7 +104,17 @@ main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:c
 main>section:first-of-type p,[class*="hero"] p,.et-product-hero p{max-width:min(620px,92vw);font-size:clamp(18px,1.8vw,24px)!important;line-height:1.38!important;text-wrap:pretty}
 .et-product-hero__copy{width:min(680px,100%)!important;padding-top:clamp(132px,16vw,190px)!important}
 .et-product-hero__nav span{display:block;max-width:min(34ch,62vw);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.et-anchor-target{display:block;position:relative;top:-96px;width:1px;height:1px;overflow:hidden}
+.et-clean-guide{padding:clamp(52px,8vw,96px) clamp(20px,6vw,84px);background:var(--neutral-light,#fff8f1);color:var(--neutral-dark,#101010)}
+.et-clean-guide__inner{display:grid;grid-template-columns:minmax(220px,.65fr) minmax(0,1fr);gap:clamp(24px,5vw,72px);align-items:start;max-width:1160px;margin:0 auto}
+.et-clean-guide h2{margin:0;font-family:var(--heading-font,Georgia,serif);font-size:clamp(34px,5vw,72px);line-height:1;letter-spacing:0}
+.et-clean-guide p{margin:0;font-size:clamp(17px,1.7vw,22px);line-height:1.55}
+.et-clean-guide ul{display:grid;gap:10px;margin:22px 0 0;padding:0;list-style:none}
+.et-clean-guide li{padding-top:10px;border-top:1px solid color-mix(in srgb,var(--neutral-dark,#101010) 18%,transparent);font-weight:750}
+main section:not(:first-of-type) :where(article,li,figure,[class*="card"])>img,main section:not(:first-of-type) :where(article,li,figure,[class*="card"]) picture>img{display:block;width:100%;height:auto;max-height:clamp(280px,34vw,520px);aspect-ratio:4/5;object-fit:contain!important;object-position:center bottom;background:rgba(255,255,255,.42)}
+main section:not(:first-of-type) :where([class*="product"],[class*="collection"],[id*="product"],[id*="shop"]) :where(article,li,figure,[class*="card"]){min-width:0}
 @media (max-width:760px){.et-site-header{position:absolute;min-height:72px;padding:18px 20px;gap:12px}.et-site-logo{width:min(170px,52vw);height:42px}.et-site-header nav{gap:14px;overflow-x:auto}.et-site-header nav a{font-size:11px}header,.site-header,.navbar,.et-product-hero__nav{min-height:64px;gap:12px;flex-wrap:wrap}header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.site-header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.navbar :where([class*="brand"],[class*="logo"],.wordmark,h1,h2){max-width:58vw!important;font-size:clamp(22px,8vw,34px)!important}main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:124px!important}.et-product-hero__nav{align-items:flex-start}}
+@media (max-width:760px){.et-clean-guide__inner{grid-template-columns:1fr}}
 </style>`;
 }
 
@@ -175,9 +191,19 @@ function polishHeroSubhead(html: string, heroSubhead: string | null | undefined)
   );
 }
 
-function siteHeaderMarkup(brandName: string, logoMarkup: string): string {
-  const label = escapeHtml(brandName || "Brand");
-  return `<header class="et-site-header"><a class="et-site-logo" href="#" aria-label="${label}">${logoMarkup}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
+function displayBrandName(value: string): string {
+  const clean = compactWhitespace(value || "Brand");
+  if (/let'?s\s*smush|letssmush/i.test(clean)) return "SMUSH!";
+  return clean;
+}
+
+function siteHeaderMarkup(brandName: string, logoMarkup: string | null): string {
+  const displayName = displayBrandName(brandName);
+  const label = escapeHtml(displayName || "Brand");
+  const mark =
+    logoMarkup ||
+    `<span class="et-site-logo--text">${label}</span>`;
+  return `<header class="et-site-header"><a class="et-site-logo" href="#top" aria-label="${label}">${mark}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
 }
 
 function applyLogoHeader(html: string, options: SitePolishOptions): string {
@@ -190,8 +216,7 @@ function applyLogoHeader(html: string, options: SitePolishOptions): string {
         ? `<img src="${escapeHtml(logoImageDataUrl)}" alt="${escapeHtml(
             options.brandName || "Brand"
           )} logo">`
-        : "";
-  if (!logoMarkup) return html;
+        : null;
   const header = siteHeaderMarkup(options.brandName || "Brand", logoMarkup);
   if (/<header\b[\s\S]*?<\/header>/i.test(html)) {
     return html.replace(/<header\b[\s\S]*?<\/header>/i, header);
@@ -200,6 +225,159 @@ function applyLogoHeader(html: string, options: SitePolishOptions): string {
     return html.replace(/<body\b[^>]*>/i, (match) => `${match}\n${header}`);
   }
   return html;
+}
+
+function fontHeadMarkup(options: SitePolishOptions): string {
+  const headingFamily = options.headingFamily?.trim();
+  const bodyFamily = options.bodyFamily?.trim();
+  if (!headingFamily && !bodyFamily) return "";
+  const fontUrl = googleFontUrlForFamilies(
+    [headingFamily, bodyFamily].filter((font): font is string => Boolean(font))
+  );
+  const links = fontUrl
+    ? `<link data-et-fonts rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link data-et-fonts rel="stylesheet" href="${escapeHtml(fontUrl)}">`
+    : "";
+  const headingStack = fontCssStack(headingFamily, "heading");
+  const bodyStack = fontCssStack(bodyFamily, "body");
+  return `${links}<style data-et-font-guard>:root{--heading-font:${headingStack};--body-font:${bodyStack};--head:var(--heading-font);--heading:var(--heading-font);--font-heading:var(--heading-font);--body:var(--body-font);--font-body:var(--body-font)}body{font-family:var(--body-font)!important}h1,h2,h3,h4,h5,h6,.eyebrow,.kicker,.headline,[class*="title"],[class*="headline"]{font-family:var(--heading-font)!important}button,input,select,textarea{font-family:var(--body-font)!important}</style>`;
+}
+
+function applyFontGuard(html: string, options: SitePolishOptions): string {
+  const markup = fontHeadMarkup(options);
+  if (!markup || !/<\/head>/i.test(html)) return html;
+  let next = html
+    .replace(/<link\b[^>]*data-et-fonts[^>]*>/gi, "")
+    .replace(/<link\b(?=[^>]*fonts\.googleapis\.com\/css2)[^>]*>/gi, "")
+    .replace(/<style\b[^>]*data-et-font-guard[^>]*>[\s\S]*?<\/style>/gi, "");
+  return next.replace(/<\/head>/i, `${markup}\n</head>`);
+}
+
+function linkTargetForText(value: string): string {
+  const text = stripTags(value).toLowerCase();
+  if (/\b(shop|buy|cart|product|collection|browse)\b/.test(text)) return "#shop";
+  if (/\b(join|subscribe|email|waitlist|club)\b/.test(text)) return "#join";
+  if (/\b(read|guide|care|clean|learn|journal|ritual)\b/.test(text)) {
+    return "#clean-care-guide";
+  }
+  if (/\b(story|about|origin)\b/.test(text)) return "#ritual";
+  return "#products";
+}
+
+function normalizeDeadCtas(html: string): string {
+  let next = html.replace(
+    /<a\b([^>]*?)\s+href=(["'])(?:#|javascript:void\(0\)|javascript:;)?\2([^>]*)>([\s\S]*?)<\/a>/gi,
+    (match, before: string, quote: string, after: string, label: string) => {
+      const text = stripTags(label);
+      if (!text || text.length > 80) return match;
+      const target = linkTargetForText(text);
+      return `<a${before} href=${quote}${target}${quote}${after}>${label}</a>`;
+    }
+  );
+  next = next.replace(
+    /<button\b([^>]*)>([\s\S]*?)<\/button>/gi,
+    (match, attrs: string, label: string) => {
+      const text = stripTags(label);
+      if (
+        !text ||
+        text.length > 80 ||
+        !/\b(shop|buy|read|guide|care|clean|learn|join|subscribe|product|ritual)\b/i.test(
+          text
+        )
+      ) {
+        return match;
+      }
+      const cleanedAttrs = attrs
+        .replace(/\s+type=(["'])submit\1/gi, "")
+        .replace(/\s+disabled(?:=(["']).*?\1)?/gi, "");
+      return `<a${cleanedAttrs} href="${linkTargetForText(text)}" role="button">${label}</a>`;
+    }
+  );
+  next = next.replace(
+    /<a\b([^>]*?)\s+href=(["'])([^"']+)\2([^>]*)>([\s\S]*?)<\/a>/gi,
+    (
+      match,
+      before: string,
+      quote: string,
+      href: string,
+      after: string,
+      label: string
+    ) => {
+      const text = stripTags(label);
+      if (
+        text.length <= 80 &&
+        /\b(read|guide|care|clean|learn|journal)\b/i.test(text) &&
+        !href.startsWith("#")
+      ) {
+        return `<a${before} href=${quote}#clean-care-guide${quote}${after}>${label}</a>`;
+      }
+      return match;
+    }
+  );
+  return next;
+}
+
+function hasId(html: string, id: string): boolean {
+  return new RegExp(`\\bid=(["'])${id}\\1`, "i").test(html);
+}
+
+function addIdToFirstSection(html: string, id: string, pattern: RegExp): string {
+  if (hasId(html, id)) return html;
+  const sectionRe = /<section\b([^>]*)>/gi;
+  let match: RegExpExecArray | null;
+  while ((match = sectionRe.exec(html))) {
+    const start = match.index;
+    const close = html.indexOf("</section>", start);
+    const chunk = html.slice(start, close === -1 ? start + 1600 : close);
+    if (pattern.test(chunk)) {
+      const attrs = /\sid=(["']).*?\1/i.test(match[1])
+        ? match[1].replace(/\sid=(["']).*?\1/i, ` id="${id}"`)
+        : ` id="${id}"${match[1]}`;
+      return `${html.slice(0, start)}<section${attrs}>${html.slice(
+        start + match[0].length
+      )}`;
+    }
+  }
+  return html;
+}
+
+function insertAnchorAfterOpeningMain(html: string, id: string): string {
+  if (hasId(html, id)) return html;
+  return html.replace(
+    /<main\b[^>]*>/i,
+    (match) => `${match}\n<span id="${id}" class="et-anchor-target"></span>`
+  );
+}
+
+function ensureCleanCareGuide(html: string, heroSubhead: string | null | undefined): string {
+  if (!/#clean-care-guide\b/.test(html) || hasId(html, "clean-care-guide")) {
+    return html;
+  }
+  const body = escapeHtml(
+    cleanVisibleCopy(
+      heroSubhead ||
+        "A simple product-led routine built around gentle cleansing, moisture, and repeatable daily care."
+    )
+  );
+  const guide = `<section id="clean-care-guide" class="et-clean-guide" aria-label="Clean-care guide"><div class="et-clean-guide__inner"><h2>Clean-care guide</h2><div><p>${body}</p><ul><li>Start with the format that matches the routine.</li><li>Use the product story and ingredients as purchase proof.</li><li>Keep the ritual easy to repeat after every wash.</li></ul></div></div></section>`;
+  if (/<\/main>/i.test(html)) return html.replace(/<\/main>/i, `${guide}\n</main>`);
+  return html.replace(/<\/body>/i, `${guide}\n</body>`);
+}
+
+function ensureCoreAnchorTargets(
+  html: string,
+  options: SitePolishOptions
+): string {
+  let next = html;
+  next = addIdToFirstSection(next, "products", /\b(product|collection|shop|sku)\b/i);
+  next = addIdToFirstSection(next, "shop", /\b(product|collection|shop|price|buy)\b/i);
+  next = addIdToFirstSection(next, "join", /\b(join|subscribe|email|club|community)\b/i);
+  next = addIdToFirstSection(next, "ritual", /\b(ritual|story|about|routine|origin)\b/i);
+  next = insertAnchorAfterOpeningMain(next, "top");
+  next = insertAnchorAfterOpeningMain(next, "products");
+  next = insertAnchorAfterOpeningMain(next, "shop");
+  next = insertAnchorAfterOpeningMain(next, "join");
+  next = insertAnchorAfterOpeningMain(next, "ritual");
+  return ensureCleanCareGuide(next, options.heroSubhead);
 }
 
 export function polishGeneratedSiteHtmlWithAssets(
@@ -211,8 +389,11 @@ export function polishGeneratedSiteHtmlWithAssets(
     : /<\/head>/i.test(rawHtml)
       ? rawHtml.replace(/<\/head>/i, `${polishCss()}\n</head>`)
       : rawHtml;
+  html = applyFontGuard(html, options);
   html = applyLogoHeader(html, options);
   html = polishHeroSubhead(html, options.heroSubhead);
+  html = normalizeDeadCtas(html);
+  html = ensureCoreAnchorTargets(html, options);
   return html;
 }
 
@@ -263,7 +444,6 @@ export function ensureProductImageryHtml(
     : "";
   const injected = `<section class="et-product-hero" aria-label="${brandName} product campaign">
   <figure class="et-product-hero__image"><img src="${heroImage.placeholder}" alt="${escapeHtml(heroImage.name)}"></figure>
-  <div class="et-product-hero__nav"><span>${brandName}</span><a href="#shop">Shop</a></div>
   <div class="et-product-hero__copy">
     <p class="et-product-hero__eyebrow">New campaign</p>
     <h1>${heroTitle}</h1>
