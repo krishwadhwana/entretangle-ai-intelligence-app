@@ -604,6 +604,8 @@ function ProjectWorkspaceRail({
   onSelect: (id: string) => void;
 }) {
   return (
+    <div className="relative">
+    <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 rounded-r-lg bg-gradient-to-l from-white to-transparent xl:hidden" />
     <nav className="flex gap-1 overflow-x-auto no-scrollbar rounded-lg border border-neutral-200 bg-white p-2 xl:flex-col xl:space-y-1 xl:overflow-visible">
       <p className="hidden px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 xl:block">
         Workspace
@@ -645,6 +647,7 @@ function ProjectWorkspaceRail({
         );
       })}
     </nav>
+    </div>
   );
 }
 

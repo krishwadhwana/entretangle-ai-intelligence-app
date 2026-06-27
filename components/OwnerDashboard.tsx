@@ -120,6 +120,8 @@ export default function OwnerDashboard({
         <div className="hidden items-center gap-1.5 px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 md:flex">
           <LayoutDashboard className="h-3.5 w-3.5" /> Owner Dashboard
         </div>
+        <div className="relative">
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-neutral-50 to-transparent md:hidden" />
         <div className="flex gap-1 overflow-x-auto no-scrollbar px-2 py-2 md:flex-col md:gap-0 md:overflow-visible md:px-3 md:pb-3 md:pt-1">
           {SECTIONS.map((s) => {
             const Icon = s.icon;
@@ -138,6 +140,7 @@ export default function OwnerDashboard({
               </button>
             );
           })}
+        </div>
         </div>
         <p className="hidden px-4 pb-3 text-[10px] leading-relaxed text-neutral-400 md:block">
           More owner tools coming here.

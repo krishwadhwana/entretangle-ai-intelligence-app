@@ -381,6 +381,7 @@ export default function NetworkView({
         fitView
         fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
         proOptions={{ hideAttribution: true }}
+        onlyRenderVisibleElements
         nodesDraggable
         nodesConnectable={false}
         onNodesChange={onNodesChange}

@@ -1345,7 +1345,7 @@ export default function InsightsView({
                 pitch lands, their vote updates across the run.
               </p>
               <ul className="max-h-80 space-y-1.5 overflow-y-auto pr-1">
-                {winBackRejectors.map((p) => (
+                {winBackRejectors.slice(0, 60).map((p) => (
                   <li
                     key={p.id}
                     className="flex items-center gap-2 rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-2 text-[11px]"
@@ -1388,6 +1388,12 @@ export default function InsightsView({
                     )}
                   </li>
                 ))}
+                {winBackRejectors.length > 60 && (
+                  <li className="px-1 py-1 text-center text-[10px] text-neutral-400">
+                    +{(winBackRejectors.length - 60).toLocaleString()} more
+                    rejectors — narrow with filters or the persona search.
+                  </li>
+                )}
               </ul>
             </>
           )}

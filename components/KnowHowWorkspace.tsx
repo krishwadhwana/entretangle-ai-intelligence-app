@@ -293,6 +293,8 @@ export default function KnowHowWorkspace({
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             )}
           </div>
+          <div className="relative">
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-white to-transparent xl:hidden" />
           <nav className="flex gap-1.5 overflow-x-auto no-scrollbar xl:flex-col xl:gap-0 xl:space-y-1 xl:overflow-visible">
             {KNOW_HOW_MODULES.map((module) => {
               const done = taskProgress(module, progress);
@@ -337,6 +339,7 @@ export default function KnowHowWorkspace({
               );
             })}
           </nav>
+          </div>
           {saveError ? (
             <p className="mt-3 rounded-md bg-red-50 px-2 py-1.5 text-[11px] text-red-600">
               {saveError}
