@@ -975,13 +975,13 @@ function InfoCollectedPanel({
 
       {analysis ? (
         <>
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
             <div className="rounded-lg border border-neutral-200 bg-white p-4">
               <h4 className="text-sm font-semibold text-neutral-900">
                 What the URL revealed
               </h4>
               {profileFacts.length > 0 ? (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {profileFacts.map(([label, value]) => (
                     <div
                       key={label}
@@ -1026,7 +1026,7 @@ function InfoCollectedPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-4">
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1039,7 +1039,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {imageCards.length > 0 ? (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {imageCards.map((image) => (
                       <article
                         key={image.id}
@@ -1098,7 +1098,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {products.length > 0 ? (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                     {products.map((product, index) => (
                       <article
                         key={`${product.name}-${index}`}
@@ -1165,7 +1165,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {listingEvidence.length > 0 ? (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                     {listingEvidence.map((listing, index) => (
                       <article
                         key={`${listing.url}-${index}`}
@@ -1504,7 +1504,7 @@ function ModuleRegistryGrid({
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       {modules.map((module) => {
         const Icon = module.icon;
         const editing = editingId === module.id;
@@ -1684,7 +1684,7 @@ function AssetLibraryCore({
               </span>
             </div>
             {bucketAssets.length > 0 ? (
-              <div className="grid gap-2 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
                 {bucketAssets.map((asset) => (
                   <article
                     key={asset.id}
@@ -2126,7 +2126,7 @@ function ModuleWorkspaceHub({
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <form
           onSubmit={(e) => void submitFolder(e)}
           className="space-y-2 rounded-lg border border-neutral-200 p-3"
@@ -2180,7 +2180,7 @@ function ModuleWorkspaceHub({
             placeholder="Campaign name"
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500"
           />
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <select
               value={campaignFolderId}
               onChange={(e) => setCampaignFolderId(e.target.value)}
@@ -2228,7 +2228,7 @@ function ModuleWorkspaceHub({
         </form>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="space-y-2">
           <h4 className="text-xs font-semibold text-neutral-800">
             {selectedModule?.label ?? "Module"} folders
@@ -2474,7 +2474,7 @@ function PrintSpecPanel({
 
       <div className="grid gap-2">
         {(["primary", "secondary", "accent"] as const).map((key) => (
-          <div key={key} className="grid gap-2 sm:grid-cols-2">
+          <div key={key} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input
               value={cmyk[key]}
               onChange={(e) =>
@@ -2656,7 +2656,7 @@ function OperationsPanel({
             Meta Pixel placeholder
           </h4>
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <select
             value={pixelStatus}
             onChange={(e) => setPixelStatus(e.target.value as MetaPixelStatus)}
@@ -5617,7 +5617,7 @@ function IntakePageInner() {
             </div>
           </header>
 
-          <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700">
                 <FolderOpen className="h-4 w-4" />
@@ -5684,7 +5684,7 @@ function IntakePageInner() {
             </p>
           ) : null}
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
             <section className="min-w-0 space-y-3">
               <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -6088,7 +6088,7 @@ function IntakePageInner() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {dashboardProjects.map((p) => {
                       const completed = p.hasPreview
                         ? projectCompletedRunCount(p)
@@ -6441,7 +6441,7 @@ function IntakePageInner() {
                     comparison-ready project work will build from this base.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-neutral-200 bg-white p-3">
                     <p className="text-xs font-medium text-neutral-500">
                       Profile
@@ -6831,7 +6831,11 @@ function IntakePageInner() {
                 </div>
               </header>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div
+                className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 ${
+                  activeWorkspaceSection === "workspace-overview" ? "" : "hidden"
+                }`}
+              >
                 <div className="rounded-lg border border-neutral-200 bg-white p-3">
                   <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
                     <ClipboardList className="h-4 w-4" />
@@ -7023,7 +7027,7 @@ function IntakePageInner() {
                     asset.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-neutral-200 bg-white p-3">
                     <p className="text-xs font-medium text-neutral-500">
                       Collateral
@@ -7140,7 +7144,7 @@ function IntakePageInner() {
                       </div>
 
                       {productImages.length > 0 ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {productImages.map((image) => (
                             <div
                               key={image.id}
@@ -7229,7 +7233,7 @@ function IntakePageInner() {
                         Explore the next decision
                       </h3>
                     </div>
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
                       <div className="space-y-2">
                         <input
                           value={focusQuestion}

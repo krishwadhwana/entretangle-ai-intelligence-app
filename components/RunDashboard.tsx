@@ -31,6 +31,7 @@ import {
 import { useRunEvents } from "./useRunEvents";
 import ScrollRow from "./ui/ScrollRow";
 import PortalMenu from "./ui/PortalMenu";
+import ErrorBoundary from "./ui/ErrorBoundary";
 import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
 import NetworkView from "./NetworkView";
 import KnowHowWorkspace from "./KnowHowWorkspace";
@@ -1230,6 +1231,7 @@ export default function RunDashboard({
             />
           </div>
         )}
+        <ErrorBoundary resetKey={view}>
         {view === "domain" && activePanel && activePanel !== "conclusion" ? (
           <DomainWorkspace
             domain={activePanel}
@@ -1302,6 +1304,7 @@ export default function RunDashboard({
             onSelectCohort={setSelectedCohortId}
           />
         )}
+        </ErrorBoundary>
 
         {selectedCohort && (
           <CohortDrawer

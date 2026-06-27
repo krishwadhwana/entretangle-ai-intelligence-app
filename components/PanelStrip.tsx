@@ -271,7 +271,7 @@ function FinalReportView({
         </p>
       </div>
 
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         {report.sections.map((section) => (
           <section
             key={section.title}
@@ -303,7 +303,7 @@ function FinalReportView({
         ))}
       </div>
 
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
+      <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
         <section className="rounded-lg border border-emerald-100 bg-emerald-50/60 p-3">
           <h4 className="text-xs font-semibold text-emerald-900">
             Next actions
@@ -821,7 +821,7 @@ export function ConclusionWorkspace({
         </div>
 
         {tab === "report" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <div className="space-y-2">
               <FinalReportView
                 report={report}
@@ -837,7 +837,7 @@ export function ConclusionWorkspace({
         )}
 
         {tab === "followups" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -870,9 +870,9 @@ export function ConclusionWorkspace({
         )}
 
         {tab === "foresight" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
             <div className="space-y-3">
-              <div className="grid gap-3 md:grid-cols-2">
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {FORESIGHT_PROMPTS.map((item) => (
                   <button
                     key={item.label}

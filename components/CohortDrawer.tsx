@@ -558,13 +558,13 @@ export default function CohortDrawer({
 
   return (
     <aside
-      className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl"
+      className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl max-sm:inset-0 max-sm:!w-full max-sm:!max-w-none max-sm:border-l-0"
       style={{ width }}
     >
       <button
         type="button"
         onMouseDown={startResize}
-        className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500"
+        className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500 max-sm:hidden"
         title="Resize drawer"
         aria-label="Resize persona drawer"
       >

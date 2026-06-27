@@ -2646,7 +2646,7 @@ function Readout({
       <p className="mt-1 text-[12px] leading-relaxed text-neutral-700">
         {diagnostics.headline}
       </p>
-      <div className="mt-3 grid gap-3 lg:grid-cols-3">
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-3">
         <ReadoutList title="Drivers" items={diagnostics.drivers} />
         <ReadoutList title="Risks" items={diagnostics.risks} />
         <ReadoutList title="Next moves" items={diagnostics.nextMoves} />
@@ -3274,7 +3274,7 @@ function Assumptions({
       <h3 className="text-xs font-semibold text-neutral-700">
         Assumptions & confidence
       </h3>
-      <div className="mt-3 grid gap-3 lg:grid-cols-2">
+      <div className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
         {assumptions.map((a) => (
           <div key={a.key} className="border-t border-neutral-100 pt-2">
             <div className="flex items-start justify-between gap-3">

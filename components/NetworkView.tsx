@@ -118,6 +118,18 @@ export default function NetworkView({
   onSelectCohort,
 }: Props) {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  // On phones the full graph (every locality + platform fan-out) can be heavy
+  // enough to exhaust the mobile browser and reload the tab. Render a lighter
+  // graph there: cap locality nodes and drop the platform fan-out entirely.
+  const [isNarrow, setIsNarrow] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 768px)");
+    const update = () => setIsNarrow(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
   // User-dragged positions, keyed by node id; survive layout recomputes.
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<Node>([]);
@@ -180,7 +192,18 @@ export default function NetworkView({
       byLocality.set(c.locality, [...(byLocality.get(c.locality) ?? []), c]);
     }
     const audienceBlock = blocks.find((b) => b.kind === "audience");
-    const localities = Array.from(byLocality.entries());
+    let localities = Array.from(byLocality.entries());
+    // On narrow screens keep only the largest localities so the graph stays
+    // light enough to render on mobile.
+    if (isNarrow && localities.length > 20) {
+      localities = [...localities]
+        .sort(
+          (a, b) =>
+            b[1].reduce((s, c) => s + c.personas.length, 0) -
+            a[1].reduce((s, c) => s + c.personas.length, 0),
+        )
+        .slice(0, 20);
+    }
     localities.forEach(([name, cs], i) => {
       const personaCount = cs.reduce((s, c) => s + c.personas.length, 0);
       const id = `loc:${name}`;
@@ -214,7 +237,11 @@ export default function NetworkView({
       }
     });
 
-    const platforms = (state.aggregate?.platformShare ?? []).slice(0, 6);
+    // The platform fan-out adds platforms×localities faint edges — the biggest
+    // contributor to graph weight. Skip it on mobile.
+    const platforms = isNarrow
+      ? []
+      : (state.aggregate?.platformShare ?? []).slice(0, 6);
     platforms.forEach((p, i) => {
       const id = `plat:${p.name}`;
       layoutNodes.push({
@@ -282,6 +309,7 @@ export default function NetworkView({
     onQuery,
     parentRunId,
     childRunIds,
+    isNarrow,
   ]);
 
   // Merge layout with user-dragged positions + expansion state, then keep
@@ -345,22 +373,24 @@ export default function NetworkView({
   const onPaneClick = useCallback(() => setExpandedIds(new Set()), []);
 
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      fitView
-      fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
-      proOptions={{ hideAttribution: true }}
-      nodesDraggable
-      nodesConnectable={false}
-      onNodesChange={onNodesChange}
-      onNodeDragStop={onNodeDragStop}
-      onNodeClick={onNodeClick}
-      onPaneClick={onPaneClick}
-    >
-      <Background color="#f5f5f5" gap={24} />
-      <Controls showInteractive={false} />
-    </ReactFlow>
+    <div className="h-full w-full">
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        fitView
+        fitViewOptions={{ padding: 0.2, maxZoom: 1 }}
+        proOptions={{ hideAttribution: true }}
+        nodesDraggable
+        nodesConnectable={false}
+        onNodesChange={onNodesChange}
+        onNodeDragStop={onNodeDragStop}
+        onNodeClick={onNodeClick}
+        onPaneClick={onPaneClick}
+      >
+        <Background color="#f5f5f5" gap={24} />
+        <Controls showInteractive={false} />
+      </ReactFlow>
+    </div>
   );
 }

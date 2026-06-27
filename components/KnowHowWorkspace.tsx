@@ -276,7 +276,7 @@ export default function KnowHowWorkspace({
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50">
-      <div className="mx-auto grid max-w-[1500px] gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
+      <div className="mx-auto grid grid-cols-1 max-w-[1500px] gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
         <aside className="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
@@ -293,7 +293,7 @@ export default function KnowHowWorkspace({
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             )}
           </div>
-          <nav className="space-y-1">
+          <nav className="flex gap-1.5 overflow-x-auto no-scrollbar xl:flex-col xl:gap-0 xl:space-y-1 xl:overflow-visible">
             {KNOW_HOW_MODULES.map((module) => {
               const done = taskProgress(module, progress);
               const active = module.key === selectedModule.key;
@@ -302,7 +302,7 @@ export default function KnowHowWorkspace({
                   key={module.key}
                   type="button"
                   onClick={() => selectModule(module)}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${
+                  className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs transition xl:w-full ${
                     active
                       ? "bg-neutral-900 text-white"
                       : "text-neutral-600 hover:bg-neutral-100"
@@ -372,7 +372,7 @@ export default function KnowHowWorkspace({
             </div>
           </section>
 
-          <section className="grid gap-3 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <InfoPanel
               icon={Target}
               title="What this helps you decide"
@@ -566,7 +566,7 @@ function ToolArea({
             Audience signals
           </h3>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <Metric label="Cohorts" value={cohorts.length.toLocaleString()} />
           <Metric label="Personas" value={personas.toLocaleString()} />
           <Metric
@@ -736,13 +736,13 @@ function FinancialTool({
         </p>
       ) : model ? (
         <div className="space-y-4">
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {financialMetrics(model).map((metric) => (
               <Metric key={metric.label} {...metric} />
             ))}
           </div>
           {baseTier && inputs ? (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <NumberField
                 label={`Base price (${baseTier.label})`}
                 value={baseTier.price}
@@ -1025,7 +1025,7 @@ function EvidencePanel({
         </p>
       ) : items.length > 0 ? (
         <>
-          <div className="grid gap-2 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {visibleItems.map(({ block, conclusion }) => (
               <EvidenceCard
                 key={conclusion.id}

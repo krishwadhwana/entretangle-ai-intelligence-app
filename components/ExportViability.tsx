@@ -517,7 +517,7 @@ export default function ExportViability({ runId, targetMarket }: Props) {
             </div>
 
             {/* Cost waterfalls */}
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               {report.scenarios.map((s) => (
                 <div key={s.path} className="rounded-xl border border-neutral-200 bg-white p-4">
                   <div className="mb-2 flex items-center justify-between">
