@@ -14,6 +14,10 @@
     "lint": "next lint",
     "postinstall": "prisma generate",
     "db:migrate": "prisma db push",
+    "db:migrate:dev": "prisma migrate dev",
+    "db:deploy": "prisma migrate deploy",
+    "db:migrate:status": "prisma migrate status",
+    "check:run-invariants": "tsx scripts/run-invariants.ts",
     "intel:companies": "tsx scripts/intel/refresh-companies.ts",
     "intel:founders": "tsx scripts/intel/refresh-founders.ts",
     "migrate:assets": "tsx scripts/migrate-assets-to-r2.ts"
