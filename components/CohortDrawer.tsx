@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type { CohortWithPersonas } from "./useRunEvents";
+import { SidebarCollapseButton } from "./CollapsibleSidebar";
 import PersonaInteraction, { type PickablePersona } from "./PersonaInteraction";
 import { regionForLocality } from "@/lib/datasources/politicalGeography";
 import { SEGMENT_COLORS } from "./segments";
@@ -315,6 +316,7 @@ export default function CohortDrawer({
     );
   });
   const resizing = useRef(false);
+  const [collapsed, setCollapsed] = useState(false);
   const [chatOpen, setChatOpen] = useState(false);
   const [chatMode, setChatMode] = useState<ChatMode>("customer");
   const [selectedPersonaId, setSelectedPersonaId] = useState(
@@ -565,20 +567,54 @@ export default function CohortDrawer({
   return (
     <aside
       className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl max-sm:inset-0 max-sm:!w-full max-sm:!max-w-none max-sm:border-l-0"
-      style={{ width }}
+      style={{ width: collapsed ? 56 : width }}
     >
-      <button
-        type="button"
-        onMouseDown={startResize}
-        className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500 max-sm:hidden"
-        title="Resize drawer"
-        aria-label="Resize persona drawer"
+      {/* DESKTOP collapsed rail (mobile always shows the full drawer). */}
+      <div
+        className={`h-full flex-col items-center gap-2 p-2 ${
+          collapsed ? "hidden sm:flex" : "hidden"
+        }`}
       >
-        <span className="rounded-full border border-neutral-200 bg-white py-2 shadow-sm">
-          <GripVertical className="h-4 w-4" />
+        <SidebarCollapseButton
+          collapsed
+          onToggle={() => setCollapsed(false)}
+          title="persona drawer"
+          side="right"
+        />
+        <button
+          onClick={onClose}
+          title="Close drawer"
+          aria-label="Close drawer"
+          className="text-neutral-400 hover:text-neutral-700"
+        >
+          <X className="h-4 w-4" />
+        </button>
+        <span
+          className="mt-1 h-3 w-3 shrink-0 rounded-full"
+          style={{ background: SEGMENT_COLORS[cohort.segment] }}
+        />
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 [writing-mode:vertical-rl]">
+          {cohort.label}
         </span>
-      </button>
-      <header className="flex items-start gap-2 border-b border-neutral-200 p-4">
+      </div>
+      {!collapsed ? (
+        <button
+          type="button"
+          onMouseDown={startResize}
+          className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500 max-sm:hidden"
+          title="Resize drawer"
+          aria-label="Resize persona drawer"
+        >
+          <span className="rounded-full border border-neutral-200 bg-white py-2 shadow-sm">
+            <GripVertical className="h-4 w-4" />
+          </span>
+        </button>
+      ) : null}
+      <header
+        className={`items-start gap-2 border-b border-neutral-200 p-4 ${
+          collapsed ? "flex sm:hidden" : "flex"
+        }`}
+      >
         <span
           className="mt-1 h-3 w-3 shrink-0 rounded-full"
           style={{ background: SEGMENT_COLORS[cohort.segment] }}
@@ -619,12 +655,22 @@ export default function CohortDrawer({
         >
           <Sparkles className="h-3.5 w-3.5" /> Interact
         </button>
+        <SidebarCollapseButton
+          collapsed={false}
+          onToggle={() => setCollapsed(true)}
+          title="persona drawer"
+          side="right"
+          className="max-sm:hidden"
+        />
         <button onClick={onClose} className="text-neutral-400 hover:text-neutral-700">
           <X className="h-4 w-4" />
         </button>
       </header>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4">
+      <div
+        ref={scrollRef}
+        className={`flex-1 overflow-y-auto p-4 ${collapsed ? "sm:hidden" : ""}`}
+      >
         {cohort.summary && (
           <p className="mb-3 rounded-lg bg-neutral-50 p-2.5 text-xs leading-relaxed text-neutral-600">
             {cohort.summary}

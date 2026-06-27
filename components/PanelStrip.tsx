@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Star,
   CornerDownLeft,
@@ -30,6 +31,7 @@ import { DOMAIN_META, DOMAIN_ORDER } from "./domains";
 import { downloadDossier, slug, type Dossier, type DossierSection } from "./pdf";
 import ScrollRow from "./ui/ScrollRow";
 import PortalMenu from "./ui/PortalMenu";
+import { SidebarCollapseButton } from "./CollapsibleSidebar";
 
 function StateDot({ state }: { state: Block["state"] }) {
   if (state === "concluded")
@@ -374,6 +376,48 @@ const FORESIGHT_PROMPTS = [
   },
 ] as const;
 
+// Right-hand content panel that collapses on desktop (lg+) to reclaim width for
+// the main column. On mobile it always shows full content (stacked). When
+// collapsed on desktop it becomes a thin rail with an expand button.
+function SidePanel({
+  collapsed,
+  onToggle,
+  children,
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <>
+      {collapsed ? (
+        <aside className="hidden self-start lg:flex lg:w-11 lg:flex-col lg:items-center lg:gap-2 lg:rounded-xl lg:border lg:border-neutral-200 lg:bg-white lg:p-2">
+          <SidebarCollapseButton
+            collapsed
+            onToggle={onToggle}
+            title="side panel"
+            side="right"
+          />
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 [writing-mode:vertical-rl]">
+            Panel
+          </span>
+        </aside>
+      ) : null}
+      <aside className={`space-y-3 ${collapsed ? "lg:hidden" : "lg:w-[22rem]"}`}>
+        <div className="hidden justify-end lg:flex">
+          <SidebarCollapseButton
+            collapsed={false}
+            onToggle={onToggle}
+            title="side panel"
+            side="right"
+          />
+        </div>
+        {children}
+      </aside>
+    </>
+  );
+}
+
 export function ConclusionWorkspace({
   state,
   onQuery,
@@ -407,6 +451,7 @@ export function ConclusionWorkspace({
   }, [state.blocks]);
   const [question, setQuestion] = useState("");
   const [tab, setTab] = useState<ConclusionTab>("report");
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(false);
   const questionInputRef = useRef<HTMLInputElement>(null);
   // Turns asked this session — persisted turns arrive via state.conversation on
   // reload, so these only cover the current page load (no double-render: the
@@ -821,7 +866,7 @@ export function ConclusionWorkspace({
         </div>
 
         {tab === "report" && (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
             <div className="space-y-2">
               <FinalReportView
                 report={report}
@@ -829,15 +874,18 @@ export function ConclusionWorkspace({
                 onCite={onCite}
               />
             </div>
-            <aside className="space-y-3">
+            <SidePanel
+              collapsed={sidePanelCollapsed}
+              onToggle={() => setSidePanelCollapsed((value) => !value)}
+            >
               {worldSummaryPanel}
               {renderAskPanel("Ask the model")}
-            </aside>
+            </SidePanel>
           </div>
         )}
 
         {tab === "followups" && (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -862,15 +910,18 @@ export function ConclusionWorkspace({
               </div>
               {renderFollowUpList()}
             </div>
-            <aside className="space-y-3">
+            <SidePanel
+              collapsed={sidePanelCollapsed}
+              onToggle={() => setSidePanelCollapsed((value) => !value)}
+            >
               {renderAskPanel("New follow-up")}
               {worldSummaryPanel}
-            </aside>
+            </SidePanel>
           </div>
         )}
 
         {tab === "foresight" && (
-          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
             <div className="space-y-3">
               <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
                 {FORESIGHT_PROMPTS.map((item) => (
@@ -928,10 +979,13 @@ export function ConclusionWorkspace({
                 </div>
               </div>
             </div>
-            <aside className="space-y-3">
+            <SidePanel
+              collapsed={sidePanelCollapsed}
+              onToggle={() => setSidePanelCollapsed((value) => !value)}
+            >
               {renderAskPanel("Foresight follow-up")}
               {worldSummaryPanel}
-            </aside>
+            </SidePanel>
           </div>
         )}
       </div>
