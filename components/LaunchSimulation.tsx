@@ -1263,17 +1263,17 @@ export default function LaunchSimulation({
             </div>
           )}
 
-          <div className="mt-4 flex items-center gap-2">
+          <div className="mt-4 flex flex-wrap items-center gap-2">
             <input
               value={name}
               onChange={(e) => setName(e.target.value)}
-              className="w-40 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500"
+              className="w-full min-w-0 rounded-lg border border-neutral-300 px-2.5 py-1.5 text-xs outline-none focus:border-indigo-500 sm:w-40"
               placeholder="Scenario name"
             />
             <button
               onClick={run}
               disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+              className="flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-indigo-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-indigo-500 disabled:opacity-60 sm:flex-none"
             >
               {busy ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1288,7 +1288,7 @@ export default function LaunchSimulation({
                 onClick={() => void sourceMarketData()}
                 disabled={sourcing}
                 title="Web-search current, cited benchmarks for this venture's market & category, then apply them to the priors"
-                className="flex items-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-60"
+                className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-neutral-300 px-3 py-1.5 text-xs font-medium text-neutral-600 hover:border-indigo-400 hover:text-indigo-600 disabled:opacity-60 sm:flex-none"
               >
                 {sourcing ? (
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -2260,11 +2260,11 @@ function Results({
 
   return (
     <div className="space-y-5">
-      <div className="flex items-start justify-between gap-2">
+      <div className="flex flex-col items-stretch gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-2">
         <div className="min-w-0 flex-1">
           <Readout diagnostics={result.diagnostics} />
         </div>
-        <div className="flex shrink-0 flex-wrap justify-end gap-2">
+        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
           <button
             onClick={exportAnimatedReport}
             title="Export an animated launch report as a self-contained HTML file"

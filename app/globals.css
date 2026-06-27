@@ -38,3 +38,14 @@ body {
 .pulse-amber {
   animation: pulse-amber 1.2s ease-in-out infinite;
 }
+
+/* Horizontal scroll strips for mobile toolbars: hide the scrollbar but keep
+   swipe/scroll behaviour. Used by ScrollRow and the bar refactors. */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

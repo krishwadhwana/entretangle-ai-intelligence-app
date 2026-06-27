@@ -604,8 +604,8 @@ function ProjectWorkspaceRail({
   onSelect: (id: string) => void;
 }) {
   return (
-    <nav className="space-y-1 rounded-lg border border-neutral-200 bg-white p-2">
-      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+    <nav className="flex gap-1 overflow-x-auto no-scrollbar rounded-lg border border-neutral-200 bg-white p-2 xl:flex-col xl:space-y-1 xl:overflow-visible">
+      <p className="hidden px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 xl:block">
         Workspace
       </p>
       {items.map((item) => {
@@ -616,7 +616,7 @@ function ProjectWorkspaceRail({
             key={item.id}
             type="button"
             onClick={() => onSelect(item.id)}
-            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs font-medium transition-colors ${
+            className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-md px-2 py-2 text-left text-xs font-medium transition-colors xl:w-full ${
               active
                 ? "bg-neutral-900 text-white"
                 : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
@@ -2743,7 +2743,7 @@ function ProjectSidebar({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
+    <aside className="hidden min-h-0 flex-col border-r border-neutral-200 bg-white md:flex">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
           Projects
@@ -5566,7 +5566,7 @@ function IntakePageInner() {
             </div>
           </div>
         )}
-        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6">
+        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 overflow-x-clip px-4 py-4 sm:px-5 lg:px-6">
           <header className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:flex lg:items-center lg:justify-between">
             <div className="max-w-3xl">
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -6421,7 +6421,7 @@ function IntakePageInner() {
         />
 
         <section className="min-h-0 overflow-y-auto px-4 py-6">
-          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
@@ -6791,8 +6791,8 @@ function IntakePageInner() {
       />
 
       <section className="min-h-0 overflow-hidden">
-        <div className="grid h-full grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)]">
-          <aside className="min-h-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-4">
+        <div className="flex h-full min-h-0 flex-col xl:grid xl:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="shrink-0 border-b border-neutral-200 bg-neutral-50 p-2 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r xl:p-4">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
@@ -6800,7 +6800,7 @@ function IntakePageInner() {
             />
           </aside>
 
-          <div className="min-w-0 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
             <div className="mx-auto max-w-6xl space-y-5">
               <header
                 id="workspace-overview"

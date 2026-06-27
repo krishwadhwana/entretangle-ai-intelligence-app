@@ -36,7 +36,7 @@ function Card({
 }) {
   return (
     <section
-      className={`rounded-xl border border-neutral-200 bg-white p-4 ${wide ? "col-span-2" : ""}`}
+      className={`rounded-xl border border-neutral-200 bg-white p-4 ${wide ? "md:col-span-2" : ""}`}
     >
       <h3 className="mb-3 text-xs font-semibold text-neutral-700">{title}</h3>
       {children}

@@ -28,6 +28,8 @@ import type { Block, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { DOMAIN_META, DOMAIN_ORDER } from "./domains";
 import { downloadDossier, slug, type Dossier, type DossierSection } from "./pdf";
+import ScrollRow from "./ui/ScrollRow";
+import PortalMenu from "./ui/PortalMenu";
 
 function StateDot({ state }: { state: Block["state"] }) {
   if (state === "concluded")
@@ -1083,8 +1085,6 @@ export default function PanelStrip({
   isExportRun,
 }: Props) {
   const byDomain = useBlocksByDomain(state);
-  const [researchOpen, setResearchOpen] = useState(false);
-  const researchRef = useRef<HTMLDivElement>(null);
   const mainViews = [
     { id: "geo", label: "Geography", icon: Globe2 },
     { id: "network", label: "Network", icon: Network },
@@ -1098,22 +1098,9 @@ export default function PanelStrip({
   const activeDomainMeta = activeDomain ? DOMAIN_META[activeDomain] : null;
   const ActiveDomainIcon = activeDomainMeta?.icon ?? BookOpen;
 
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (
-        researchRef.current &&
-        !researchRef.current.contains(e.target as Node)
-      ) {
-        setResearchOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
-  }, []);
-
   return (
     <div className="border-b border-neutral-200 bg-neutral-50/60">
-      <div className="flex flex-wrap items-center gap-1.5 overflow-visible px-4 py-2">
+      <ScrollRow className="gap-1.5 px-4 py-2">
         <span className="shrink-0 pr-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
           Views
         </span>
@@ -1135,67 +1122,66 @@ export default function PanelStrip({
           );
         })}
         <div className="mx-2 h-5 w-px shrink-0 bg-neutral-200" />
-        <div className="relative shrink-0" ref={researchRef}>
-          <button
-            onClick={() => setResearchOpen((open) => !open)}
-            className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
-              activeDomain
-                ? "border-neutral-900 bg-neutral-900 text-white"
-                : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
-            }`}
-          >
-            <ActiveDomainIcon className="h-3.5 w-3.5" />
-            {activeDomainMeta?.label ?? "Research modules"}
-            {activeDomain && byDomain.has(activeDomain) && (
-              <span className="rounded-full bg-white/20 px-1.5 text-[9px]">
-                {
-                  byDomain
-                    .get(activeDomain)!
-                    .filter((b) => b.state === "concluded").length
-                }
-                /{byDomain.get(activeDomain)!.length}
-              </span>
-            )}
-          </button>
-          {researchOpen && (
-            <div className="absolute left-0 z-[1200] mt-1.5 max-h-96 w-72 overflow-y-auto rounded-xl border border-neutral-200 bg-white p-1 shadow-lg">
-              {DOMAIN_ORDER.filter((d) => byDomain.has(d)).map((d) => {
-                const meta = DOMAIN_META[d];
-                const blocks = byDomain.get(d)!;
-                const done = blocks.filter(
-                  (b) => b.state === "concluded"
-                ).length;
-                const Icon = meta.icon;
-                const active = activePanel === d;
-                return (
-                  <button
-                    key={d}
-                    onClick={() => {
-                      setResearchOpen(false);
-                      onSelectPanel(d);
-                    }}
-                    className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${
-                      active
-                        ? "bg-neutral-900 text-white"
-                        : "text-neutral-700 hover:bg-neutral-50"
+        <PortalMenu
+          align="left"
+          panelClassName="w-72"
+          buttonClassName={`flex shrink-0 items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-[11px] font-medium transition-colors ${
+            activeDomain
+              ? "border-neutral-900 bg-neutral-900 text-white"
+              : "border-neutral-200 bg-white text-neutral-600 hover:border-neutral-400"
+          }`}
+          button={
+            <>
+              <ActiveDomainIcon className="h-3.5 w-3.5" />
+              {activeDomainMeta?.label ?? "Research modules"}
+              {activeDomain && byDomain.has(activeDomain) && (
+                <span className="rounded-full bg-white/20 px-1.5 text-[9px]">
+                  {
+                    byDomain
+                      .get(activeDomain)!
+                      .filter((b) => b.state === "concluded").length
+                  }
+                  /{byDomain.get(activeDomain)!.length}
+                </span>
+              )}
+            </>
+          }
+        >
+          {(close) =>
+            DOMAIN_ORDER.filter((d) => byDomain.has(d)).map((d) => {
+              const meta = DOMAIN_META[d];
+              const blocks = byDomain.get(d)!;
+              const done = blocks.filter((b) => b.state === "concluded").length;
+              const Icon = meta.icon;
+              const active = activePanel === d;
+              return (
+                <button
+                  key={d}
+                  onClick={() => {
+                    close();
+                    onSelectPanel(d);
+                  }}
+                  className={`flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs ${
+                    active
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-700 hover:bg-neutral-50"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="flex-1">{meta.label}</span>
+                  <span
+                    className={`rounded-full px-1.5 text-[10px] ${
+                      active ? "bg-white/20" : "bg-neutral-100 text-neutral-500"
                     }`}
                   >
-                    <Icon className="h-3.5 w-3.5 shrink-0" />
-                    <span className="flex-1">{meta.label}</span>
-                    <span
-                      className={`rounded-full px-1.5 text-[10px] ${
-                        active ? "bg-white/20" : "bg-neutral-100 text-neutral-500"
-                      }`}
-                    >
-                      {done}/{blocks.length}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-        <div className="flex-1" />
+                    {done}/{blocks.length}
+                  </span>
+                </button>
+              );
+            })
+          }
+        </PortalMenu>
+        <div className="hidden flex-1 lg:block" />
         <button
           onClick={() => canLaunch && onSelectMainView("launch")}
           disabled={!canLaunch}
@@ -1244,7 +1230,7 @@ export default function PanelStrip({
           <Star className="h-3.5 w-3.5" />
           Conclusion
         </button>
-      </div>
+      </ScrollRow>
     </div>
   );
 }
