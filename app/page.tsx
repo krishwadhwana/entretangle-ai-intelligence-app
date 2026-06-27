@@ -6946,12 +6946,14 @@ function IntakePageInner() {
                     </span>
                   </div>
                 </div>
-                <ModuleRegistryGrid
-                  modules={businessModules}
-                  savingId={savingModuleIntentId}
-                  onSaveIntent={saveModuleIntent}
-                  onOpenModule={openBusinessModule}
-                />
+                {activeWorkspaceSection === "workspace-modules" && (
+                  <ModuleRegistryGrid
+                    modules={businessModules}
+                    savingId={savingModuleIntentId}
+                    onSaveIntent={saveModuleIntent}
+                    onOpenModule={openBusinessModule}
+                  />
+                )}
               </section>
 
               <section
@@ -6974,31 +6976,33 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-work" ? "" : "hidden"
                 }
               >
-                <ModuleWorkspaceHub
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  workspaceNodes={projectWorkspaceNodes}
-                  folders={workspaceFolders}
-                  campaigns={workspaceCampaigns}
-                  exportNodes={workspaceExportNodes}
-                  savingKey={savingWorkspaceKey}
-                  deletingKey={deletingWorkspaceItemId}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSaveFolder={saveWorkspaceFolder}
-                  onSaveCampaign={saveWorkspaceCampaign}
-                  onDeleteWorkspaceItem={deleteWorkspaceItem}
-                  onCreateSubfolder={(parentId) =>
-                    void createWorkspaceFolder(
-                      "project",
-                      parentId,
-                      selectedWorkspaceModuleId,
-                    )
-                  }
-                  onNoteNode={openWorkspaceNodeNote}
-                  onRenameNode={renameWorkspaceNode}
-                  onDeleteNode={deleteWorkspaceNode}
-                  onOpenExport={(node) => void downloadSavedExport(node)}
-                />
+                {activeWorkspaceSection === "workspace-work" && (
+                  <ModuleWorkspaceHub
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    workspaceNodes={projectWorkspaceNodes}
+                    folders={workspaceFolders}
+                    campaigns={workspaceCampaigns}
+                    exportNodes={workspaceExportNodes}
+                    savingKey={savingWorkspaceKey}
+                    deletingKey={deletingWorkspaceItemId}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSaveFolder={saveWorkspaceFolder}
+                    onSaveCampaign={saveWorkspaceCampaign}
+                    onDeleteWorkspaceItem={deleteWorkspaceItem}
+                    onCreateSubfolder={(parentId) =>
+                      void createWorkspaceFolder(
+                        "project",
+                        parentId,
+                        selectedWorkspaceModuleId,
+                      )
+                    }
+                    onNoteNode={openWorkspaceNodeNote}
+                    onRenameNode={renameWorkspaceNode}
+                    onDeleteNode={deleteWorkspaceNode}
+                    onOpenExport={(node) => void downloadSavedExport(node)}
+                  />
+                )}
               </section>
 
               <section
@@ -7008,14 +7012,16 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <GenerationControls
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  preferences={generationPrefs}
-                  savingKey={savingWorkspaceKey}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSavePreference={saveGenerationPreference}
-                />
+                {activeWorkspaceSection === "workspace-generations" && (
+                  <GenerationControls
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    preferences={generationPrefs}
+                    savingKey={savingWorkspaceKey}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSavePreference={saveGenerationPreference}
+                  />
+                )}
               </section>
 
               <section
