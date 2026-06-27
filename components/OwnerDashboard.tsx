@@ -18,6 +18,9 @@ import type {
   InspirationSection as InspirationState,
 } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "./CollapsibleSidebar";
 import BrandSocialSection from "./BrandSocialSection";
 import DesignStudioSection from "./DesignStudioSection";
 import FinancialsSection from "./FinancialsSection";
@@ -60,6 +63,7 @@ export default function OwnerDashboard({
   state: CanvasState;
 }) {
   const [section, setSection] = useState<SectionId>("investor");
+  const [railCollapsed, setRailCollapsed] = useState(false);
   const [founderStory, setFounderStory] = useState<FounderStoryState | null>(
     null
   );
@@ -114,15 +118,78 @@ export default function OwnerDashboard({
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-white md:flex-row">
-      {/* Section rail — a horizontal scroll strip on mobile, a vertical
-          sidebar from md up. */}
-      <nav className="shrink-0 border-b border-neutral-200 bg-neutral-50/60 md:w-48 md:border-b-0 md:border-r">
-        <div className="hidden items-center gap-1.5 px-4 pb-1 pt-3 text-[11px] font-semibold uppercase tracking-wide text-neutral-400 md:flex">
-          <LayoutDashboard className="h-3.5 w-3.5" /> Owner Dashboard
-        </div>
+      {/* Section rail — MOBILE: a horizontal scroll strip (origin's compact
+          bar). Hidden from md up, where the collapsible desktop rail takes over. */}
+      <nav className="shrink-0 border-b border-neutral-200 bg-neutral-50/60 md:hidden">
         <div className="relative">
-        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-neutral-50 to-transparent md:hidden" />
-        <div className="flex gap-1 overflow-x-auto no-scrollbar px-2 py-2 md:flex-col md:gap-0 md:overflow-visible md:px-3 md:pb-3 md:pt-1">
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-neutral-50 to-transparent" />
+          <div className="flex gap-1 overflow-x-auto no-scrollbar px-2 py-2">
+            {SECTIONS.map((s) => {
+              const Icon = s.icon;
+              const active = section === s.id;
+              return (
+                <button
+                  key={s.id}
+                  onClick={() => setSection(s.id)}
+                  className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors ${
+                    active
+                      ? "bg-indigo-600 text-white"
+                      : "text-neutral-600 hover:bg-neutral-100"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" /> {s.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </nav>
+
+      {/* Section rail — DESKTOP (md+): a collapsible vertical sidebar. */}
+      <CollapsibleSidebar
+        as="nav"
+        title="owner dashboard sidebar"
+        collapsed={railCollapsed}
+        onToggle={() => setRailCollapsed((collapsed) => !collapsed)}
+        expandedClassName="hidden shrink-0 border-r border-neutral-200 bg-neutral-50/60 p-3 md:block md:w-48"
+        collapsedClassName="hidden shrink-0 border-r border-neutral-200 bg-neutral-50/60 md:block md:w-14"
+        collapsedChildren={
+          <div className="flex w-full flex-col items-center gap-1">
+            {SECTIONS.map((s) => {
+              const Icon = s.icon;
+              const active = section === s.id;
+              return (
+                <button
+                  key={s.id}
+                  type="button"
+                  onClick={() => setSection(s.id)}
+                  title={s.label}
+                  aria-label={s.label}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg transition-colors ${
+                    active
+                      ? "bg-indigo-600 text-white"
+                      : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                </button>
+              );
+            })}
+          </div>
+        }
+      >
+        <div className="mb-2 flex items-center justify-between gap-2 px-1">
+          <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+            <LayoutDashboard className="h-3.5 w-3.5 shrink-0" />
+            <span className="truncate">Owner Dashboard</span>
+          </div>
+          <SidebarCollapseButton
+            collapsed={railCollapsed}
+            onToggle={() => setRailCollapsed((collapsed) => !collapsed)}
+            title="owner dashboard sidebar"
+          />
+        </div>
+        <div className="flex flex-col">
           {SECTIONS.map((s) => {
             const Icon = s.icon;
             const active = section === s.id;
@@ -130,7 +197,7 @@ export default function OwnerDashboard({
               <button
                 key={s.id}
                 onClick={() => setSection(s.id)}
-                className={`flex shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors md:mb-1 md:w-full ${
+                className={`mb-1 flex w-full items-center gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs font-medium transition-colors ${
                   active
                     ? "bg-indigo-600 text-white"
                     : "text-neutral-600 hover:bg-neutral-100"
@@ -141,11 +208,10 @@ export default function OwnerDashboard({
             );
           })}
         </div>
-        </div>
-        <p className="hidden px-4 pb-3 text-[10px] leading-relaxed text-neutral-400 md:block">
+        <p className="px-1 pt-2 text-[10px] leading-relaxed text-neutral-400">
           More owner tools coming here.
         </p>
-      </nav>
+      </CollapsibleSidebar>
 
       {/* Section body */}
       <div className="relative min-h-0 flex-1 overflow-y-auto">

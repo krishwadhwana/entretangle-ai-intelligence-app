@@ -72,6 +72,9 @@ import type {
   WebsiteAnalysis,
 } from "@/lib/schema";
 import dynamic from "next/dynamic";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "@/components/CollapsibleSidebar";
 import WorkspaceTree, {
   workspaceDescendantIds,
   workspacePathLabel,
@@ -624,51 +627,147 @@ function ProjectWorkspaceRail({
   activeId: string;
   onSelect: (id: string) => void;
 }) {
+  const [collapsed, setCollapsed] = useState(false);
   return (
-    <div className="relative">
-    <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 rounded-r-lg bg-gradient-to-l from-white to-transparent xl:hidden" />
-    <nav className="flex gap-1 overflow-x-auto no-scrollbar rounded-lg border border-neutral-200 bg-white p-2 xl:flex-col xl:space-y-1 xl:overflow-visible">
-      <p className="hidden px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 xl:block">
-        Workspace
-      </p>
-      {items.map((item) => {
-        const Icon = item.icon;
-        const active = item.id === activeId;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => onSelect(item.id)}
-            className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-md px-2 py-2 text-left text-xs font-medium transition-colors xl:w-full ${
-              active
-                ? "bg-neutral-900 text-white"
-                : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
-            }`}
-          >
-            <span className="flex min-w-0 items-center gap-2">
-              <Icon
-                className={`h-3.5 w-3.5 shrink-0 ${
-                  active ? "text-white" : "text-neutral-400"
-                }`}
-              />
-              <span className="truncate">{item.label}</span>
-            </span>
-            {typeof item.count === "number" ? (
-              <span
-                className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+    <>
+      {/* MOBILE / below-xl: origin's horizontal scroll rail. */}
+      <div className="relative xl:hidden">
+        <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 rounded-r-lg bg-gradient-to-l from-white to-transparent" />
+        <nav className="flex gap-1 overflow-x-auto no-scrollbar rounded-lg border border-neutral-200 bg-white p-2">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.id === activeId;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelect(item.id)}
+                className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-md px-2 py-2 text-left text-xs font-medium transition-colors ${
                   active
-                    ? "bg-white/15 text-white"
-                    : "bg-neutral-100 text-neutral-500"
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
                 }`}
               >
-                {item.count}
-              </span>
-            ) : null}
-          </button>
-        );
-      })}
-    </nav>
-    </div>
+                <span className="flex min-w-0 items-center gap-2">
+                  <Icon
+                    className={`h-3.5 w-3.5 shrink-0 ${
+                      active ? "text-white" : "text-neutral-400"
+                    }`}
+                  />
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {typeof item.count === "number" ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                      active
+                        ? "bg-white/15 text-white"
+                        : "bg-neutral-100 text-neutral-500"
+                    }`}
+                  >
+                    {item.count}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </nav>
+      </div>
+
+      {/* DESKTOP (xl+): a collapsible vertical rail. Width drives the parent
+          grid's `auto` track, so collapsing reclaims space automatically. */}
+      <CollapsibleSidebar
+        as="nav"
+        title="workspace sidebar"
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((value) => !value)}
+        expandedClassName="hidden h-fit rounded-lg border border-neutral-200 bg-white p-2 xl:block xl:w-[220px]"
+        collapsedClassName="hidden h-fit rounded-lg border border-neutral-200 bg-white xl:block xl:w-14"
+        collapsedChildren={
+          <div className="flex w-full flex-col items-center gap-1">
+            {items.map((item) => {
+              const Icon = item.icon;
+              const active = item.id === activeId;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => onSelect(item.id)}
+                  title={item.label}
+                  aria-label={item.label}
+                  className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                    active
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+                  }`}
+                >
+                  <Icon className="h-3.5 w-3.5" />
+                  {typeof item.count === "number" && item.count > 0 ? (
+                    <span
+                      className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
+                        active
+                          ? "bg-white text-neutral-900"
+                          : "bg-neutral-100 text-neutral-500"
+                      }`}
+                    >
+                      {item.count}
+                    </span>
+                  ) : null}
+                </button>
+              );
+            })}
+          </div>
+        }
+      >
+        <div className="mb-1 flex items-center justify-between gap-2 px-1">
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+            Workspace
+          </p>
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={() => setCollapsed((value) => !value)}
+            title="workspace sidebar"
+          />
+        </div>
+        <div className="flex flex-col space-y-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.id === activeId;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelect(item.id)}
+                className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-md px-2 py-2 text-left text-xs font-medium transition-colors ${
+                  active
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
+                }`}
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <Icon
+                    className={`h-3.5 w-3.5 shrink-0 ${
+                      active ? "text-white" : "text-neutral-400"
+                    }`}
+                  />
+                  <span className="truncate">{item.label}</span>
+                </span>
+                {typeof item.count === "number" ? (
+                  <span
+                    className={`rounded-full px-1.5 py-0.5 text-[10px] ${
+                      active
+                        ? "bg-white/15 text-white"
+                        : "bg-neutral-100 text-neutral-500"
+                    }`}
+                  >
+                    {item.count}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      </CollapsibleSidebar>
+    </>
   );
 }
 
@@ -6445,7 +6544,7 @@ function IntakePageInner() {
         />
 
         <section className="min-h-0 overflow-y-auto px-4 py-6">
-          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
+          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 xl:grid-cols-[auto_minmax(0,1fr)]">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
@@ -6818,8 +6917,8 @@ function IntakePageInner() {
       />
 
       <section className="min-h-0 overflow-hidden">
-        <div className="flex h-full min-h-0 flex-col xl:grid xl:grid-cols-[220px_minmax(0,1fr)]">
-          <aside className="shrink-0 border-b border-neutral-200 bg-neutral-50 p-2 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r xl:p-4">
+        <div className="flex h-full min-h-0 flex-col xl:grid xl:grid-cols-[auto_minmax(0,1fr)]">
+          <aside className="shrink-0 p-2 xl:min-h-0 xl:overflow-y-auto xl:p-3">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}

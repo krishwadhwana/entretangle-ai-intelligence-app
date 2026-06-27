@@ -43,6 +43,9 @@ import {
   type KnowHowModule,
   type KnowHowModuleKey,
 } from "@/lib/knowHow";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "./CollapsibleSidebar";
 import { DOMAIN_META } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
 import GlossaryText from "./GlossaryText";
@@ -150,6 +153,7 @@ export default function KnowHowWorkspace({
   const [progress, setProgress] = useState<KnowHowRunProgress>(EMPTY_PROGRESS);
   const [selectedKey, setSelectedKey] =
     useState<KnowHowModuleKey>("strategy");
+  const [moduleSidebarCollapsed, setModuleSidebarCollapsed] = useState(false);
   const [loadingProgress, setLoadingProgress] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -276,8 +280,15 @@ export default function KnowHowWorkspace({
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50">
-      <div className="mx-auto grid grid-cols-1 max-w-[1500px] gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
-        <aside className="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4">
+      <div
+        className={`mx-auto grid grid-cols-1 max-w-[1500px] gap-4 p-4 ${
+          moduleSidebarCollapsed
+            ? "xl:grid-cols-[56px_minmax(0,1fr)_340px]"
+            : "xl:grid-cols-[260px_minmax(0,1fr)_340px]"
+        }`}
+      >
+        {/* MOBILE / below-xl: origin's full-width module card. */}
+        <aside className="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:hidden">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -346,6 +357,125 @@ export default function KnowHowWorkspace({
             </p>
           ) : null}
         </aside>
+
+        {/* DESKTOP (xl+): a collapsible vertical module sidebar. */}
+        <CollapsibleSidebar
+          as="aside"
+          title="know-how modules sidebar"
+          collapsed={moduleSidebarCollapsed}
+          onToggle={() => setModuleSidebarCollapsed((collapsed) => !collapsed)}
+          expandedClassName="hidden h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4 xl:block"
+          collapsedClassName="hidden h-fit rounded-lg border border-neutral-200 bg-white xl:sticky xl:top-4 xl:block"
+          collapsedChildren={
+            <div className="flex w-full flex-col items-center gap-1">
+              {KNOW_HOW_MODULES.map((module) => {
+                const active = module.key === selectedModule.key;
+                const done = taskProgress(module, progress);
+                return (
+                  <button
+                    key={module.key}
+                    type="button"
+                    onClick={() => selectModule(module)}
+                    title={module.title}
+                    aria-label={module.title}
+                    className={`relative flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
+                      active
+                        ? "bg-neutral-900 text-white"
+                        : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                    }`}
+                  >
+                    {module.title.charAt(0)}
+                    {done > 0 ? (
+                      <span
+                        className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
+                          active
+                            ? "bg-white text-neutral-900"
+                            : "bg-neutral-100 text-neutral-500"
+                        }`}
+                      >
+                        {done}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          }
+        >
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                Know-How
+              </p>
+              <h2 className="truncate text-sm font-semibold text-neutral-950">
+                Operating workbench
+              </h2>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              {loadingProgress || saving ? (
+                <Loader2 className="h-4 w-4 animate-spin text-neutral-400" />
+              ) : (
+                <CheckCircle2 className="h-4 w-4 text-emerald-500" />
+              )}
+              <SidebarCollapseButton
+                collapsed={moduleSidebarCollapsed}
+                onToggle={() =>
+                  setModuleSidebarCollapsed((collapsed) => !collapsed)
+                }
+                title="know-how modules sidebar"
+              />
+            </div>
+          </div>
+          <nav className="flex flex-col space-y-1">
+            {KNOW_HOW_MODULES.map((module) => {
+              const done = taskProgress(module, progress);
+              const active = module.key === selectedModule.key;
+              return (
+                <button
+                  key={module.key}
+                  type="button"
+                  onClick={() => selectModule(module)}
+                  className={`flex w-full items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs transition ${
+                    active
+                      ? "bg-neutral-900 text-white"
+                      : "text-neutral-600 hover:bg-neutral-100"
+                  }`}
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate font-semibold">
+                      {module.title}
+                    </span>
+                    <span
+                      className={`mt-0.5 block text-[10px] ${
+                        active ? "text-neutral-300" : "text-neutral-400"
+                      }`}
+                    >
+                      {done}/{module.tasks.length} tasks
+                    </span>
+                  </span>
+                  {done === module.tasks.length ? (
+                    <Check className="h-3.5 w-3.5 shrink-0" />
+                  ) : (
+                    <span
+                      className={`shrink-0 rounded-full px-1.5 py-0.5 text-[10px] ${
+                        active
+                          ? "bg-white/10 text-white"
+                          : "bg-neutral-100 text-neutral-500"
+                      }`}
+                    >
+                      {done}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </nav>
+          {saveError ? (
+            <p className="mt-3 rounded-md bg-red-50 px-2 py-1.5 text-[11px] text-red-600">
+              {saveError}
+            </p>
+          ) : null}
+        </CollapsibleSidebar>
 
         <main className="min-w-0 space-y-4">
           <section className="rounded-lg border border-neutral-200 bg-white p-5">
