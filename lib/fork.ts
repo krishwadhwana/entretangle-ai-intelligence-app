@@ -50,6 +50,7 @@ export async function forkRun(
 
   const run = await prisma.run.create({
     data: {
+      ownerId: parent.ownerId,
       brief: parent.brief,
       clientProfile: parent.clientProfile,
       status: "running",

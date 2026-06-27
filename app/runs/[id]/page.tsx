@@ -1,4 +1,5 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { ensureRunAccess, getCurrentUser } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { config } from "@/lib/config";
 import RunDashboard from "@/components/RunDashboard";
@@ -11,6 +12,11 @@ export default async function RunPage({
 }: {
   params: { id: string };
 }) {
+  const user = await getCurrentUser();
+  if (!user) redirect("/login");
+  const access = await ensureRunAccess(params.id, user.id);
+  if (!access) notFound();
+
   const run = await prisma.run.findUnique({
     where: { id: params.id },
     select: {

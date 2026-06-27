@@ -1,8 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { signOut, useSession } from "next-auth/react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { ChevronDown, FolderOpen, Pencil, Plus, Trash2 } from "lucide-react";
+import {
+  ChevronDown,
+  FolderOpen,
+  LogOut,
+  Pencil,
+  Plus,
+  Trash2,
+  UserCircle,
+} from "lucide-react";
 
 // Global header: switch / create / rename / delete projects. Selection is
 // carried in the URL (/?project=<id>) so the intake page restores the right
@@ -219,8 +228,17 @@ export function ProjectSelector({
 export default function AppHeader() {
   const pathname = usePathname();
   const router = useRouter();
+  const { data: session, status } = useSession();
 
-  if (pathname.startsWith("/runs/")) {
+  if (
+    pathname.startsWith("/runs/") ||
+    pathname.startsWith("/login") ||
+    pathname.startsWith("/auth/")
+  ) {
+    return null;
+  }
+
+  if (status !== "authenticated") {
     return null;
   }
 
@@ -259,6 +277,20 @@ export default function AppHeader() {
           New
         </button>
         <ProjectSelector />
+        <div className="hidden max-w-48 items-center gap-1.5 truncate rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-600 sm:flex">
+          <UserCircle className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+          <span className="truncate" title={session.user?.email ?? ""}>
+            {session.user?.name || session.user?.email || "Account"}
+          </span>
+        </div>
+        <button
+          type="button"
+          onClick={() => void signOut({ callbackUrl: "/login" })}
+          className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50"
+          title="Sign out"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </button>
       </div>
     </header>
   );

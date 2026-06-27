@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { enqueueRunJob } from "@/lib/jobs";
@@ -52,6 +53,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const body = AddAudienceLocalitySchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
@@ -112,6 +115,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const cohortId = req.nextUrl.searchParams.get("cohortId");
   if (!cohortId) {
     return NextResponse.json({ error: "cohortId required" }, { status: 400 });

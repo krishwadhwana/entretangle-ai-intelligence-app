@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi, requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { callFinancialInputs } from "@/lib/llm";
 import { conclusionToWire } from "@/lib/wire";
@@ -56,6 +57,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const run = await prisma.run.findUnique({ where: { id: params.id } });
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (!["complete", "capped"].includes(run.status)) {
@@ -68,6 +71,10 @@ export async function POST(
   const body = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+  if (body.data.projectId) {
+    const projectAuth = await requireProjectForApi(body.data.projectId);
+    if (projectAuth.response) return projectAuth.response;
   }
   const override = body.data.inputs ?? null;
   const editedKeys = body.data.editedKeys;

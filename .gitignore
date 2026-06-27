@@ -6,6 +6,7 @@
 .claude
 .codersinflow
 .codex
+.idea
 .env
 .env.local
 .env.*-backup

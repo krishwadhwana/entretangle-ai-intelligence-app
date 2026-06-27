@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi, requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { getFinancialModel, getMarketData } from "@/lib/store";
 import { simulateLaunch, type LaunchPersona } from "@/lib/launchSim";
@@ -143,6 +144,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const run = await prisma.run.findUnique({ where: { id: params.id } });
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
 
@@ -329,6 +332,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const run = await prisma.run.findUnique({ where: { id: params.id } });
   if (!run) return NextResponse.json({ error: "not found" }, { status: 404 });
   if (!["complete", "capped"].includes(run.status)) {
@@ -341,6 +346,10 @@ export async function POST(
   const body = BodySchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+  if (body.data.projectId) {
+    const projectAuth = await requireProjectForApi(body.data.projectId);
+    if (projectAuth.response) return projectAuth.response;
   }
 
   const { personas, currency } = await loadPersonas(run.id);
@@ -444,6 +453,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const scenarioId = new URL(req.url).searchParams.get("scenarioId");
   if (!scenarioId) {
     return NextResponse.json({ error: "scenarioId required" }, { status: 400 });
@@ -461,6 +472,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const scenarioId = new URL(req.url).searchParams.get("scenarioId");
   if (!scenarioId) {
     return NextResponse.json({ error: "scenarioId required" }, { status: 400 });

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { getProject, saveVentureProfile } from "@/lib/store";
 import {
   deleteProductImageFile,
@@ -12,7 +13,9 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string; imageId: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   const image = project?.ventureProfile?.productImages?.find(
     (item) => item.id === params.imageId
   );
@@ -45,7 +48,9 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string; imageId: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   const profile = project?.ventureProfile;
   const image = profile?.productImages?.find(
     (item) => item.id === params.imageId

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { withDbRetry } from "@/lib/db";
 import {
   deleteProjectWorkspaceItem,
@@ -40,8 +41,10 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
-    const project = await withDbRetry(() => getProjectLean(params.id));
+    const project = await withDbRetry(() => getProjectLean(params.id, auth.user.id));
     if (!project) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
@@ -157,6 +160,8 @@ export async function PATCH(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const body = PatchSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
@@ -253,6 +258,8 @@ export async function DELETE(
   _req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     await deleteProject(params.id);
   } catch {

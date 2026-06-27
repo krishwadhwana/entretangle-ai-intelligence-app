@@ -24,6 +24,8 @@ import {
   RefreshCw,
   Rocket,
   Save,
+  Scissors,
+  ShoppingCart,
   Trash2,
   Type,
   Upload,
@@ -35,6 +37,7 @@ import type {
   DesignStudioSection as DesignStudioState,
   DesignTokens,
   LogoAsset,
+  ProductImageRef,
   SiteAsset,
   SiteFile,
 } from "@/lib/schema";
@@ -48,6 +51,9 @@ import {
   googleFontUrlForFamilies,
   googleFontUrlForFamily,
 } from "@/lib/design/fontLibrary";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "./CollapsibleSidebar";
 
 // Max uploaded font size. Fonts ride inline (base64) in the tokens JSON, so keep
 // them small enough to stay well under request/JSONB limits.
@@ -62,13 +68,31 @@ type GenerationRunMeta = {
   generationRunCreatedAt: string;
   generationRunStamp: string;
 };
+type SocialImageUsage = "product-reference" | "social-inspiration";
+type SocialPromptSnapshot = NonNullable<DesignAsset["socialPrompt"]>;
+type CampaignPackDraft = {
+  name: string;
+  label: string;
+  note: string;
+};
 type AdRunFolder = {
   id: string;
-  label: string;
+  name: string;
+  defaultName: string;
+  packLabel?: string;
+  packNote?: string;
+  packUpdatedAt?: string;
   createdAtMs: number;
   stamp?: string;
   templateFrameEnabled?: boolean;
+  socialPrompt?: SocialPromptSnapshot;
   assets: DesignAsset[];
+};
+
+const EMPTY_CAMPAIGN_PACK_DRAFT: CampaignPackDraft = {
+  name: "",
+  label: "",
+  note: "",
 };
 
 const AD_CAMPAIGN_VARIANTS = [
@@ -148,6 +172,26 @@ function campaignScenePrompt(
   return variant.visuals[seededIndex(runId, index, variant.visuals.length)];
 }
 
+function productImageUsage(ref: ProductImageRef): SocialImageUsage {
+  if (ref.usage === "social-inspiration") return "social-inspiration";
+  if ((ref.tags ?? []).some((tag) => /social[-\s]?inspiration/i.test(tag))) {
+    return "social-inspiration";
+  }
+  return "product-reference";
+}
+
+function socialPromptFromAsset(asset: DesignAsset): SocialPromptSnapshot | null {
+  if (asset.socialPrompt) {
+    return {
+      brief: asset.socialPrompt.brief ?? "",
+      visualBrief: asset.socialPrompt.visualBrief ?? "",
+      templateBrief: asset.socialPrompt.templateBrief ?? "",
+      useTemplates: Boolean(asset.socialPrompt.useTemplates),
+    };
+  }
+  return null;
+}
+
 function istParts(date: Date): Record<string, string> {
   return Object.fromEntries(
     new Intl.DateTimeFormat("en-GB", {
@@ -189,29 +233,56 @@ function buildAdRunFolders(adAssets: DesignAsset[]): AdRunFolder[] {
     const id = asset.generationRunId || "legacy-ad-assets";
     const createdAt = Date.parse(asset.generationRunCreatedAt || asset.createdAt);
     const prior = byId.get(id);
+    const socialPrompt = socialPromptFromAsset(asset);
+    const defaultName =
+      asset.generationRunLabel ||
+      "Previous assets · before run folders were added";
+    const packName = asset.campaignPackName?.trim();
+    const packLabel = asset.campaignPackLabel?.trim();
+    const packNote = asset.campaignPackNote?.trim();
+    const packUpdatedAt = asset.campaignPackUpdatedAt?.trim();
     if (prior) {
       prior.assets.push(asset);
       prior.createdAtMs = Math.max(
         prior.createdAtMs,
         Number.isFinite(createdAt) ? createdAt : 0
       );
+      if (packName) prior.name = packName;
+      if (packLabel) prior.packLabel = packLabel;
+      if (packNote) prior.packNote = packNote;
+      if (packUpdatedAt) prior.packUpdatedAt = packUpdatedAt;
       if (asset.templateFrameEnabled !== undefined) {
         prior.templateFrameEnabled = asset.templateFrameEnabled;
+      }
+      if (!prior.socialPrompt && socialPrompt) {
+        prior.socialPrompt = socialPrompt;
       }
       continue;
     }
     byId.set(id, {
       id,
-      label:
-        asset.generationRunLabel ||
-        "Previous assets · before run folders were added",
+      name: packName || defaultName,
+      defaultName,
+      packLabel: packLabel || undefined,
+      packNote: packNote || undefined,
+      packUpdatedAt: packUpdatedAt || undefined,
       createdAtMs: Number.isFinite(createdAt) ? createdAt : 0,
       stamp: asset.generationRunStamp,
       templateFrameEnabled: asset.templateFrameEnabled,
+      socialPrompt: socialPrompt ?? undefined,
       assets: [asset],
     });
   }
   return [...byId.values()].sort((a, b) => b.createdAtMs - a.createdAtMs);
+}
+
+function assetBelongsToAdRun(asset: DesignAsset, runId: string): boolean {
+  return (
+    asset.type === AD_TYPE &&
+    (runId === "legacy-ad-assets"
+      ? !asset.generationRunId
+      : asset.generationRunId === runId)
+  );
 }
 
 function extractWebsiteUrl(value: string): string {
@@ -671,6 +742,7 @@ function downloadPromptAudit(asset: DesignAsset) {
             createdAt: asset.createdAt,
             visualBrief: asset.visualBrief,
             templateBrief: asset.templateBrief,
+            socialPrompt: asset.socialPrompt ?? null,
             content: asset.content,
             generationPrompt: asset.generationPrompt ?? null,
             collateralPrompt: asset.collateralPrompt ?? null,
@@ -721,6 +793,15 @@ function siteFiles(site: SiteAsset): SiteFile[] {
   return site.files?.length
     ? site.files
     : [{ path: "index.html", content: site.html, contentType: "text/html" }];
+}
+
+function titleCaseFromSitePath(path: string): string {
+  if (/^index\.html?$/i.test(path)) return "Home";
+  return path
+    .replace(/\.html?$/i, "")
+    .replace(/[-_/]+/g, " ")
+    .trim()
+    .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 function siteDownloadName(site: SiteAsset): string {
@@ -1284,6 +1365,7 @@ function SiteHistoryBrowser({
   const activeFile =
     files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
   const [loaded, setLoaded] = useState(false);
+  const [historyCollapsed, setHistoryCollapsed] = useState(false);
 
   useEffect(() => {
     setLoaded(false);
@@ -1303,11 +1385,58 @@ function SiteHistoryBrowser({
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-      <div className="grid min-h-[520px] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
-        <aside className="border-b border-neutral-200 bg-neutral-50 p-3 lg:border-b-0 lg:border-r">
-          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-            <FolderTree className="h-3.5 w-3.5" /> Website history
-          </p>
+      <div
+        className={`grid min-h-[520px] grid-cols-1 ${
+          historyCollapsed
+            ? "lg:grid-cols-[3.5rem_minmax(0,1fr)]"
+            : "lg:grid-cols-[260px_minmax(0,1fr)]"
+        }`}
+      >
+        <CollapsibleSidebar
+          title="website history sidebar"
+          collapsed={historyCollapsed}
+          onToggle={() => setHistoryCollapsed((collapsed) => !collapsed)}
+          expandedClassName="border-b border-neutral-200 bg-neutral-50 p-3 lg:border-b-0 lg:border-r"
+          collapsedClassName="border-b border-neutral-200 bg-neutral-50 lg:border-b-0 lg:border-r"
+          collapsedChildren={
+            <div className="flex w-full flex-col items-center gap-1">
+              {sites.map((site, index) => {
+                const selected = site.id === activeSite.id;
+                const label = index === 0 ? "Latest" : `Generation ${index + 1}`;
+                return (
+                  <button
+                    key={site.id}
+                    type="button"
+                    onClick={() => {
+                      onSelectSite(site.id);
+                      onSelectPath(siteFiles(site)[0]?.path ?? "index.html");
+                    }}
+                    title={label}
+                    aria-label={label}
+                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
+                      selected
+                        ? "bg-neutral-900 text-white"
+                        : "bg-white text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                    }`}
+                  >
+                    {index === 0 ? "L" : index + 1}
+                  </button>
+                );
+              })}
+            </div>
+          }
+        >
+          <div className="mb-2 flex items-center justify-between gap-2">
+            <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+              <FolderTree className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Website history</span>
+            </p>
+            <SidebarCollapseButton
+              collapsed={historyCollapsed}
+              onToggle={() => setHistoryCollapsed((collapsed) => !collapsed)}
+              title="website history sidebar"
+            />
+          </div>
           <div className="space-y-2">
             {sites.map((site, index) => {
               const selected = site.id === activeSite.id;
@@ -1346,7 +1475,7 @@ function SiteHistoryBrowser({
               );
             })}
           </div>
-        </aside>
+        </CollapsibleSidebar>
 
         <div className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
@@ -1427,6 +1556,29 @@ function SiteHistoryBrowser({
               </button>
             </div>
           </div>
+          {files.length > 1 ? (
+            <div className="flex flex-wrap items-center gap-1 border-b border-neutral-100 bg-neutral-50/60 px-3 py-1.5">
+              <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                Pages
+              </span>
+              {files
+                .filter((file) => /\.html?$/i.test(file.path))
+                .map((file) => (
+                  <button
+                    key={file.path}
+                    onClick={() => onSelectPath(file.path)}
+                    title={`Preview ${file.path}`}
+                    className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                      file.path === activeFile.path
+                        ? "bg-neutral-900 text-white"
+                        : "bg-white text-neutral-600 ring-1 ring-neutral-200 hover:bg-neutral-100"
+                    }`}
+                  >
+                    {titleCaseFromSitePath(file.path)}
+                  </button>
+                ))}
+            </div>
+          ) : null}
           <div className="relative h-[460px] bg-neutral-50">
             <iframe
               key={`${activeSite.id}-${activeFile.path}`}
@@ -1482,14 +1634,25 @@ export default function DesignStudioSection({
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
   const [websiteBrief, setWebsiteBrief] = useState("");
+  const [websiteRemoveBackgrounds, setWebsiteRemoveBackgrounds] = useState(true);
+  const [websiteUseCreatives, setWebsiteUseCreatives] = useState(true);
+  const [websiteIncludeCheckout, setWebsiteIncludeCheckout] = useState(true);
   const [socialBrief, setSocialBrief] = useState("");
   const [collateralBrief, setCollateralBrief] = useState("");
   const [useSocialTemplates, setUseSocialTemplates] = useState(false);
   const [socialTemplateBrief, setSocialTemplateBrief] = useState("");
   const [socialVisualBrief, setSocialVisualBrief] = useState("");
   const [selectedAdRunId, setSelectedAdRunId] = useState("");
+  const [campaignPackDraft, setCampaignPackDraft] =
+    useState<CampaignPackDraft>(EMPTY_CAMPAIGN_PACK_DRAFT);
+  const [savingCampaignPackId, setSavingCampaignPackId] = useState<string | null>(
+    null
+  );
   const [websiteImageRefs, setWebsiteImageRefs] = useState<WebsiteImageRef[]>([]);
+  const [productImages, setProductImages] = useState<ProductImageRef[]>([]);
   const [pullingRefs, setPullingRefs] = useState(false);
+  const [uploadingSocialRef, setUploadingSocialRef] =
+    useState<SocialImageUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStudio = useCallback(async () => {
@@ -1500,6 +1663,7 @@ export default function DesignStudioSection({
         designStudio: DesignStudioState | null;
         sourceWebsiteUrl?: string;
         websiteImageRefs?: WebsiteImageRef[];
+        productImages?: ProductImageRef[];
       };
       const { designStudio } = data;
       setStudio(designStudio);
@@ -1516,6 +1680,7 @@ export default function DesignStudioSection({
       setTokenDraft(designStudio?.tokens ?? null);
       setSourceWebsiteUrl((current) => current || data.sourceWebsiteUrl || "");
       setWebsiteImageRefs(data.websiteImageRefs ?? []);
+      setProductImages(data.productImages ?? []);
     }
     const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
     if (siteRes.ok) {
@@ -1645,6 +1810,71 @@ export default function DesignStudioSection({
     }
   }, [projectId, refreshStudio, sourceWebsiteUrl, tokenGuidance]);
 
+  const uploadSocialReference = useCallback(
+    async (usage: SocialImageUsage, file: File | null | undefined) => {
+      if (!projectId || !file) return;
+      setUploadingSocialRef(usage);
+      setError(null);
+      try {
+        const form = new FormData();
+        form.append("image", file);
+        form.append("usage", usage);
+        const res = await fetch(`/api/projects/${projectId}/product-images`, {
+          method: "POST",
+          body: form,
+        });
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+          setError(
+            providerErrorMessage(
+              data.error ?? data,
+              `Upload failed (${res.status}).`
+            )
+          );
+          return;
+        }
+        setProductImages((data.productImages as ProductImageRef[]) ?? []);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : "Upload failed.");
+      } finally {
+        setUploadingSocialRef(null);
+      }
+    },
+    [projectId]
+  );
+
+  const removeProductImage = useCallback(
+    async (imageId: string) => {
+      if (!projectId) return;
+      const previous = productImages;
+      setProductImages((images) => images.filter((image) => image.id !== imageId));
+      try {
+        const res = await fetch(
+          `/api/projects/${projectId}/product-images/${encodeURIComponent(
+            imageId
+          )}`,
+          { method: "DELETE" }
+        );
+        const data = await readJsonResponse(res);
+        if (!res.ok) {
+          setProductImages(previous);
+          setError(
+            providerErrorMessage(
+              data.error ?? data,
+              `Delete failed (${res.status}).`
+            )
+          );
+          return;
+        }
+        setProductImages((data.productImages as ProductImageRef[]) ?? []);
+      } catch (e) {
+        setProductImages(previous);
+        setError(e instanceof Error ? e.message : "Delete failed.");
+      }
+    },
+    [productImages, projectId]
+  );
+
   const saveTokenDraft = useCallback(async () => {
     if (!projectId || !tokenDraft) return;
     setGenerating(true);
@@ -1686,6 +1916,7 @@ export default function DesignStudioSection({
         generationRunLabel?: string;
         generationRunCreatedAt?: string;
         generationRunStamp?: string;
+        socialPrompt?: SocialPromptSnapshot;
         useTemplates?: boolean;
         useAiVisual?: boolean;
         useProductImages?: boolean;
@@ -1698,6 +1929,18 @@ export default function DesignStudioSection({
         (type === "business-card" ? true : isSocial ? useSocialTemplates : true);
       const visualBrief =
         options.visualBrief ?? (isSocial ? socialVisualBrief : "");
+      const templateBrief =
+        options.templateBrief ??
+        (isSocial && resolvedUseTemplates ? socialTemplateBrief : "");
+      const socialPrompt =
+        isSocial
+          ? options.socialPrompt ?? {
+              brief: options.brief ?? socialBrief,
+              visualBrief,
+              templateBrief,
+              useTemplates: resolvedUseTemplates,
+            }
+          : undefined;
       const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1710,16 +1953,18 @@ export default function DesignStudioSection({
             options.useProductImages ??
             (type === "business-card" ? false : isSocial),
           visualBrief,
-          templateBrief:
-            options.templateBrief ??
-            (isSocial && useSocialTemplates ? socialTemplateBrief : ""),
+          templateBrief,
           generationRunId: options.generationRunId ?? "",
           generationRunLabel: options.generationRunLabel ?? "",
           generationRunCreatedAt: options.generationRunCreatedAt ?? "",
           generationRunStamp: options.generationRunStamp ?? "",
+          socialPrompt,
           sourceRunId: sourceRunId ?? null,
           sourceWebsiteUrl:
             sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
+          removeImageBackgrounds: websiteRemoveBackgrounds,
+          useCreativeAssets: websiteUseCreatives,
+          includeCheckout: websiteIncludeCheckout,
         }),
       });
       const data = await readJsonResponse(res);
@@ -1804,6 +2049,12 @@ export default function DesignStudioSection({
           useAiVisual: true,
           useProductImages: true,
           templateBrief: useSocialTemplates ? socialTemplateBrief : "",
+          socialPrompt: {
+            brief: baseBrief,
+            visualBrief: baseVisualBrief,
+            templateBrief: useSocialTemplates ? socialTemplateBrief : "",
+            useTemplates: useSocialTemplates,
+          },
           visualBrief: [
             `Variant role: ${variant.name}. ${campaignScenePrompt(
               variant,
@@ -1849,6 +2100,63 @@ export default function DesignStudioSection({
     },
     [projectId, assets]
   );
+
+  const saveCampaignPackDetails = useCallback(async () => {
+    if (!projectId || !selectedAdRunId) return;
+    const name = campaignPackDraft.name.trim();
+    if (!name) {
+      setError("Campaign pack name is required.");
+      return;
+    }
+    const label = campaignPackDraft.label.trim();
+    const note = campaignPackDraft.note.trim();
+    const prev = assets;
+    const updatedAt = new Date().toISOString();
+    setSavingCampaignPackId(selectedAdRunId);
+    setError(null);
+    setAssets((current) =>
+      current.map((asset) =>
+        assetBelongsToAdRun(asset, selectedAdRunId)
+          ? {
+              ...asset,
+              campaignPackName: name,
+              campaignPackLabel: label,
+              campaignPackNote: note,
+              campaignPackUpdatedAt: updatedAt,
+            }
+          : asset
+      )
+    );
+    try {
+      const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          generationRunId: selectedAdRunId,
+          campaignPackName: name,
+          campaignPackLabel: label,
+          campaignPackNote: note,
+        }),
+      });
+      const data = await readJsonResponse(res);
+      if (!res.ok) {
+        setAssets(prev);
+        setError(
+          providerErrorMessage(
+            data.error ?? data,
+            `Campaign pack update failed (${res.status}).`
+          )
+        );
+        return;
+      }
+      setAssets((data.assets as DesignAsset[]) ?? []);
+    } catch (e) {
+      setAssets(prev);
+      setError(e instanceof Error ? e.message : "Campaign pack update failed.");
+    } finally {
+      setSavingCampaignPackId(null);
+    }
+  }, [assets, campaignPackDraft, projectId, selectedAdRunId]);
 
   const makeLogo = useCallback(async () => {
     if (!projectId) return;
@@ -1974,6 +2282,9 @@ export default function DesignStudioSection({
     sourceWebsiteUrl,
     tokenGuidance,
     waitForJob,
+    websiteRemoveBackgrounds,
+    websiteUseCreatives,
+    websiteIncludeCheckout,
   ]);
 
   const deploySite = useCallback(
@@ -2212,6 +2523,27 @@ export default function DesignStudioSection({
   const selectedAdRun =
     adRunFolders.find((run) => run.id === selectedAdRunId) ?? adRunFolders[0];
   const visibleAdAssets = selectedAdRun?.assets ?? [];
+  const campaignPackDirty = Boolean(
+    selectedAdRun &&
+      (campaignPackDraft.name.trim() !== selectedAdRun.name ||
+        campaignPackDraft.label.trim() !== (selectedAdRun.packLabel ?? "") ||
+        campaignPackDraft.note.trim() !== (selectedAdRun.packNote ?? ""))
+  );
+  const campaignPackSaving = savingCampaignPackId === selectedAdRun?.id;
+  const socialProductRefs = useMemo(
+    () =>
+      productImages.filter(
+        (image) => productImageUsage(image) === "product-reference"
+      ),
+    [productImages]
+  );
+  const socialInspirationRefs = useMemo(
+    () =>
+      productImages.filter(
+        (image) => productImageUsage(image) === "social-inspiration"
+      ),
+    [productImages]
+  );
   const businessCardAssets = useMemo(
     () => assets.filter((asset) => asset.type === "business-card"),
     [assets]
@@ -2236,6 +2568,34 @@ export default function DesignStudioSection({
         : adRunFolders[0].id
     );
   }, [adRunFolders]);
+
+  useEffect(() => {
+    if (!selectedAdRun) {
+      setCampaignPackDraft(EMPTY_CAMPAIGN_PACK_DRAFT);
+      return;
+    }
+    setCampaignPackDraft({
+      name: selectedAdRun.name,
+      label: selectedAdRun.packLabel ?? "",
+      note: selectedAdRun.packNote ?? "",
+    });
+  }, [
+    selectedAdRun?.id,
+    selectedAdRun?.name,
+    selectedAdRun?.packLabel,
+    selectedAdRun?.packNote,
+  ]);
+
+  useEffect(() => {
+    const prompt = selectedAdRun?.socialPrompt;
+    if (!prompt) return;
+    setSocialBrief(prompt.brief ?? "");
+    setSocialVisualBrief(prompt.visualBrief ?? "");
+    setSocialTemplateBrief(prompt.templateBrief ?? "");
+    if (prompt.useTemplates !== undefined) {
+      setUseSocialTemplates(Boolean(prompt.useTemplates));
+    }
+  }, [selectedAdRun?.id]);
 
   if (loading) {
     return (
@@ -2652,8 +3012,40 @@ export default function DesignStudioSection({
               value={websiteBrief}
               onChange={(e) => setWebsiteBrief(e.target.value)}
               placeholder="Website brief — e.g. 'multi-page product site for hydration cleanser, emphasize bundles, press, stockists, and Instagram'"
-              className="mb-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+              className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
+            <div className="mb-3 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={websiteRemoveBackgrounds}
+                  onChange={(e) => setWebsiteRemoveBackgrounds(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                <Scissors className="h-3.5 w-3.5 text-neutral-400" />
+                Product cutouts
+              </label>
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={websiteUseCreatives}
+                  onChange={(e) => setWebsiteUseCreatives(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                <ImageIcon className="h-3.5 w-3.5 text-neutral-400" />
+                Use creatives
+              </label>
+              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
+                <input
+                  type="checkbox"
+                  checked={websiteIncludeCheckout}
+                  onChange={(e) => setWebsiteIncludeCheckout(e.target.checked)}
+                  className="h-3.5 w-3.5 accent-indigo-600"
+                />
+                <ShoppingCart className="h-3.5 w-3.5 text-neutral-400" />
+                Checkout pages
+              </label>
+            </div>
             <WebsiteCodingConsole
               progress={websiteBuildProgress}
               running={makingSite}
@@ -2759,11 +3151,143 @@ export default function DesignStudioSection({
               rows={3}
               className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
+            <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    <FileImage className="h-3.5 w-3.5" /> Product reference
+                  </p>
+                  <label
+                    title="Upload the product or design-stage item to preserve in the generated post"
+                    className={`flex cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 ${
+                      uploadingSocialRef ? "pointer-events-none opacity-50" : ""
+                    }`}
+                  >
+                    {uploadingSocialRef === "product-reference" ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                    Upload
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={Boolean(uploadingSocialRef)}
+                      onChange={(e) => {
+                        void uploadSocialReference(
+                          "product-reference",
+                          e.currentTarget.files?.[0]
+                        );
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                {socialProductRefs.length ? (
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {socialProductRefs.slice(0, 6).map((ref) => (
+                      <div
+                        key={ref.id}
+                        className="group overflow-hidden rounded-md border border-neutral-200 bg-white"
+                      >
+                        <div className="aspect-square bg-white">
+                          <img
+                            src={ref.url}
+                            alt={ref.name}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1 px-1.5 py-1">
+                          <span className="min-w-0 flex-1 truncate text-[9px] text-neutral-500">
+                            {ref.name}
+                          </span>
+                          <button
+                            type="button"
+                            title="Remove"
+                            onClick={() => void removeProductImage(ref.id)}
+                            className="rounded p-0.5 text-neutral-300 hover:bg-red-50 hover:text-red-600"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                    <ImageIcon className="h-3.5 w-3.5" /> Social inspiration
+                  </p>
+                  <label
+                    title="Upload art direction, photoshoot, framing, or mood references"
+                    className={`flex cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 ${
+                      uploadingSocialRef ? "pointer-events-none opacity-50" : ""
+                    }`}
+                  >
+                    {uploadingSocialRef === "social-inspiration" ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      <Upload className="h-3 w-3" />
+                    )}
+                    Upload
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      disabled={Boolean(uploadingSocialRef)}
+                      onChange={(e) => {
+                        void uploadSocialReference(
+                          "social-inspiration",
+                          e.currentTarget.files?.[0]
+                        );
+                        e.currentTarget.value = "";
+                      }}
+                    />
+                  </label>
+                </div>
+                {socialInspirationRefs.length ? (
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {socialInspirationRefs.slice(0, 6).map((ref) => (
+                      <div
+                        key={ref.id}
+                        className="group overflow-hidden rounded-md border border-neutral-200 bg-white"
+                      >
+                        <div className="aspect-square bg-white">
+                          <img
+                            src={ref.url}
+                            alt={ref.name}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1 px-1.5 py-1">
+                          <span className="min-w-0 flex-1 truncate text-[9px] text-neutral-500">
+                            {ref.name}
+                          </span>
+                          <button
+                            type="button"
+                            title="Remove"
+                            onClick={() => void removeProductImage(ref.id)}
+                            className="rounded p-0.5 text-neutral-300 hover:bg-red-50 hover:text-red-600"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            </div>
             {adRunFolders.length ? (
               <>
                 <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-2">
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                    Campaign run
+                    Campaign pack
                   </label>
                   <select
                     value={selectedAdRun?.id ?? ""}
@@ -2773,26 +3297,122 @@ export default function DesignStudioSection({
                     {adRunFolders.map((run, index) => (
                       <option key={run.id} value={run.id}>
                         {index === 0 ? "Latest — " : ""}
-                        {run.label} · {run.assets.length} creative
+                        {run.name} · {run.assets.length} creative
                         {run.assets.length === 1 ? "" : "s"}
                       </option>
                     ))}
                   </select>
                   {selectedAdRun ? (
-                    <p className="mt-1 text-[11px] text-neutral-500">
-                      Showing {visibleAdAssets.length} creative
-                      {visibleAdAssets.length === 1 ? "" : "s"} from{" "}
-                      {selectedAdRun.stamp
-                        ? selectedAdRun.stamp.replace(/_/g, " ")
-                        : selectedAdRun.label}
-                      {selectedAdRun.templateFrameEnabled !== undefined
-                        ? ` · ${
-                            selectedAdRun.templateFrameEnabled
-                              ? "Template on"
-                              : "Template off"
-                          }`
-                        : ""}
-                    </p>
+                    <>
+                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                            Pack name
+                          </span>
+                          <input
+                            value={campaignPackDraft.name}
+                            onChange={(e) =>
+                              setCampaignPackDraft((draft) => ({
+                                ...draft,
+                                name: e.target.value,
+                              }))
+                            }
+                            className="w-full rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
+                          />
+                        </label>
+                        <label className="block">
+                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                            Label
+                          </span>
+                          <input
+                            value={campaignPackDraft.label}
+                            onChange={(e) =>
+                              setCampaignPackDraft((draft) => ({
+                                ...draft,
+                                label: e.target.value,
+                              }))
+                            }
+                            placeholder="Meta launch"
+                            className="w-full rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
+                          />
+                        </label>
+                      </div>
+                      <label className="mt-2 block">
+                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                          Notes
+                        </span>
+                        <textarea
+                          value={campaignPackDraft.note}
+                          onChange={(e) =>
+                            setCampaignPackDraft((draft) => ({
+                              ...draft,
+                              note: e.target.value,
+                            }))
+                          }
+                          rows={2}
+                          placeholder="Audience, offer, channel, or test goal"
+                          className="w-full resize-y rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
+                        />
+                      </label>
+                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0 text-[11px] text-neutral-500">
+                          <p className="truncate">
+                            Showing {visibleAdAssets.length} creative
+                            {visibleAdAssets.length === 1 ? "" : "s"} from{" "}
+                            {selectedAdRun.stamp
+                              ? selectedAdRun.stamp.replace(/_/g, " ")
+                              : selectedAdRun.defaultName}
+                          </p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {selectedAdRun.packLabel ? (
+                              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
+                                {selectedAdRun.packLabel}
+                              </span>
+                            ) : null}
+                            {selectedAdRun.templateFrameEnabled !== undefined ? (
+                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-neutral-500">
+                                {selectedAdRun.templateFrameEnabled
+                                  ? "Template on"
+                                  : "Template off"}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setCampaignPackDraft({
+                                name: selectedAdRun.name,
+                                label: selectedAdRun.packLabel ?? "",
+                                note: selectedAdRun.packNote ?? "",
+                              })
+                            }
+                            disabled={!campaignPackDirty || campaignPackSaving}
+                            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 transition-colors hover:border-neutral-300 hover:bg-neutral-100 disabled:opacity-50"
+                          >
+                            Revert
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => void saveCampaignPackDetails()}
+                            disabled={
+                              !campaignPackDirty ||
+                              !campaignPackDraft.name.trim() ||
+                              campaignPackSaving
+                            }
+                            className="flex items-center gap-1.5 rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
+                          >
+                            {campaignPackSaving ? (
+                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                            ) : (
+                              <Save className="h-3.5 w-3.5" />
+                            )}
+                            Save pack
+                          </button>
+                        </div>
+                      </div>
+                    </>
                   ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">

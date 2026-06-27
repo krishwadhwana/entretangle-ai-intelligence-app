@@ -1113,6 +1113,7 @@ Use web search to:
 2. Find REAL online consumer opinion about this brand/product: reviews, ratings, social comments, marketplace feedback, press. Capture what customers actually praise and complain about, and what triggers a purchase. If you cannot find brand-specific opinion, fall back to category-level sentiment and SAY so.
 3. Infer the FOUNDERS' EXISTING SKILLS & BACKGROUND — read the About / Our Story / Team / founder-bio pages, plus press, LinkedIn or interviews if linked. Capture relevant experience: prior ventures, years in the category, design/manufacturing/retail/operating/technical background, whether this is a first venture or a family/heritage business. Write it as the "experience" field, in the same plain style the intake would record (e.g. "10+ years as a menswear designer; previously ran a boutique label"). If the site gives no founder/team signal at all, LEAVE experience empty — do not guess.
 4. Collect the raw brand intelligence a founder would expect to inspect later: product image URLs, product/SKU names, price ranges, press/news articles, social profiles, marketplace/store links, and notable factual signals. Prefer brand-specific source URLs. If you only find category-level evidence, put that limitation in openQuestions or notes instead of pretending it is brand-specific.
+   IMPORTANT — capture the brand LOGO: include the brand's actual logo/wordmark image as a productImages entry with kind:"logo". Look at the site header/nav <img>, the <link rel="icon"/"apple-touch-icon"/"mask-icon"> favicon, the og:image/og:logo, and structured-data "logo". Prefer a transparent PNG or SVG over an .ico favicon when both exist. Give it the exact absolute URL so it can be embedded directly in the brand's website header.
 5. Build listingEvidence from exact product/listing pages and credible search-result snippets. Search the brand site, Amazon, major marketplaces/stockists, and other D2C retailer pages where the brand or comparable products are sold. Capture the source name, sourceType, URL, product name, image URL if visible, exact price text, currency/numeric price when available, availability, and whether it is truly this brand or merely a comparable/category product. If Amazon or a marketplace is inaccessible, capture only source-backed snippets/results you can verify and add a note. Do not invent prices.
 
 Only fill draftProfile fields you are genuinely confident about from the evidence; leave the rest empty. List the confident fields in knownFields using EXACTLY these keys when known: product, category, priceBand, geography, targetAudience, styleKeywords, heroProducts, differentiation, experience.
@@ -1123,7 +1124,7 @@ Output JSON only:
 {"draftProfile":{"product":"...","category":"...","priceBand":"...","geography":["..."],"targetAudience":"...","styleKeywords":["..."],"heroProducts":["..."],"differentiation":"...","experience":"..."},
 "knownFields":["product","category","experience"],
 "consumerOpinion":"...","sentiment":"mixed","summary":"...",
-"infoCollected":{"brandName":"...","productImages":[{"url":"https://...","alt":"...","caption":"...","sourceUrl":"https://...","kind":"product"}],"products":[{"name":"...","description":"...","category":"...","url":"https://...","priceText":"...","imageUrl":"https://..."}],"listingEvidence":[{"productName":"...","brand":"...","source":"Amazon","sourceType":"amazon","url":"https://...","imageUrl":"https://...","currency":"INR","price":3499,"minPrice":null,"maxPrice":null,"priceText":"₹3,499","availability":"In stock","isBrandProduct":true,"confidence":0.85,"observedAt":"2026-06-24","notes":"Price from verified listing/search snippet"}],"priceRanges":[{"label":"Dresses","currency":"INR","min":2500,"max":9000,"text":"₹2,500-₹9,000","sourceUrl":"https://...","notes":"Observed on product/category pages"}],"newsArticles":[{"title":"...","url":"https://...","source":"...","publishedAt":"2025-04-10","summary":"..."}],"socialProfiles":[{"label":"Instagram","url":"https://...","detail":"@handle"}],"marketplaceLinks":[{"label":"Nykaa Fashion","url":"https://...","detail":"stockist/marketplace"}],"facts":[{"label":"Founded","value":"...","sourceUrl":"https://..."}],"openQuestions":["Could not verify ..."]},
+"infoCollected":{"brandName":"...","productImages":[{"url":"https://.../logo.svg","alt":"Brand logo","caption":"Header logo","sourceUrl":"https://...","kind":"logo"},{"url":"https://...","alt":"...","caption":"...","sourceUrl":"https://...","kind":"product"}],"products":[{"name":"...","description":"...","category":"...","url":"https://...","priceText":"...","imageUrl":"https://..."}],"listingEvidence":[{"productName":"...","brand":"...","source":"Amazon","sourceType":"amazon","url":"https://...","imageUrl":"https://...","currency":"INR","price":3499,"minPrice":null,"maxPrice":null,"priceText":"₹3,499","availability":"In stock","isBrandProduct":true,"confidence":0.85,"observedAt":"2026-06-24","notes":"Price from verified listing/search snippet"}],"priceRanges":[{"label":"Dresses","currency":"INR","min":2500,"max":9000,"text":"₹2,500-₹9,000","sourceUrl":"https://...","notes":"Observed on product/category pages"}],"newsArticles":[{"title":"...","url":"https://...","source":"...","publishedAt":"2025-04-10","summary":"..."}],"socialProfiles":[{"label":"Instagram","url":"https://...","detail":"@handle"}],"marketplaceLinks":[{"label":"Nykaa Fashion","url":"https://...","detail":"stockist/marketplace"}],"facts":[{"label":"Founded","value":"...","sourceUrl":"https://..."}],"openQuestions":["Could not verify ..."]},
 "sources":["https://..."]}`;
 
 function compactCollectedInfo(info: WebsiteCollectedInfo | null | undefined) {
@@ -1672,11 +1673,13 @@ conversion/content operating method for the page. Adapt it silently; do not
 mention Ohneis in the output.
 
 Hard requirements:
-- Return a static file tree. Simple ventures may use 1 page; product brands,
-  editorial brands, brands with press/news/social evidence, multiple product
-  lines, or richer proof MUST use 3-5 pages. Useful pages include index.html,
-  products.html, story.html, press.html, stockists.html, journal.html, or
-  contact.html. Do not make every project a one-page landing page.
+- Return a static file tree. When siteStructure.multiPage is true (a checkout
+  flow, an explicit multi-page request, or a brand with several products) you
+  MUST return a real multi-page site of 4-6 pages — at minimum index.html,
+  products.html (or shop.html), story.html (or about.html), and contact.html,
+  plus cart.html and checkout.html for product brands. Do NOT return a single
+  landing page in that case. Simple single-product/service ventures may use 1-2
+  pages. Other useful pages: press.html, stockists.html, journal.html.
 - Each HTML file must be a complete document: <!DOCTYPE html> … </html>.
 - ALL styling must live in each page's inline <style> block. NO external CSS,
   NO frameworks, NO build step. You MAY include ONE Google Fonts <link> for the
@@ -1687,6 +1690,19 @@ Hard requirements:
   placeholders as <img src="PRODUCT_IMAGE_1">, etc. in visible product-led
   layouts. Otherwise use CSS color/shape backgrounds or inline SVG only. The
   ZIP must be self-contained.
+- Motion is REQUIRED but must be CSS-ONLY (scripts are stripped). The page must
+  not feel static. Use tasteful CSS @keyframes and transitions: a load-in
+  reveal/stagger for the hero, hover transitions on product cards/buttons/nav
+  and a subtle image zoom on hover, and where natural a CSS scroll reveal via
+  @supports (animation-timeline: view()){ ... }. Always wrap motion in
+  @media (prefers-reduced-motion: no-preference). Keep it elegant, not flashy.
+- Include a thin TOP ANNOUNCEMENT BAR (full-bleed, brand color) that loops short
+  uppercase phrases as a CSS-only marquee (@keyframes translateX with the track
+  content duplicated for a seamless loop; pause on :hover). Use the promoBar
+  messages from the payload when present (e.g. an offer like "FLAT 10% OFF FOR
+  NEW CUSTOMERS" or a grounded USP like "SULPHATE-FREE FORMULATION"). Place it
+  above the header; leave the header/hero clear of it. Never invent a discount
+  the evidence/brief does not support.
 - When productImages are provided, the first viewport must look like a campaign
   creative or premium product page, not a generic SaaS landing page: include a
   large hero product image/collage, at least one secondary product image below
@@ -1695,6 +1711,14 @@ Hard requirements:
   first-viewport image, preferably full-bleed or nearly full-bleed with text
   over the image. Do not make it a tiny card, thumbnail, mockup frame, browser
   preview, or secondary image.
+- Some productImages may be transparent-background product cutouts tagged
+  "transparent-cutout" or "background-removed"; use those for product cards,
+  shopping grids, cart summaries, checkout order rows, and layered product
+  compositions where the original photo background would clash with the page.
+- Some productImages may be saved ad campaign creatives tagged "creative" or
+  "website-reference"; use those as editorial/campaign imagery, hero alternates,
+  proof strips, or section backgrounds. Do not treat creative composites as SKU
+  packshots unless the tags/name say they are product cutouts.
 - Use photographic/product composition as a primary design material: layered
   image panels, editorial crops, texture blocks, campaign badges, proof strips,
   or product cards. Do not make the page mostly text cards with tiny images.
@@ -1777,8 +1801,14 @@ Site content expectations:
   origin, craft, or brand facts. Press/journal pages should use real news,
   features, social cues, or category education from the overview. Contact or
   stockist pages should use real links/facts if available.
+- Ecommerce/product sites may include a static shopping path: products.html or
+  shop.html, cart.html, and checkout.html. The checkout must be a self-contained
+  static form with action="#" plus order summary, shipping/contact fields, and
+  product rows. Link product CTAs to cart.html or checkout.html when those files
+  are returned. Do not use JavaScript cart logic.
 - Navigation links must point to the returned filenames, e.g. products.html,
-  story.html, press.html. The home CTA may link to the most relevant page.
+  story.html, press.html, cart.html, checkout.html. The home CTA may link to the
+  most relevant page.
 - Copy must be real and specific, not lorem ipsum. Design every page enough
   that a client could send the ZIP to a developer or upload it as a static site.
 
@@ -1806,8 +1836,10 @@ export function siteGenUser(
     logoSvg?: string;
     logoImageDataUrl?: string;
     logoSourceUrl?: string;
-  } | null = null
+  } | null = null,
+  options: { promoMessages?: string[]; multiPage?: boolean } = {}
 ): string {
+  const promoMessages = (options.promoMessages ?? []).filter(Boolean);
   return JSON.stringify(
     {
       clientProfile: profile,
@@ -1816,10 +1848,24 @@ export function siteGenUser(
       positioning: brandKit?.brandIdentity?.positioning ?? null,
       contentPillars: brandKit?.socialGuidelines?.contentPillars ?? [],
       websiteEvidence: compactWebsiteEvidence(websiteAnalysis),
+      siteStructure: {
+        multiPage: options.multiPage ?? false,
+        requiredPages: options.multiPage
+          ? "Return a real MULTI-PAGE site: index.html plus at least products/shop, a story/about page, and contact — and cart.html + checkout.html for product brands. Do NOT collapse everything into one landing page."
+          : "A focused 1-2 page site is acceptable for this brand.",
+      },
+      promoBar: {
+        messages: promoMessages,
+        instruction: promoMessages.length
+          ? "Include a thin top announcement bar that loops these short uppercase phrases (a CSS-only marquee, no JS). The platform also injects this bar, so leave room at the very top and do not duplicate it lower down."
+          : "No promo phrases supplied; only add an announcement bar if the evidence clearly supports an offer or USP.",
+      },
       contentSourcePolicy: websiteAnalysis
         ? "Use websiteEvidence as the primary brand overview source for products, press/news, social links, prices, product photos, facts, and proof. Do not ignore it."
         : "No Overview/websiteEvidence has been supplied. Build complete polished site copy from clientProfile, founder brief, brand voice, positioning, and productImages without placeholders or invented proof.",
       productImages,
+      productImagePolicy:
+        "PRODUCT_IMAGE_1 is usually the generated website hero. Later placeholders may include transparent-background product cutouts, original product/source photos, and saved ad campaign creatives. Respect their tags and visualSummary when deciding where each image belongs.",
       brandAssets,
       brief: brief || null,
       ohneisMethod: OHNEIS_WEBSITE_METHOD,

@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import {
+  requireApiUser,
+  requireProjectForApi,
+  requireWorkspaceNodeForApi,
+} from "@/lib/apiAuth";
+import {
   createWorkspaceNode,
   listWorkspaceNodes,
 } from "@/lib/store";
@@ -22,6 +27,8 @@ const CreateSchema = z.object({
 });
 
 export async function GET(req: NextRequest) {
+  const auth = await requireApiUser();
+  if (auth.response) return auth.response;
   const url = new URL(req.url);
   const parsed = z
     .object({
@@ -35,8 +42,15 @@ export async function GET(req: NextRequest) {
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   }
+  if (parsed.data.scope === "project" && parsed.data.projectId) {
+    const projectAuth = await requireProjectForApi(parsed.data.projectId);
+    if (projectAuth.response) return projectAuth.response;
+  }
   try {
-    const nodes = await listWorkspaceNodes(parsed.data);
+    const nodes = await listWorkspaceNodes({
+      ...parsed.data,
+      ownerId: auth.user.id,
+    });
     return NextResponse.json({ nodes });
   } catch (error) {
     return NextResponse.json(
@@ -47,12 +61,25 @@ export async function GET(req: NextRequest) {
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiUser();
+  if (auth.response) return auth.response;
   const parsed = CreateSchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
   }
+  if (parsed.data.scope === "project" && parsed.data.projectId) {
+    const projectAuth = await requireProjectForApi(parsed.data.projectId);
+    if (projectAuth.response) return projectAuth.response;
+  }
+  if (parsed.data.parentId) {
+    const parentAuth = await requireWorkspaceNodeForApi(parsed.data.parentId);
+    if (parentAuth.response) return parentAuth.response;
+  }
   try {
-    const node = await createWorkspaceNode(parsed.data);
+    const node = await createWorkspaceNode({
+      ...parsed.data,
+      ownerId: auth.user.id,
+    });
     return NextResponse.json({ node });
   } catch (error) {
     return NextResponse.json(

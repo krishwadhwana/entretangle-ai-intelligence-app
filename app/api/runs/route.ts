@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  requireApiUser,
+  requireProjectForApi,
+  requireRunForApi,
+} from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { enqueueRunJob } from "@/lib/jobs";
 import { ClientProfileSchema, RunModeSchema } from "@/lib/schema";
@@ -55,9 +60,23 @@ const CreateRunSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
+  const auth = await requireApiUser();
+  if (auth.response) return auth.response;
   const body = CreateRunSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+  if (body.data.projectId) {
+    const projectAuth = await requireProjectForApi(body.data.projectId);
+    if (projectAuth.response) return projectAuth.response;
+  }
+  if (body.data.parentRunId) {
+    const parentAuth = await requireRunForApi(body.data.parentRunId);
+    if (parentAuth.response) return parentAuth.response;
+  }
+  if (body.data.sourceRunId) {
+    const sourceAuth = await requireRunForApi(body.data.sourceRunId);
+    if (sourceAuth.response) return sourceAuth.response;
   }
 
   // A scoped run reuses a prior run's audience — it needs a source that
@@ -155,8 +174,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const run = await prisma.run.create({
+    const run = await prisma.run.create({
     data: {
+      ownerId: auth.user.id,
       brief,
       clientProfile: JSON.stringify(clientProfile),
       status: "planning",

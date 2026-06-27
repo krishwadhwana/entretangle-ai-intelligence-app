@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { callFinalReport } from "@/lib/llm";
@@ -16,6 +17,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   // force=true regenerates even if a report exists — used to fold a freshly
   // built/overridden financial model into the report's economics.
   const force = (await req.json().catch(() => ({})))?.force === true;

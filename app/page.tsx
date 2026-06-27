@@ -72,6 +72,9 @@ import type {
   WebsiteAnalysis,
 } from "@/lib/schema";
 import DesignStudioSection from "@/components/DesignStudioSection";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "@/components/CollapsibleSidebar";
 import ProjectMasterDossierSection from "@/components/ProjectMasterDossierSection";
 import WorkspaceTree, {
   workspaceDescendantIds,
@@ -598,16 +601,69 @@ function ProjectWorkspaceRail({
   items,
   activeId,
   onSelect,
+  collapsed,
+  onToggleCollapsed,
 }: {
   items: WorkspaceNavItem[];
   activeId: string;
   onSelect: (id: string) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   return (
-    <nav className="space-y-1 rounded-lg border border-neutral-200 bg-white p-2">
-      <p className="px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-        Workspace
-      </p>
+    <CollapsibleSidebar
+      as="nav"
+      title="workspace sidebar"
+      collapsed={collapsed}
+      onToggle={onToggleCollapsed}
+      expandedClassName="space-y-1 rounded-lg border border-neutral-200 bg-white p-2"
+      collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white"
+      collapsedChildren={
+        <div className="flex w-full flex-col items-center gap-1">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = item.id === activeId;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => onSelect(item.id)}
+                title={item.label}
+                aria-label={item.label}
+                className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
+                  active
+                    ? "bg-neutral-900 text-white"
+                    : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
+                }`}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {typeof item.count === "number" && item.count > 0 ? (
+                  <span
+                    className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
+                      active
+                        ? "bg-white text-neutral-900"
+                        : "bg-neutral-100 text-neutral-500"
+                    }`}
+                  >
+                    {item.count}
+                  </span>
+                ) : null}
+              </button>
+            );
+          })}
+        </div>
+      }
+    >
+      <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+          Workspace
+        </p>
+        <SidebarCollapseButton
+          collapsed={collapsed}
+          onToggle={onToggleCollapsed}
+          title="workspace sidebar"
+        />
+      </div>
       {items.map((item) => {
         const Icon = item.icon;
         const active = item.id === activeId;
@@ -644,7 +700,7 @@ function ProjectWorkspaceRail({
           </button>
         );
       })}
-    </nav>
+    </CollapsibleSidebar>
   );
 }
 
@@ -837,6 +893,8 @@ function InfoCollectedPanel({
   const marketplaceLinks = info?.marketplaceLinks ?? [];
   const facts = info?.facts ?? [];
   const openQuestions = info?.openQuestions ?? [];
+  const [analysisSidebarCollapsed, setAnalysisSidebarCollapsed] =
+    useState(false);
   const scrapedImageCount =
     webImages.filter((image) => image.kind !== "logo" && image.kind !== "founder")
       .length +
@@ -1026,7 +1084,13 @@ function InfoCollectedPanel({
             </div>
           </div>
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div
+            className={`grid gap-4 ${
+              analysisSidebarCollapsed
+                ? "xl:grid-cols-[minmax(0,1fr)_3.5rem]"
+                : "xl:grid-cols-[minmax(0,1fr)_360px]"
+            }`}
+          >
             <div className="space-y-4">
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1299,7 +1363,37 @@ function InfoCollectedPanel({
               </section>
             </div>
 
-            <aside className="space-y-4">
+            <CollapsibleSidebar
+              title="source details sidebar"
+              side="right"
+              collapsed={analysisSidebarCollapsed}
+              onToggle={() =>
+                setAnalysisSidebarCollapsed((collapsed) => !collapsed)
+              }
+              expandedClassName="space-y-4"
+              collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white"
+              collapsedChildren={
+                <div className="flex flex-col items-center gap-1 text-neutral-400">
+                  <BadgeDollarSign className="h-4 w-4" />
+                  <Link2 className="h-4 w-4" />
+                  <Tags className="h-4 w-4" />
+                  <ExternalLink className="h-4 w-4" />
+                </div>
+              }
+            >
+              <div className="flex items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Source details
+                </p>
+                <SidebarCollapseButton
+                  collapsed={analysisSidebarCollapsed}
+                  onToggle={() =>
+                    setAnalysisSidebarCollapsed((collapsed) => !collapsed)
+                  }
+                  title="source details sidebar"
+                  side="right"
+                />
+              </div>
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
                   <BadgeDollarSign className="h-4 w-4 text-neutral-400" />
@@ -1462,7 +1556,7 @@ function InfoCollectedPanel({
                   )}
                 </section>
               )}
-            </aside>
+            </CollapsibleSidebar>
           </div>
         </>
       ) : (
@@ -2714,6 +2808,8 @@ function ProjectSidebar({
   onSwitch,
   onRename,
   onDelete,
+  collapsed,
+  onToggleCollapsed,
 }: {
   projects: ProjectSummary[];
   activeId: string | null;
@@ -2721,6 +2817,8 @@ function ProjectSidebar({
   onSwitch: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -2743,21 +2841,70 @@ function ProjectSidebar({
   }
 
   return (
-    <aside className="flex min-h-0 flex-col border-r border-neutral-200 bg-white">
+    <CollapsibleSidebar
+      title="projects sidebar"
+      collapsed={collapsed}
+      onToggle={onToggleCollapsed}
+      expandedClassName="flex min-h-0 flex-col border-r border-neutral-200 bg-white"
+      collapsedClassName="flex min-h-0 flex-col border-r border-neutral-200 bg-white"
+      collapsedChildren={
+        <>
+          {onDashboard ? (
+            <button
+              type="button"
+              onClick={onDashboard}
+              className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 text-neutral-400 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
+              title="Dashboard"
+              aria-label="Dashboard"
+            >
+              <ArrowLeft className="h-3.5 w-3.5" />
+            </button>
+          ) : null}
+          <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto">
+            {projects.map((p) => {
+              const active = p.id === activeId;
+              return (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onSwitch(p.id)}
+                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
+                    active
+                      ? "bg-neutral-900 text-white"
+                      : "bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                  }`}
+                  title={p.name}
+                  aria-label={p.name}
+                >
+                  {projectInitials(p.name)}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      }
+    >
       <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
           Projects
         </p>
-        {onDashboard ? (
-          <button
-            type="button"
-            onClick={onDashboard}
-            className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
-          >
-            <ArrowLeft className="h-3 w-3" />
-            Dashboard
-          </button>
-        ) : null}
+        <div className="flex items-center gap-1">
+          {onDashboard ? (
+            <button
+              type="button"
+              onClick={onDashboard}
+              className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
+            >
+              <ArrowLeft className="h-3 w-3" />
+              Dashboard
+            </button>
+          ) : null}
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={onToggleCollapsed}
+            title="projects sidebar"
+          />
+        </div>
       </div>
       <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
         {projects.map((p) => {
@@ -2858,7 +3005,7 @@ function ProjectSidebar({
           );
         })}
       </nav>
-    </aside>
+    </CollapsibleSidebar>
   );
 }
 
@@ -2875,6 +3022,11 @@ function IntakePageInner() {
   const [projectName, setProjectName] = useState("Untitled venture");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectPreviews, setProjectPreviews] = useState<ProjectData[]>([]);
+  const [projectSidebarCollapsed, setProjectSidebarCollapsed] = useState(false);
+  const [workspaceSidebarCollapsed, setWorkspaceSidebarCollapsed] =
+    useState(false);
+  const [dashboardSidebarCollapsed, setDashboardSidebarCollapsed] =
+    useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [dashboardViewMode, setDashboardViewMode] =
     useState<DashboardViewMode>("grid");
@@ -5684,7 +5836,13 @@ function IntakePageInner() {
             </p>
           ) : null}
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
+          <div
+            className={`grid gap-4 ${
+              dashboardSidebarCollapsed
+                ? "xl:grid-cols-[minmax(0,1fr)_3.5rem]"
+                : "xl:grid-cols-[minmax(0,1fr)_300px]"
+            }`}
+          >
             <section className="min-w-0 space-y-3">
               <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -6297,7 +6455,36 @@ function IntakePageInner() {
                   )}
             </section>
 
-            <aside className="space-y-3">
+            <CollapsibleSidebar
+              title="dashboard sidebar"
+              side="right"
+              collapsed={dashboardSidebarCollapsed}
+              onToggle={() =>
+                setDashboardSidebarCollapsed((collapsed) => !collapsed)
+              }
+              expandedClassName="space-y-3"
+              collapsedClassName="h-fit rounded-xl border border-neutral-200 bg-white shadow-sm"
+              collapsedChildren={
+                <div className="flex flex-col items-center gap-1 text-neutral-400">
+                  <Boxes className="h-4 w-4" />
+                  <BarChart3 className="h-4 w-4" />
+                  <ArrowRight className="h-4 w-4" />
+                </div>
+              }
+            >
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
+                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+                  Dashboard tools
+                </p>
+                <SidebarCollapseButton
+                  collapsed={dashboardSidebarCollapsed}
+                  onToggle={() =>
+                    setDashboardSidebarCollapsed((collapsed) => !collapsed)
+                  }
+                  title="dashboard sidebar"
+                  side="right"
+                />
+              </div>
               <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -6398,7 +6585,7 @@ function IntakePageInner() {
                   </p>
                 )}
               </section>
-            </aside>
+            </CollapsibleSidebar>
           </div>
         </section>
 
@@ -6410,7 +6597,13 @@ function IntakePageInner() {
 
   if (!done) {
     return (
-      <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
+      <main
+        className={`grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-rows-1 ${
+          projectSidebarCollapsed
+            ? "md:grid-cols-[3.5rem_minmax(0,1fr)]"
+            : "md:grid-cols-[260px_minmax(0,1fr)]"
+        }`}
+      >
         <ProjectSidebar
           projects={projects}
           activeId={projectId}
@@ -6418,14 +6611,28 @@ function IntakePageInner() {
           onSwitch={switchProject}
           onRename={renameProject}
           onDelete={deleteProject}
+          collapsed={projectSidebarCollapsed}
+          onToggleCollapsed={() =>
+            setProjectSidebarCollapsed((collapsed) => !collapsed)
+          }
         />
 
         <section className="min-h-0 overflow-y-auto px-4 py-6">
-          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
+          <div
+            className={`mx-auto grid max-w-7xl grid-cols-1 gap-5 ${
+              workspaceSidebarCollapsed
+                ? "lg:grid-cols-[3.5rem_minmax(0,1fr)]"
+                : "lg:grid-cols-[220px_minmax(0,1fr)]"
+            }`}
+          >
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
               onSelect={setActiveWorkspaceSection}
+              collapsed={workspaceSidebarCollapsed}
+              onToggleCollapsed={() =>
+                setWorkspaceSidebarCollapsed((collapsed) => !collapsed)
+              }
             />
             <div className="space-y-5">
               <section id="workspace-overview" className="space-y-3">
@@ -6780,7 +6987,13 @@ function IntakePageInner() {
   }
 
   return (
-    <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
+    <main
+      className={`grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-rows-1 ${
+        projectSidebarCollapsed
+          ? "md:grid-cols-[3.5rem_minmax(0,1fr)]"
+          : "md:grid-cols-[260px_minmax(0,1fr)]"
+      }`}
+    >
       <ProjectSidebar
         projects={projects}
         activeId={projectId}
@@ -6788,15 +7001,33 @@ function IntakePageInner() {
         onSwitch={switchProject}
         onRename={renameProject}
         onDelete={deleteProject}
+        collapsed={projectSidebarCollapsed}
+        onToggleCollapsed={() =>
+          setProjectSidebarCollapsed((collapsed) => !collapsed)
+        }
       />
 
       <section className="min-h-0 overflow-hidden">
-        <div className="grid h-full grid-cols-1 xl:grid-cols-[220px_minmax(0,1fr)]">
-          <aside className="min-h-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50 p-4">
+        <div
+          className={`grid h-full grid-cols-1 ${
+            workspaceSidebarCollapsed
+              ? "xl:grid-cols-[3.5rem_minmax(0,1fr)]"
+              : "xl:grid-cols-[220px_minmax(0,1fr)]"
+          }`}
+        >
+          <aside
+            className={`min-h-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50 ${
+              workspaceSidebarCollapsed ? "p-1" : "p-4"
+            }`}
+          >
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
               onSelect={setActiveWorkspaceSection}
+              collapsed={workspaceSidebarCollapsed}
+              onToggleCollapsed={() =>
+                setWorkspaceSidebarCollapsed((collapsed) => !collapsed)
+              }
             />
           </aside>
 

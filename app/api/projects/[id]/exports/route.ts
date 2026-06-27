@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import {
+  requireProjectForApi,
+  requireWorkspaceNodeForApi,
+} from "@/lib/apiAuth";
 import { saveProjectExportNode } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -19,9 +23,15 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } },
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const parsed = ExportSchema.safeParse(await req.json());
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues }, { status: 400 });
+  }
+  if (parsed.data.folderId) {
+    const folderAuth = await requireWorkspaceNodeForApi(parsed.data.folderId);
+    if (folderAuth.response) return folderAuth.response;
   }
   const { dossier } = parsed.data;
   if (dossier === undefined) {

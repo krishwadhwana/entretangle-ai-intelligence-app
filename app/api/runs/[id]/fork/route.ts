@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { forkRun } from "@/lib/fork";
 import { enqueueRunJob } from "@/lib/jobs";
 import { BlockParamsSchema } from "@/lib/schema";
@@ -16,6 +17,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const body = ForkRequestSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });

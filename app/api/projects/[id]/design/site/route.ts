@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { deployStaticSite, vercelDeployEnabled } from "@/lib/deploy/vercel";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -21,6 +22,9 @@ const PostSchema = z.discriminatedUnion("action", [
     brief: z.string().trim().max(2000).default(""),
     sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
     sourceWebsiteUrl: z.string().trim().max(400).default(""),
+    removeImageBackgrounds: z.boolean().default(true),
+    useCreativeAssets: z.boolean().default(true),
+    includeCheckout: z.boolean().default(true),
   }),
   z.object({
     action: z.literal("deploy"),
@@ -32,6 +36,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const studio = await getDesignStudio(params.id);
     return NextResponse.json({
@@ -47,7 +53,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
@@ -105,6 +113,9 @@ export async function POST(
         sourceRunId: body.data.sourceRunId,
         sourceWebsiteUrl: body.data.sourceWebsiteUrl,
         brief: body.data.brief,
+        removeImageBackgrounds: body.data.removeImageBackgrounds,
+        useCreativeAssets: body.data.useCreativeAssets,
+        includeCheckout: body.data.includeCheckout,
       },
       { dedupe: false, cancelQueued: true }
     );
@@ -125,6 +136,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const siteId = new URL(req.url).searchParams.get("siteId");
   if (!siteId) {
     return NextResponse.json({ error: "siteId required" }, { status: 400 });

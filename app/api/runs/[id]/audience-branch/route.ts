@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { enqueueRunJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -25,6 +26,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const body = AudienceBranchRequestSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });
@@ -40,6 +43,7 @@ export async function POST(
       focusQuestion: true,
       additionalContext: true,
       targetAudienceSize: true,
+      ownerId: true,
     },
   });
   if (!parent) {
@@ -67,6 +71,7 @@ export async function POST(
   try {
     const run = await prisma.run.create({
       data: {
+        ownerId: parent.ownerId ?? auth.user.id,
         brief: parent.brief,
         clientProfile: parent.clientProfile,
         status: "planning",

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { buildInvestorSnapshot, syncInvestorRoadmap } from "@/lib/investor";
 import { getInvestorOS, saveInvestorRoadmap } from "@/lib/store";
 import { RoadmapItemSchema } from "@/lib/schema";
@@ -21,6 +22,8 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const roadmap = await syncInvestorRoadmap(params.id);
     return NextResponse.json({ roadmap });
@@ -33,6 +36,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const body = PatchSchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });

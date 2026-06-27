@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -23,6 +24,8 @@ export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const studio = await getDesignStudio(params.id);
     return NextResponse.json({ logos: studio?.logos ?? [] });
@@ -35,7 +38,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
@@ -85,6 +90,8 @@ export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const logoId = new URL(req.url).searchParams.get("logoId");
   if (!logoId) {
     return NextResponse.json({ error: "logoId required" }, { status: 400 });

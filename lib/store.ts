@@ -13,6 +13,7 @@ import {
   FinancialsSectionSchema,
   FounderStorySectionSchema,
   DesignStudioSectionSchema,
+  DesignAssetSchema,
   InspirationSectionSchema,
   InterviewTranscriptSchema,
   InvestorOSSectionSchema,
@@ -366,6 +367,14 @@ function toSummary(row: {
   };
 }
 
+function projectVisibleTo(ownerId?: string | null): Prisma.ProjectWhereInput {
+  return ownerId ? { OR: [{ ownerId }, { ownerId: null }] } : {};
+}
+
+function workspaceVisibleTo(ownerId?: string | null): Prisma.WorkspaceNodeWhereInput {
+  return ownerId ? { OR: [{ ownerId }, { ownerId: null }] } : {};
+}
+
 function toFull(row: {
   id: string;
   name: string;
@@ -559,27 +568,37 @@ async function withLiveRunSummaries(
   };
 }
 
-export async function listProjects(): Promise<ProjectSummary[]> {
+export async function listProjects(ownerId?: string): Promise<ProjectSummary[]> {
   const rows = await prisma.project.findMany({
+    where: projectVisibleTo(ownerId),
     orderBy: { updatedAt: "desc" },
     select: { id: true, name: true, createdAt: true, updatedAt: true },
   });
   return rows.map(toSummary);
 }
 
-export async function createProject(name: string): Promise<ProjectFull> {
-  const row = await prisma.project.create({ data: { name } });
+export async function createProject(
+  name: string,
+  ownerId?: string,
+): Promise<ProjectFull> {
+  const row = await prisma.project.create({ data: { name, ownerId } });
   return toFull(row);
 }
 
-export async function getProject(id: string): Promise<ProjectFull | null> {
-  const row = await prisma.project.findUnique({ where: { id } });
+export async function getProject(
+  id: string,
+  ownerId?: string,
+): Promise<ProjectFull | null> {
+  const row = await prisma.project.findFirst({
+    where: { id, ...projectVisibleTo(ownerId) },
+  });
   return row ? toFull(row) : null;
 }
 
 /** The project the app restores on load: most recently updated. */
-export async function getLatestProject(): Promise<ProjectFull | null> {
+export async function getLatestProject(ownerId?: string): Promise<ProjectFull | null> {
   const row = await prisma.project.findFirst({
+    where: projectVisibleTo(ownerId),
     orderBy: { updatedAt: "desc" },
   });
   return row ? toFull(row) : null;
@@ -695,6 +714,7 @@ async function assertWorkspaceParent(
 
 async function createNodeWithOptionalId(input: {
   id?: string;
+  ownerId?: string | null;
   scope: WorkspaceNodeScope;
   projectId?: string | null;
   parentId?: string | null;
@@ -707,8 +727,18 @@ async function createNodeWithOptionalId(input: {
   sortOrder?: number;
 }) {
   const payload = (input.payload ?? {}) as Prisma.InputJsonValue;
+  let ownerId = input.ownerId ?? null;
+  const ownerProjectId = input.projectId ?? input.refProjectId ?? null;
+  if (!ownerId && ownerProjectId) {
+    const project = await prisma.project.findUnique({
+      where: { id: ownerProjectId },
+      select: { ownerId: true },
+    });
+    ownerId = project?.ownerId ?? null;
+  }
   const data = {
     ...(input.id ? { id: input.id } : {}),
+    ownerId,
     scope: input.scope,
     projectId: input.scope === "project" ? (input.projectId ?? "") : null,
     parentId: input.parentId ?? null,
@@ -733,12 +763,14 @@ async function createNodeWithOptionalId(input: {
   }
 }
 
-async function ensureGlobalWorkspaceNodes(): Promise<void> {
+async function ensureGlobalWorkspaceNodes(ownerId?: string | null): Promise<void> {
   const projects = await prisma.project.findMany({
+    where: projectVisibleTo(ownerId),
     orderBy: { updatedAt: "desc" },
     select: {
       id: true,
       name: true,
+      ownerId: true,
       ownerDashboard: true,
       updatedAt: true,
     },
@@ -749,13 +781,18 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
         scope: "global",
         kind: "project",
         refProjectId: project.id,
+        ...workspaceVisibleTo(ownerId),
       },
       orderBy: [{ createdAt: "asc" }],
     });
     if (existingPlacements[0]) {
       await prisma.workspaceNode.update({
         where: { id: existingPlacements[0].id },
-        data: { title: project.name },
+        data: {
+          title: project.name,
+          ownerId:
+            existingPlacements[0].ownerId ?? project.ownerId ?? ownerId ?? null,
+        },
       });
       if (existingPlacements.length > 1) {
         await prisma.workspaceNode.deleteMany({
@@ -778,12 +815,14 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
       if (
         existingFolder &&
         existingFolder.scope === "global" &&
-        existingFolder.kind === "folder"
+        existingFolder.kind === "folder" &&
+        (!ownerId || !existingFolder.ownerId || existingFolder.ownerId === ownerId)
       ) {
         parentId = existingFolder.id;
         await prisma.workspaceNode.update({
           where: { id: existingFolder.id },
           data: {
+            ownerId: existingFolder.ownerId ?? project.ownerId ?? ownerId ?? null,
             title: organizer.folderName || existingFolder.title,
             note: organizer.folderNote || existingFolder.note,
           },
@@ -791,6 +830,7 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
       } else if (!existingFolder) {
         const folder = await createNodeWithOptionalId({
           id: folderId,
+          ownerId: project.ownerId ?? ownerId ?? null,
           scope: "global",
           kind: "folder",
           title: organizer.folderName || "Untitled folder",
@@ -802,6 +842,7 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
     }
     await createNodeWithOptionalId({
       scope: "global",
+      ownerId: project.ownerId ?? ownerId ?? null,
       kind: "project",
       title: project.name,
       note: organizer.projectNote,
@@ -812,17 +853,28 @@ async function ensureGlobalWorkspaceNodes(): Promise<void> {
   }
 }
 
-async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
-  const project = await prisma.project.findUnique({
-    where: { id: projectId },
-    select: { ownerDashboard: true },
+async function ensureProjectWorkspaceNodes(
+  projectId: string,
+  ownerId?: string | null,
+): Promise<void> {
+  const project = await prisma.project.findFirst({
+    where: { id: projectId, ...projectVisibleTo(ownerId) },
+    select: { ownerId: true, ownerDashboard: true },
   });
   if (!project) throw new Error("project not found");
   const owner = parseOwnerDashboard(project.ownerDashboard);
   for (const folder of owner.projectWorkspace.folders) {
     const existing = await prisma.workspaceNode.findFirst({
       where: {
-        OR: [{ id: folder.id }, { scope: "project", projectId, kind: "folder", title: folder.name }],
+        AND: [
+          {
+            OR: [
+              { id: folder.id },
+              { scope: "project", projectId, kind: "folder", title: folder.name },
+            ],
+          },
+          workspaceVisibleTo(ownerId),
+        ],
       },
     });
     if (existing) {
@@ -834,6 +886,7 @@ async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
         await prisma.workspaceNode.update({
           where: { id: existing.id },
           data: {
+            ownerId: existing.ownerId ?? project.ownerId ?? ownerId ?? null,
             title: folder.name,
             note: folder.description,
             moduleId: folder.moduleId,
@@ -844,6 +897,7 @@ async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
     }
     await createNodeWithOptionalId({
       id: folder.id,
+      ownerId: project.ownerId ?? ownerId ?? null,
       scope: "project",
       projectId,
       kind: "folder",
@@ -858,16 +912,20 @@ async function ensureProjectWorkspaceNodes(projectId: string): Promise<void> {
 export async function listWorkspaceNodes(input: {
   scope: WorkspaceNodeScope;
   projectId?: string | null;
+  ownerId?: string | null;
 }): Promise<WorkspaceNodeWire[]> {
   const scope = WorkspaceNodeScopeSchema.parse(input.scope);
   if (scope === "global") {
-    await ensureGlobalWorkspaceNodes();
+    await ensureGlobalWorkspaceNodes(input.ownerId);
   } else {
     if (!input.projectId) throw new Error("projectId is required");
-    await ensureProjectWorkspaceNodes(input.projectId);
+    await ensureProjectWorkspaceNodes(input.projectId, input.ownerId);
   }
   const rows = await prisma.workspaceNode.findMany({
-    where: sameWorkspaceWhere(scope, input.projectId),
+    where: {
+      ...sameWorkspaceWhere(scope, input.projectId),
+      ...workspaceVisibleTo(input.ownerId),
+    },
     orderBy: [{ sortOrder: "asc" }, { createdAt: "asc" }],
   });
   return rows.map(workspaceNodeToWire);
@@ -876,6 +934,7 @@ export async function listWorkspaceNodes(input: {
 export async function createWorkspaceNode(input: {
   scope: WorkspaceNodeScope;
   projectId?: string | null;
+  ownerId?: string | null;
   parentId?: string | null;
   kind: Extract<WorkspaceNodeKind, "folder" | "dashboard">;
   title: string;
@@ -898,6 +957,7 @@ export async function createWorkspaceNode(input: {
   });
   const row = await createNodeWithOptionalId({
     scope,
+    ownerId: input.ownerId,
     projectId: input.projectId,
     parentId: input.parentId ?? null,
     kind,
@@ -964,6 +1024,7 @@ export async function deleteWorkspaceNode(id: string): Promise<void> {
 export async function moveWorkspaceProjects(input: {
   projectIds: string[];
   parentId?: string | null;
+  ownerId?: string | null;
 }): Promise<WorkspaceNodeWire[]> {
   const projectIds = Array.from(new Set(input.projectIds.filter(Boolean)));
   await assertWorkspaceParent({
@@ -971,8 +1032,8 @@ export async function moveWorkspaceProjects(input: {
     parentId: input.parentId ?? null,
   });
   const projects = await prisma.project.findMany({
-    where: { id: { in: projectIds } },
-    select: { id: true, name: true, updatedAt: true },
+    where: { id: { in: projectIds }, ...projectVisibleTo(input.ownerId) },
+    select: { id: true, name: true, ownerId: true, updatedAt: true },
   });
   const nodes: WorkspaceNodeWire[] = [];
   for (const project of projects) {
@@ -981,6 +1042,7 @@ export async function moveWorkspaceProjects(input: {
         scope: "global",
         kind: "project",
         refProjectId: project.id,
+        ...workspaceVisibleTo(input.ownerId),
       },
       orderBy: [{ createdAt: "asc" }],
     });
@@ -1003,6 +1065,7 @@ export async function moveWorkspaceProjects(input: {
     } else {
       row = await createNodeWithOptionalId({
         scope: "global",
+        ownerId: project.ownerId ?? input.ownerId ?? null,
         kind: "project",
         title: project.name,
         refProjectId: project.id,
@@ -1609,6 +1672,46 @@ export async function deleteDesignAsset(
   return owner.designStudio;
 }
 
+/** Update the organizer metadata shared by every creative in an ad campaign pack. */
+export async function updateDesignCampaignPack(
+  id: string,
+  input: {
+    generationRunId: string;
+    name?: string;
+    label?: string;
+    note?: string;
+  },
+): Promise<DesignStudioSection> {
+  const owner = await readOwnerDashboard(id);
+  const generationRunId = input.generationRunId.trim();
+  const now = new Date().toISOString();
+  let touched = false;
+
+  owner.designStudio.assets = owner.designStudio.assets.map((asset) => {
+    const matchesRun =
+      asset.type === "ad" &&
+      (generationRunId === "legacy-ad-assets"
+        ? !asset.generationRunId
+        : asset.generationRunId === generationRunId);
+    if (!matchesRun) return asset;
+    touched = true;
+    return DesignAssetSchema.parse({
+      ...asset,
+      campaignPackName: input.name?.trim() ?? "",
+      campaignPackLabel: input.label?.trim() ?? "",
+      campaignPackNote: input.note?.trim() ?? "",
+      campaignPackUpdatedAt: now,
+    });
+  });
+
+  if (!touched) {
+    throw new Error("campaign pack not found");
+  }
+
+  await writeOwnerDashboard(id, owner);
+  return owner.designStudio;
+}
+
 /** Append (or replace by id) a generated logo, newest first. */
 export async function saveLogoAsset(
   id: string,
@@ -2095,9 +2198,15 @@ async function strippedSimulationRuns(id: string): Promise<Prisma.JsonValue> {
   return rows[0]?.simulation_runs ?? [];
 }
 
-export async function getProjectLean(id: string): Promise<ProjectFull | null> {
+export async function getProjectLean(
+  id: string,
+  ownerId?: string,
+): Promise<ProjectFull | null> {
   const [meta, simulationRuns] = await Promise.all([
-    prisma.project.findUnique({ where: { id }, select: LEAN_META_SELECT }),
+    prisma.project.findFirst({
+      where: { id, ...projectVisibleTo(ownerId) },
+      select: LEAN_META_SELECT,
+    }),
     strippedSimulationRuns(id),
   ]);
   if (!meta) return null;
@@ -2106,12 +2215,15 @@ export async function getProjectLean(id: string): Promise<ProjectFull | null> {
   );
 }
 
-export async function getLatestProjectLean(): Promise<ProjectFull | null> {
+export async function getLatestProjectLean(
+  ownerId?: string,
+): Promise<ProjectFull | null> {
   const latest = await prisma.project.findFirst({
+    where: projectVisibleTo(ownerId),
     orderBy: { updatedAt: "desc" },
     select: { id: true },
   });
-  return latest ? getProjectLean(latest.id) : null;
+  return latest ? getProjectLean(latest.id, ownerId) : null;
 }
 
 // Owner Dashboard only needs the small owner_dashboard JSON — NOT the giant
@@ -2177,19 +2289,26 @@ export async function getOwnerDashboardRunSlice(
   };
 }
 
-export async function listProjectPreviews(): Promise<ProjectFull[]> {
+export async function listProjectPreviews(ownerId?: string): Promise<ProjectFull[]> {
   // Same persona-strip-in-Postgres fix as getProjectLean, across all projects:
   // hydrating 27 by loading every persona blob and stripping in JS took ~85s.
   // Two queries (small columns + stripped runs) merged by id.
-  const [metas, runRows] = await Promise.all([
-    prisma.project.findMany({
-      orderBy: { updatedAt: "desc" },
-      select: LEAN_META_SELECT,
-    }),
-    prisma.$queryRawUnsafe<{ id: string; simulation_runs: Prisma.JsonValue }[]>(
-      `SELECT id, ${STRIP_SIMULATION_RUNS_SQL} AS simulation_runs FROM projects`,
-    ),
-  ]);
+  const metas = await prisma.project.findMany({
+    where: projectVisibleTo(ownerId),
+    orderBy: { updatedAt: "desc" },
+    select: LEAN_META_SELECT,
+  });
+  const ids = metas.map((m) => m.id);
+  const runRows = ids.length
+    ? await prisma.$queryRawUnsafe<
+        { id: string; simulation_runs: Prisma.JsonValue }[]
+      >(
+        `SELECT id, ${STRIP_SIMULATION_RUNS_SQL} AS simulation_runs FROM projects WHERE id IN (${ids
+          .map((_, i) => `$${i + 1}`)
+          .join(",")})`,
+        ...ids,
+      )
+    : [];
   const runsById = new Map(runRows.map((r) => [r.id, r.simulation_runs]));
   const projects = metas.map((m) =>
     leanRowToFull(m, runsById.get(m.id) ?? []),

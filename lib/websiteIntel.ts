@@ -509,6 +509,71 @@ function parseImages(
   return images;
 }
 
+// Pull the brand's actual logo/wordmark so the generated site header can use
+// the real mark instead of a cropped product package. Looks at header/nav logo
+// <img>s (by class/id/alt, SVG allowed), the favicon <link>s, and og:logo.
+// Returned with kind:"logo" and ordered best-first (header marks, then icons).
+function parseBrandLogos(html: string, pageUrl: string): WebsiteCollectedImage[] {
+  const out: WebsiteCollectedImage[] = [];
+  const seen = new Set<string>();
+  const add = (url: string | null, alt: string, caption: string) => {
+    if (!url || seen.has(url)) return;
+    if (/(sprite|placeholder|blank|loading|tracking|pixel)/i.test(url)) return;
+    seen.add(url);
+    out.push({ url, alt, caption, sourceUrl: pageUrl, kind: "logo" });
+  };
+
+  // 1. Header/nav logo images (allow SVG; match on class/id/alt, not just URL).
+  const imgRe = /<img\b([^>]*)>/gi;
+  let imgMatch: RegExpExecArray | null;
+  while ((imgMatch = imgRe.exec(html)) && out.length < 4) {
+    const attrs = attrMap(imgMatch[1]);
+    const signal = `${attrs.class ?? ""} ${attrs.id ?? ""} ${attrs.alt ?? ""} ${
+      attrs.title ?? ""
+    }`.toLowerCase();
+    if (
+      !/\b(logo|brandmark|wordmark|site[-_]?logo|header[-_]?logo|nav(?:bar)?[-_]?brand|brand[-_]?logo)\b/.test(
+        signal
+      )
+    ) {
+      continue;
+    }
+    const raw =
+      attrs.src ||
+      attrs["data-src"] ||
+      attrs["data-original"] ||
+      firstSrcFromSrcset(attrs.srcset || attrs["data-srcset"]);
+    add(safeUrl(raw, pageUrl), attrs.alt || "Brand logo", "Header logo image");
+  }
+
+  // 2. Favicon / app icons (prefer SVG mask-icon and PNG apple-touch-icon).
+  const linkRe = /<link\b([^>]*)>/gi;
+  let linkMatch: RegExpExecArray | null;
+  const icons: { url: string; rel: string }[] = [];
+  while ((linkMatch = linkRe.exec(html))) {
+    const attrs = attrMap(linkMatch[1]);
+    const rel = (attrs.rel ?? "").toLowerCase();
+    if (!/\b(apple-touch-icon|mask-icon|shortcut|icon)\b/.test(rel)) continue;
+    const url = safeUrl(attrs.href, pageUrl);
+    if (url) icons.push({ url, rel });
+  }
+  icons
+    .sort((a, b) => iconRelPriority(a.rel) - iconRelPriority(b.rel))
+    .forEach((icon) => add(icon.url, "Brand favicon", `Site icon (${icon.rel})`));
+
+  // 3. Open Graph logo, if declared.
+  add(safeUrl(metaContent(html, "og:logo"), pageUrl), "Brand logo", "og:logo");
+
+  return out;
+}
+
+function iconRelPriority(rel: string): number {
+  if (/apple-touch-icon/.test(rel)) return 0;
+  if (/mask-icon/.test(rel)) return 1;
+  if (/shortcut/.test(rel)) return 2;
+  return 3;
+}
+
 function parseJsonLdSignals(
   nodes: unknown[],
   pageUrl: string,
@@ -629,6 +694,12 @@ function parsePage(page: RawPage, root: URL): ParsedPage {
     title?.split(/[|–-]/)[0]?.trim();
 
   mergeInto(out, parseJsonLdSignals(parseJsonLd(page.html), canonical, title));
+
+  // Logos first so the kind:"logo" entry wins the URL-dedupe over a generic
+  // product/other classification from parseImages for the same header image.
+  for (const logo of parseBrandLogos(page.html, canonical)) {
+    pushUnique(out.productImages, logo, (item) => item.url, 48);
+  }
 
   for (const image of parseImages(page.html, canonical, title)) {
     pushUnique(out.productImages, image, (item) => item.url, 48);

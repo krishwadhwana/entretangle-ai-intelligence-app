@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { buildInvestorSnapshot, createInvestorKit, updateInvestorKit } from "@/lib/investor";
 import { InvestorKitEditsSchema } from "@/lib/schema";
 
@@ -8,6 +9,8 @@ export async function GET(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const snapshot = await buildInvestorSnapshot(params.id);
     return NextResponse.json({
@@ -23,6 +26,8 @@ export async function POST(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const kit = await createInvestorKit(params.id);
     const snapshot = await buildInvestorSnapshot(params.id);
@@ -40,6 +45,8 @@ export async function PATCH(
   req: Request,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   let body: unknown;
   try {
     body = await req.json();

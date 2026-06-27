@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { callMarketData } from "@/lib/llm";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -52,6 +53,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const body = MarketDataBodySchema.parse(await req.json().catch(() => ({})));
   const row = await prisma.project.findUnique({
     where: { id: params.id },

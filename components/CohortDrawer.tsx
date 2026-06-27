@@ -18,6 +18,7 @@ import { ValueTooltip } from "./ValueTooltip";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 import { providerErrorMessage } from "@/lib/providerErrors";
+import { SidebarCollapseButton } from "./CollapsibleSidebar";
 
 type Props = {
   runId: string;
@@ -305,6 +306,7 @@ export default function CohortDrawer({
     return out;
   }, [allCohorts, cohort]);
   const [shown, setShown] = useState(12);
+  const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => {
     if (typeof window === "undefined") return DRAWER_DEFAULT_WIDTH;
@@ -559,8 +561,44 @@ export default function CohortDrawer({
   return (
     <aside
       className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl"
-      style={{ width }}
+      style={{ width: collapsed ? 56 : width }}
     >
+      {collapsed ? (
+        <div className="flex h-full flex-col items-center gap-2 p-2">
+          <SidebarCollapseButton
+            collapsed={collapsed}
+            onToggle={() => setCollapsed(false)}
+            title="persona drawer"
+            side="right"
+          />
+          <span
+            className="h-3 w-3 rounded-full"
+            style={{ background: SEGMENT_COLORS[cohort.segment] }}
+          />
+          <MessageCircle
+            className={`h-4 w-4 ${
+              chatOpen && panel === "chat" ? "text-indigo-600" : "text-neutral-300"
+            }`}
+          />
+          <Sparkles
+            className={`h-4 w-4 ${
+              chatOpen && panel === "interaction"
+                ? "text-indigo-600"
+                : "text-neutral-300"
+            }`}
+          />
+          <button
+            type="button"
+            onClick={onClose}
+            className="mt-auto flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
+            title="Close persona drawer"
+            aria-label="Close persona drawer"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+      ) : (
+        <>
       <button
         type="button"
         onMouseDown={startResize}
@@ -613,6 +651,12 @@ export default function CohortDrawer({
         >
           <Sparkles className="h-3.5 w-3.5" /> Interact
         </button>
+        <SidebarCollapseButton
+          collapsed={collapsed}
+          onToggle={() => setCollapsed(true)}
+          title="persona drawer"
+          side="right"
+        />
         <button onClick={onClose} className="text-neutral-400 hover:text-neutral-700">
           <X className="h-4 w-4" />
         </button>
@@ -1066,6 +1110,8 @@ export default function CohortDrawer({
           </button>
         )}
       </div>
+        </>
+      )}
     </aside>
   );
 }

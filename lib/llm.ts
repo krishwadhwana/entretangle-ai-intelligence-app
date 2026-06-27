@@ -263,7 +263,14 @@ type AdVisualPromptAudit = {
     sourcePageUrl?: string;
     visualSummary?: string;
     tags?: string[];
+    usage?: string;
   };
+  socialInspiration?: {
+    id: string;
+    name: string;
+    visualSummary?: string;
+    tags?: string[];
+  }[];
 };
 
 type AdVisualResult = {
@@ -440,6 +447,13 @@ function isWeakProductSwapReference(image: ProductImageInput): boolean {
   );
 }
 
+function isSocialInspirationReference(image: ProductImageInput): boolean {
+  return (
+    image.ref.usage === "social-inspiration" ||
+    (image.ref.tags ?? []).some((tag) => /social[-\s]?inspiration/i.test(tag))
+  );
+}
+
 function productTargetHint(visualBrief: string): string {
   const match = visualBrief.match(/^Product reference target:\s*(.+)$/im);
   return compactPromptLine(match?.[1] ?? "");
@@ -452,7 +466,10 @@ function selectProductReference(args: {
   profile: ClientProfile;
 }): ProductImageInput | null {
   const allCandidates = (args.productImages ?? []).filter(
-    (image) => (image.dataUrl || image.buffer) && !isLogoReference(image)
+    (image) =>
+      (image.dataUrl || image.buffer) &&
+      !isLogoReference(image) &&
+      !isSocialInspirationReference(image)
   );
   const cleanCandidates = allCandidates.filter(
     (image) => !isWeakProductSwapReference(image)
@@ -477,6 +494,7 @@ function selectProductReference(args: {
       .join(" ")
       .toLowerCase();
     let score = image.ref.sourceKind === "uploaded" ? 100 : 0;
+    if (image.ref.usage === "product-reference") score += 80;
     if (/\/assets\/(?:shampoo|conditioner|bodywash)-\d+ml\.png/i.test(image.ref.url || "")) {
       score += 80;
     }
@@ -527,7 +545,39 @@ function productReferenceAudit(
     sourcePageUrl: image.ref.sourcePageUrl,
     visualSummary: image.ref.visualSummary,
     tags: image.ref.tags,
+    usage: image.ref.usage,
   };
+}
+
+function socialInspirationAudit(
+  images?: ProductImageInput[]
+): AdVisualPromptAudit["socialInspiration"] | undefined {
+  const refs = (images ?? [])
+    .filter(isSocialInspirationReference)
+    .slice(0, 4)
+    .map((image) => ({
+      id: image.ref.id,
+      name: image.ref.name,
+      visualSummary: image.ref.visualSummary,
+      tags: image.ref.tags,
+    }));
+  return refs.length ? refs : undefined;
+}
+
+function socialInspirationPromptNote(images?: ProductImageInput[]): string {
+  const refs = socialInspirationAudit(images);
+  if (!refs?.length) return "";
+  const lines = refs
+    .map((ref, index) => {
+      const summary = compactPromptLine(ref.visualSummary ?? ref.name);
+      const tags = (ref.tags ?? [])
+        .filter((tag) => !/social[-\s]?inspiration/i.test(tag))
+        .slice(0, 4)
+        .join(", ");
+      return `${index + 1}. ${summary}${tags ? ` (${tags})` : ""}`;
+    })
+    .join(" ");
+  return `Social inspiration guidance: use these only for art direction, mood, lighting, framing, setting, and styling; do not copy them exactly and do not treat their products as the product reference. ${lines}`;
 }
 
 function buildMidjourneyScenePrompt(
@@ -970,6 +1020,58 @@ async function callOpenAIAdVisualImage(args: {
       ? "[design] OpenAI image edit generated visual."
       : "[design] OpenAI image generation produced visual."
   );
+  return { dataUrl: `data:image/png;base64,${b64}`, prompt };
+}
+
+export async function callWebsiteImageCutout(args: {
+  projectId: string;
+  image: ProductImageInput;
+  brandName: string;
+}): Promise<{ dataUrl: string; prompt: string }> {
+  ensureFileGlobal();
+  const parts = args.image.dataUrl ? dataUrlParts(args.image.dataUrl) : null;
+  const buffer =
+    args.image.buffer ?? (parts ? Buffer.from(parts.data, "base64") : null);
+  const mimeType = parts?.mimeType ?? args.image.ref.mimeType;
+  if (!buffer || !/^image\/(?:png|jpe?g|webp)$/i.test(mimeType)) {
+    throw new Error("Cutout source must be a PNG, JPEG, or WebP image.");
+  }
+  const prompt = [
+    `Remove the background from this ${args.brandName} product image.`,
+    "Return a transparent PNG cutout that preserves the exact product, package shape, label, logo, typography, color, proportions, and edge detail.",
+    "Do not redesign the product, do not add props, do not add a new background, and do not crop off the object.",
+    "Keep natural shadows only if they are attached to the product and work on any website background.",
+  ].join(" ");
+  const file = await toFile(
+    buffer,
+    args.image.ref.name || "website-product-source.png",
+    { type: mimeType }
+  );
+  const response = await client().images.edit(
+    {
+      model: process.env.WEBSITE_CUTOUT_IMAGE_MODEL || process.env.IMAGE_MODEL || "gpt-image-2",
+      image: [file],
+      prompt,
+      n: 1,
+      size: "1024x1024",
+      quality: "medium",
+      output_format: "png",
+      background: "transparent",
+    } as never,
+    { timeout: DESIGN_IMAGE_TIMEOUT_MS, maxRetries: 0 }
+  );
+  if (response.usage) {
+    await recordProjectOnlyUsage(
+      args.projectId,
+      response.usage.input_tokens ?? 0,
+      response.usage.output_tokens ?? 0,
+      "frontier",
+      0,
+      "design.site"
+    );
+  }
+  const b64 = response.data?.[0]?.b64_json;
+  if (!b64) throw new Error("Background removal returned no image.");
   return { dataUrl: `data:image/png;base64,${b64}`, prompt };
 }
 
@@ -2462,7 +2564,8 @@ export async function callSiteGenerator(
     logoSvg?: string;
     logoImageDataUrl?: string;
     logoSourceUrl?: string;
-  } | null = null
+  } | null = null,
+  options: { promoMessages?: string[]; multiPage?: boolean } = {}
 ): Promise<SiteGenOutput> {
   if (config.mockMode) {
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${
@@ -2497,7 +2600,8 @@ export async function callSiteGenerator(
         availableForInlineEmbed: Boolean(image.dataUrl),
       })),
       websiteAnalysis,
-      brandAssets
+      brandAssets,
+      options
     ),
     schema: SiteGenOutputSchema,
     maxCompletionTokens: 26000,
@@ -2525,7 +2629,7 @@ export async function callAdVisualImage(args: {
     profile: args.profile,
   });
   const productRefs = productReference ? [productReference] : [];
-  const scenePrompt = scenePromptFromVisualBrief(
+  const baseScenePrompt = scenePromptFromVisualBrief(
     args.visualBrief,
     productReference?.ref.name ||
       args.profile.product ||
@@ -2533,9 +2637,14 @@ export async function callAdVisualImage(args: {
       "product",
     instructionMode
   );
+  const inspirationNote = socialInspirationPromptNote(args.productImages);
+  const scenePrompt = compactPromptLine(
+    [baseScenePrompt, inspirationNote].filter(Boolean).join(" ")
+  ).slice(0, instructionMode.forbidHumans ? 900 : 620);
   const promptAudit: AdVisualPromptAudit = {
     scenePrompt,
     productReference: productReferenceAudit(productReference),
+    socialInspiration: socialInspirationAudit(args.productImages),
   };
 
   if (args.type === "ad") {
@@ -3151,13 +3260,25 @@ export async function callProductImageAnalysis(args: {
   fileName: string;
   dataUrl: string;
   product?: string;
+  usage?: "product-reference" | "social-inspiration";
 }): Promise<ProductImageAnalysis> {
   if (config.mockMode) {
     return {
-      visualSummary: `(mock) Product reference image ${args.fileName} for ${args.product ?? "the venture"}.`,
-      tags: ["product reference"],
+      visualSummary:
+        args.usage === "social-inspiration"
+          ? `(mock) Social inspiration image ${args.fileName} for composition, lighting, mood, and styling.`
+          : `(mock) Product reference image ${args.fileName} for ${args.product ?? "the venture"}.`,
+      tags:
+        args.usage === "social-inspiration"
+          ? ["social inspiration"]
+          : ["product reference"],
     };
   }
+
+  const socialInspiration =
+    args.usage === "social-inspiration"
+      ? "You inspect uploaded social-media inspiration images for art direction. Describe visible composition, framing, lighting, mood, setting, surface, camera angle, color treatment, styling, and product-presentation cues. Do not identify people or infer demographics. Do not describe it as the product to preserve."
+      : "You inspect founder-uploaded product reference images for business simulation. Describe only visible product traits: category, silhouette or shape, materials, color, finish, styling cues, construction details, use case, and likely positioning. Avoid guessing brand claims, price, location, identity, or demographics.";
 
   const response = await client().responses.create(
     {
@@ -3165,15 +3286,14 @@ export async function callProductImageAnalysis(args: {
       input: [
         {
           role: "system",
-          content:
-            "You inspect founder-uploaded product reference images for business simulation. Describe only visible product traits: category, silhouette or shape, materials, color, finish, styling cues, construction details, use case, and likely positioning. Avoid guessing brand claims, price, location, identity, or demographics. Output JSON only.",
+          content: `${socialInspiration} Output JSON only.`,
         },
         {
           role: "user",
           content: [
             {
               type: "input_text",
-              text: `Product context: ${args.product ?? "unknown"}\nImage file: ${args.fileName}\nReturn {"visualSummary":"...","tags":["..."]}.`,
+              text: `Product context: ${args.product ?? "unknown"}\nImage file: ${args.fileName}\nUsage: ${args.usage ?? "product-reference"}\nReturn {"visualSummary":"...","tags":["..."]}.`,
             },
             {
               type: "input_image",

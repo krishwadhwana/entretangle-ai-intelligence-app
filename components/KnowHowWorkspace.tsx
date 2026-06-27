@@ -46,6 +46,9 @@ import {
 import { DOMAIN_META } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
 import GlossaryText from "./GlossaryText";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "./CollapsibleSidebar";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
 type Props = {
@@ -153,6 +156,8 @@ export default function KnowHowWorkspace({
   const [loadingProgress, setLoadingProgress] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [moduleSidebarCollapsed, setModuleSidebarCollapsed] = useState(false);
+  const [toolsSidebarCollapsed, setToolsSidebarCollapsed] = useState(false);
   const selectedModule =
     moduleByKey(selectedKey) ?? moduleByKey(progress.selectedModuleKey) ??
     defaultKnowHowModule();
@@ -162,6 +167,13 @@ export default function KnowHowWorkspace({
   );
   const notes = progress.notesByModule[selectedModule.key] ?? "";
   const history = progress.askHistoryByModule[selectedModule.key] ?? [];
+  const gridClassName = moduleSidebarCollapsed
+    ? toolsSidebarCollapsed
+      ? "xl:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]"
+      : "xl:grid-cols-[3.5rem_minmax(0,1fr)_340px]"
+    : toolsSidebarCollapsed
+      ? "xl:grid-cols-[260px_minmax(0,1fr)_3.5rem]"
+      : "xl:grid-cols-[260px_minmax(0,1fr)_340px]";
 
   useEffect(() => {
     if (!projectId) return;
@@ -276,8 +288,51 @@ export default function KnowHowWorkspace({
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50">
-      <div className="mx-auto grid max-w-[1500px] gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
-        <aside className="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4">
+      <div className={`mx-auto grid max-w-[1500px] gap-4 p-4 ${gridClassName}`}>
+        <CollapsibleSidebar
+          title="know-how modules sidebar"
+          collapsed={moduleSidebarCollapsed}
+          onToggle={() =>
+            setModuleSidebarCollapsed((collapsed) => !collapsed)
+          }
+          expandedClassName="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4"
+          collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white xl:sticky xl:top-4"
+          collapsedChildren={
+            <div className="flex w-full flex-col items-center gap-1">
+              {KNOW_HOW_MODULES.map((module) => {
+                const active = module.key === selectedModule.key;
+                const done = taskProgress(module, progress);
+                return (
+                  <button
+                    key={module.key}
+                    type="button"
+                    onClick={() => selectModule(module)}
+                    title={module.title}
+                    aria-label={module.title}
+                    className={`relative flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
+                      active
+                        ? "bg-neutral-900 text-white"
+                        : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
+                    }`}
+                  >
+                    {module.title.charAt(0)}
+                    {done > 0 ? (
+                      <span
+                        className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
+                          active
+                            ? "bg-white text-neutral-900"
+                            : "bg-neutral-100 text-neutral-500"
+                        }`}
+                      >
+                        {done}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+          }
+        >
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -292,6 +347,13 @@ export default function KnowHowWorkspace({
             ) : (
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             )}
+            <SidebarCollapseButton
+              collapsed={moduleSidebarCollapsed}
+              onToggle={() =>
+                setModuleSidebarCollapsed((collapsed) => !collapsed)
+              }
+              title="know-how modules sidebar"
+            />
           </div>
           <nav className="space-y-1">
             {KNOW_HOW_MODULES.map((module) => {
@@ -342,7 +404,7 @@ export default function KnowHowWorkspace({
               {saveError}
             </p>
           ) : null}
-        </aside>
+        </CollapsibleSidebar>
 
         <main className="min-w-0 space-y-4">
           <section className="rounded-lg border border-neutral-200 bg-white p-5">
@@ -474,7 +536,33 @@ export default function KnowHowWorkspace({
           />
         </main>
 
-        <aside className="space-y-4 xl:sticky xl:top-4 xl:h-fit">
+        <CollapsibleSidebar
+          title="know-how tools sidebar"
+          side="right"
+          collapsed={toolsSidebarCollapsed}
+          onToggle={() => setToolsSidebarCollapsed((collapsed) => !collapsed)}
+          expandedClassName="space-y-4 xl:sticky xl:top-4 xl:h-fit"
+          collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white xl:sticky xl:top-4"
+          collapsedChildren={
+            <div className="flex flex-col items-center gap-1 text-neutral-400">
+              <MessageCircleQuestion className="h-4 w-4" />
+              <NotebookPen className="h-4 w-4" />
+            </div>
+          }
+        >
+          <div className="flex items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+              Tools
+            </p>
+            <SidebarCollapseButton
+              collapsed={toolsSidebarCollapsed}
+              onToggle={() =>
+                setToolsSidebarCollapsed((collapsed) => !collapsed)
+              }
+              title="know-how tools sidebar"
+              side="right"
+            />
+          </div>
           <AskPanel
             module={selectedModule}
             ready={ready}
@@ -495,7 +583,7 @@ export default function KnowHowWorkspace({
             }}
           />
           <NotesPanel notes={notes} onSave={saveNotes} />
-        </aside>
+        </CollapsibleSidebar>
       </div>
     </div>
   );

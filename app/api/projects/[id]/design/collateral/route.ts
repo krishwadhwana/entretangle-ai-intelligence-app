@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { runDesignStudioJob } from "@/lib/design/jobs";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
@@ -11,6 +12,7 @@ import {
   deleteDesignAsset,
   getDesignStudio,
   getProject,
+  updateDesignCampaignPack,
 } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -31,16 +33,33 @@ const PostSchema = z.object({
   generationRunLabel: z.string().trim().max(220).default(""),
   generationRunCreatedAt: z.string().trim().max(80).default(""),
   generationRunStamp: z.string().trim().max(80).default(""),
+  socialPrompt: z
+    .object({
+      brief: z.string().trim().max(2000).default(""),
+      visualBrief: z.string().trim().max(2000).default(""),
+      templateBrief: z.string().trim().max(1000).default(""),
+      useTemplates: z.boolean().default(false),
+    })
+    .optional(),
   sourceRunId: z.string().trim().min(1).max(120).nullable().default(null),
   sourceWebsiteUrl: z.string().trim().max(400).default(""),
   // Optional: re-render edited copy without another LLM call.
   content: CollateralContentSchema.optional(),
 });
 
+const PatchSchema = z.object({
+  generationRunId: z.string().trim().min(1).max(160),
+  campaignPackName: z.string().trim().max(120).default(""),
+  campaignPackLabel: z.string().trim().max(80).default(""),
+  campaignPackNote: z.string().trim().max(800).default(""),
+});
+
 export async function GET(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   try {
     const studio = await getDesignStudio(params.id);
     return NextResponse.json({ assets: studio?.assets ?? [] });
@@ -53,7 +72,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
@@ -99,6 +120,7 @@ export async function POST(
           generationRunLabel: body.data.generationRunLabel,
           generationRunCreatedAt: body.data.generationRunCreatedAt,
           generationRunStamp: body.data.generationRunStamp,
+          socialPrompt: body.data.socialPrompt,
           sourceRunId: body.data.sourceRunId,
           sourceWebsiteUrl: body.data.sourceWebsiteUrl,
           ...(body.data.content ? { content: body.data.content } : {}),
@@ -122,6 +144,7 @@ export async function POST(
         generationRunLabel: body.data.generationRunLabel,
         generationRunCreatedAt: body.data.generationRunCreatedAt,
         generationRunStamp: body.data.generationRunStamp,
+        socialPrompt: body.data.socialPrompt,
         sourceRunId: body.data.sourceRunId,
         sourceWebsiteUrl: body.data.sourceWebsiteUrl,
         ...(body.data.content ? { content: body.data.content } : {}),
@@ -141,10 +164,40 @@ export async function POST(
   }
 }
 
+export async function PATCH(
+  req: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+
+  const body = PatchSchema.safeParse(await req.json().catch(() => ({})));
+  if (!body.success) {
+    return NextResponse.json({ error: body.error.issues }, { status: 400 });
+  }
+
+  try {
+    const studio = await updateDesignCampaignPack(params.id, {
+      generationRunId: body.data.generationRunId,
+      name: body.data.campaignPackName,
+      label: body.data.campaignPackLabel,
+      note: body.data.campaignPackNote,
+    });
+    return NextResponse.json({ assets: studio.assets });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "campaign pack update failed";
+    const status = message === "campaign pack not found" ? 404 : 500;
+    return NextResponse.json({ error: message }, { status });
+  }
+}
+
 export async function DELETE(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
   const assetId = new URL(req.url).searchParams.get("assetId");
   if (!assetId) {
     return NextResponse.json({ error: "assetId required" }, { status: 400 });

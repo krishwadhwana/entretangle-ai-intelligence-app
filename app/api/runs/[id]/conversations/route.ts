@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 
 export const dynamic = "force-dynamic";
@@ -11,6 +12,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const cohortId = req.nextUrl.searchParams.get("cohortId");
   if (!cohortId) {
     return NextResponse.json({ error: "cohortId required" }, { status: 400 });

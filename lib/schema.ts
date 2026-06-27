@@ -120,6 +120,7 @@ export const ProductImageRefSchema = z.object({
   sourceUrl: z.string().optional(),
   sourcePageUrl: z.string().optional(),
   sourceKind: z.enum(["uploaded", "scraped"]).optional(),
+  usage: z.enum(["product-reference", "social-inspiration"]).optional(),
 });
 export type ProductImageRef = z.infer<typeof ProductImageRefSchema>;
 
@@ -1695,7 +1696,19 @@ export const DesignAssetSchema = z.object({
   generationRunLabel: z.string().optional(),
   generationRunCreatedAt: z.string().optional(),
   generationRunStamp: z.string().optional(),
+  campaignPackName: z.string().max(120).optional(),
+  campaignPackLabel: z.string().max(80).optional(),
+  campaignPackNote: z.string().max(800).optional(),
+  campaignPackUpdatedAt: z.string().optional(),
   templateFrameEnabled: z.boolean().optional(),
+  socialPrompt: z
+    .object({
+      brief: z.string().optional(),
+      visualBrief: z.string().optional(),
+      templateBrief: z.string().optional(),
+      useTemplates: z.boolean().optional(),
+    })
+    .optional(),
   generationPrompt: z
     .object({
       scenePrompt: z.string().optional(),
@@ -1711,7 +1724,18 @@ export const DesignAssetSchema = z.object({
           sourcePageUrl: z.string().optional(),
           visualSummary: z.string().optional(),
           tags: z.array(z.string()).optional(),
+          usage: z.string().optional(),
         })
+        .optional(),
+      socialInspiration: z
+        .array(
+          z.object({
+            id: z.string(),
+            name: z.string(),
+            visualSummary: z.string().optional(),
+            tags: z.array(z.string()).optional(),
+          })
+        )
         .optional(),
     })
     .optional(),

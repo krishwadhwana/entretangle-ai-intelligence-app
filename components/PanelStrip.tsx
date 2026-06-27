@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import {
   Star,
   CornerDownLeft,
@@ -28,6 +29,9 @@ import type { Block, Domain } from "@/lib/schema";
 import type { CanvasState } from "./useRunEvents";
 import { DOMAIN_META, DOMAIN_ORDER } from "./domains";
 import { downloadDossier, slug, type Dossier, type DossierSection } from "./pdf";
+import CollapsibleSidebar, {
+  SidebarCollapseButton,
+} from "./CollapsibleSidebar";
 
 function StateDot({ state }: { state: Block["state"] }) {
   if (state === "concluded")
@@ -405,6 +409,7 @@ export function ConclusionWorkspace({
   }, [state.blocks]);
   const [question, setQuestion] = useState("");
   const [tab, setTab] = useState<ConclusionTab>("report");
+  const [sidePanelCollapsed, setSidePanelCollapsed] = useState(false);
   const questionInputRef = useRef<HTMLInputElement>(null);
   // Turns asked this session — persisted turns arrive via state.conversation on
   // reload, so these only cover the current page load (no double-render: the
@@ -586,6 +591,40 @@ export function ConclusionWorkspace({
     },
     { id: "foresight", label: "Revise", icon: Sparkles },
   ] as const;
+  const sidePanelGridClass = sidePanelCollapsed
+    ? "lg:grid-cols-[minmax(0,1fr)_3.5rem]"
+    : "lg:grid-cols-[minmax(0,1fr)_22rem]";
+
+  const renderSidePanel = (label: string, children: ReactNode) => (
+    <CollapsibleSidebar
+      title="conclusion side panel"
+      side="right"
+      collapsed={sidePanelCollapsed}
+      onToggle={() => setSidePanelCollapsed((collapsed) => !collapsed)}
+      expandedClassName="space-y-3"
+      collapsedClassName="h-fit rounded-xl border border-neutral-200 bg-white"
+      collapsedChildren={
+        <div className="flex flex-col items-center gap-1 text-neutral-400">
+          <FileText className="h-4 w-4" />
+          <MessageSquareText className="h-4 w-4" />
+          <Globe2 className="h-4 w-4" />
+        </div>
+      }
+    >
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
+          {label}
+        </p>
+        <SidebarCollapseButton
+          collapsed={sidePanelCollapsed}
+          onToggle={() => setSidePanelCollapsed((collapsed) => !collapsed)}
+          title="conclusion side panel"
+          side="right"
+        />
+      </div>
+      {children}
+    </CollapsibleSidebar>
+  );
 
   const worldSummaryPanel = (
     <div className="rounded-xl border border-indigo-200 bg-indigo-50/50 p-3">
@@ -819,7 +858,7 @@ export function ConclusionWorkspace({
         </div>
 
         {tab === "report" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className={`grid items-start gap-4 ${sidePanelGridClass}`}>
             <div className="space-y-2">
               <FinalReportView
                 report={report}
@@ -827,15 +866,18 @@ export function ConclusionWorkspace({
                 onCite={onCite}
               />
             </div>
-            <aside className="space-y-3">
-              {worldSummaryPanel}
-              {renderAskPanel("Ask the model")}
-            </aside>
+            {renderSidePanel(
+              "Report tools",
+              <>
+                {worldSummaryPanel}
+                {renderAskPanel("Ask the model")}
+              </>,
+            )}
           </div>
         )}
 
         {tab === "followups" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className={`grid items-start gap-4 ${sidePanelGridClass}`}>
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
@@ -860,15 +902,18 @@ export function ConclusionWorkspace({
               </div>
               {renderFollowUpList()}
             </div>
-            <aside className="space-y-3">
-              {renderAskPanel("New follow-up")}
-              {worldSummaryPanel}
-            </aside>
+            {renderSidePanel(
+              "Follow-up tools",
+              <>
+                {renderAskPanel("New follow-up")}
+                {worldSummaryPanel}
+              </>,
+            )}
           </div>
         )}
 
         {tab === "foresight" && (
-          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1fr)_22rem]">
+          <div className={`grid items-start gap-4 ${sidePanelGridClass}`}>
             <div className="space-y-3">
               <div className="grid gap-3 md:grid-cols-2">
                 {FORESIGHT_PROMPTS.map((item) => (
@@ -926,10 +971,13 @@ export function ConclusionWorkspace({
                 </div>
               </div>
             </div>
-            <aside className="space-y-3">
-              {renderAskPanel("Foresight follow-up")}
-              {worldSummaryPanel}
-            </aside>
+            {renderSidePanel(
+              "Revision tools",
+              <>
+                {renderAskPanel("Foresight follow-up")}
+                {worldSummaryPanel}
+              </>,
+            )}
           </div>
         )}
       </div>

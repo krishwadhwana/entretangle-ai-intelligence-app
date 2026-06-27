@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { getProject, saveVentureProfile } from "@/lib/store";
 import { callProductImageAnalysis } from "@/lib/llm";
 import {
@@ -19,7 +20,9 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }
@@ -43,6 +46,9 @@ export async function POST(
   if (!(image instanceof File)) {
     return NextResponse.json({ error: "image file is required" }, { status: 400 });
   }
+  const usageRaw = String(form.get("usage") ?? "product-reference");
+  const usage =
+    usageRaw === "social-inspiration" ? "social-inspiration" : "product-reference";
 
   const mimeType = image.type;
   if (!isSupportedProductImageMime(mimeType)) {
@@ -71,6 +77,7 @@ export async function POST(
       fileName: name,
       product: project.ventureProfile.product,
       dataUrl: `data:${mimeType};base64,${buffer.toString("base64")}`,
+      usage,
     });
     visualSummary = analysis.visualSummary;
     tags = analysis.tags;
@@ -86,8 +93,9 @@ export async function POST(
     size: buffer.length,
     uploadedAt: new Date().toISOString(),
     ...(visualSummary ? { visualSummary } : {}),
-    tags,
+    tags: Array.from(new Set([usage, ...tags])).slice(0, 12),
     sourceKind: "uploaded",
+    usage,
   };
   const productImages = [...existing, ref];
   await saveVentureProfile(params.id, {

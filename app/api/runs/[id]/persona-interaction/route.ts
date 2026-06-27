@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { callPersonaReply, callPersonaConclusion } from "@/lib/llm";
 import { RunEmitter } from "@/lib/events";
@@ -64,6 +65,8 @@ export async function POST(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const body = RequestSchema.safeParse(await req.json());
   if (!body.success) {
     return NextResponse.json({ error: body.error.issues }, { status: 400 });

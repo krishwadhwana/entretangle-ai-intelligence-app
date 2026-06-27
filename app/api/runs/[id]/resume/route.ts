@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { RunEmitter } from "@/lib/events";
 import { enqueueRunJob } from "@/lib/jobs";
@@ -14,6 +15,8 @@ export async function POST(
   _req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const run = await prisma.run.findUnique({
     where: { id: params.id },
     select: { id: true, status: true },

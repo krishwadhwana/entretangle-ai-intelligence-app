@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
 import { subscribeRunEvents } from "@/lib/bus";
 import { loadPersistedEvents } from "@/lib/events";
@@ -14,6 +15,8 @@ export async function GET(
   req: NextRequest,
   { params }: { params: { id: string } }
 ) {
+  const auth = await requireRunForApi(params.id);
+  if (auth.response) return auth.response;
   const runId = params.id;
   const run = await prisma.run.findUnique({ where: { id: runId } });
   if (!run) return new Response("not found", { status: 404 });

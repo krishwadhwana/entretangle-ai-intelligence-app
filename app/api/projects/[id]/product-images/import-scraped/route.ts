@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { requireProjectForApi } from "@/lib/apiAuth";
 import { getProject, saveVentureProfile } from "@/lib/store";
 import {
   createProductImageId,
@@ -18,7 +19,9 @@ export async function POST(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  const project = await getProject(params.id);
+  const auth = await requireProjectForApi(params.id);
+  if (auth.response) return auth.response;
+  const project = await getProject(params.id, auth.user.id);
   if (!project) {
     return NextResponse.json({ error: "project not found" }, { status: 404 });
   }

@@ -50,6 +50,11 @@ type SitePolishOptions = {
   heroSubhead?: string | null;
   headingFamily?: string | null;
   bodyFamily?: string | null;
+  navLinks?: { label: string; href: string }[];
+  // Short, looping announcement-bar phrases inferred from the Overview/profile
+  // (an offer like "FLAT 10% OFF FOR NEW CUSTOMERS" or a USP like
+  // "SULPHATE-FREE FORMULATION"). Rendered as a CSS-only marquee, no JS.
+  promoMessages?: string[] | null;
 };
 
 function compactWhitespace(value: string): string {
@@ -115,6 +120,40 @@ main section:not(:first-of-type) :where(article,li,figure,[class*="card"])>img,m
 main section:not(:first-of-type) :where([class*="product"],[class*="collection"],[id*="product"],[id*="shop"]) :where(article,li,figure,[class*="card"]){min-width:0}
 @media (max-width:760px){.et-site-header{position:absolute;min-height:72px;padding:18px 20px;gap:12px}.et-site-logo{width:min(170px,52vw);height:42px}.et-site-header nav{gap:14px;overflow-x:auto}.et-site-header nav a{font-size:11px}header,.site-header,.navbar,.et-product-hero__nav{min-height:64px;gap:12px;flex-wrap:wrap}header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.site-header :where([class*="brand"],[class*="logo"],.wordmark,h1,h2),.navbar :where([class*="brand"],[class*="logo"],.wordmark,h1,h2){max-width:58vw!important;font-size:clamp(22px,8vw,34px)!important}main>section:first-of-type h1,[class*="hero"] h1,.et-product-hero h1{font-size:clamp(38px,14vw,68px)!important;max-width:9ch!important}.et-product-hero__copy{padding-top:124px!important}.et-product-hero__nav{align-items:flex-start}}
 @media (max-width:760px){.et-clean-guide__inner{grid-template-columns:1fr}}
+/* --- CSS-only promo marquee (announcement bar) --- */
+:root{--et-promo-h:40px}
+.et-promo-bar{position:relative;z-index:40;overflow:hidden;min-height:var(--et-promo-h);display:flex;align-items:center;background:var(--primary,#101010);color:var(--neutral-light,#fff);font-family:var(--body-font,inherit)}
+.et-promo-bar__track{display:inline-flex;flex-wrap:nowrap;align-items:center;white-space:nowrap;will-change:transform;animation:et-marquee 26s linear infinite}
+.et-promo-bar__track span{display:inline-flex;align-items:center;padding:0 30px;font-size:12px;font-weight:850;letter-spacing:.16em;text-transform:uppercase;line-height:var(--et-promo-h)}
+.et-promo-bar__track span:before{content:"";flex:none;width:5px;height:5px;margin-right:30px;border-radius:50%;background:currentColor;opacity:.55}
+.et-promo-bar:hover .et-promo-bar__track{animation-play-state:paused}
+@keyframes et-marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+/* When a promo bar precedes it, drop the absolute header below the bar. */
+.et-promo-bar~.et-site-header{top:var(--et-promo-h)}
+/* --- Uniform product image frames (any product/shop grid, non-hero) --- */
+main section:not(:first-of-type) :where([class*="product"],[class*="collection"],[class*="shop"],[id*="product"],[id*="shop"],[id*="collection"]) :where(article,li,figure,a,div)>img,
+main section:not(:first-of-type) :where(article,li,figure)[class*="card"]>img,
+main section:not(:first-of-type) :where(article,li,figure)[class*="card"] picture>img{display:block;width:100%;height:auto;max-height:clamp(260px,32vw,460px);aspect-ratio:4/5;object-fit:contain!important;object-position:center!important;background:color-mix(in srgb,var(--neutral-light,#fff) 78%,transparent)}
+/* --- Tasteful CSS-only motion (respects reduced-motion) --- */
+@media (prefers-reduced-motion:no-preference){
+.et-product-hero__copy>*{animation:et-rise .8s cubic-bezier(.16,.84,.44,1) both}
+.et-product-hero__copy>*:nth-child(2){animation-delay:.07s}
+.et-product-hero__copy>*:nth-child(3){animation-delay:.14s}
+.et-product-hero__copy>*:nth-child(4){animation-delay:.21s}
+main :where(article,figure,[class*="card"]),main img,.et-product-hero__actions a{transition:transform .5s cubic-bezier(.2,.7,.2,1),box-shadow .5s,opacity .35s}
+main section:not(:first-of-type) :where(article,figure,[class*="card"]):hover{transform:translateY(-5px)}
+main section:not(:first-of-type) :where([class*="product"],[class*="collection"]) :where(figure,a,article):hover img{transform:scale(1.045)}
+.et-product-hero__actions a:hover{transform:translateY(-2px)}
+.et-site-header nav a,a[role="button"],button{transition:opacity .2s,transform .2s}
+.et-site-header nav a:hover{opacity:.62}
+@supports (animation-timeline:view()){
+main>section:not(:first-of-type){animation:et-rise auto linear both;animation-timeline:view();animation-range:entry 2% cover 18%}
+main>section:not(:first-of-type) :where(article,figure,li,[class*="card"]){animation:et-fade auto linear both;animation-timeline:view();animation-range:entry 0% cover 16%}
+}
+}
+@keyframes et-rise{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:none}}
+@keyframes et-fade{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@media (max-width:760px){:root{--et-promo-h:36px}.et-promo-bar__track span{padding:0 20px;letter-spacing:.12em}.et-promo-bar__track span:before{margin-right:20px}}
 </style>`;
 }
 
@@ -197,13 +236,36 @@ function displayBrandName(value: string): string {
   return clean;
 }
 
-function siteHeaderMarkup(brandName: string, logoMarkup: string | null): string {
+function siteHeaderMarkup(
+  brandName: string,
+  logoMarkup: string | null,
+  navLinks?: { label: string; href: string }[]
+): string {
   const displayName = displayBrandName(brandName);
   const label = escapeHtml(displayName || "Brand");
   const mark =
     logoMarkup ||
     `<span class="et-site-logo--text">${label}</span>`;
-  return `<header class="et-site-header"><a class="et-site-logo" href="#top" aria-label="${label}">${mark}</a><nav aria-label="Primary"><a href="#ritual">Ritual</a><a href="#products">Products</a><a href="#join">Join</a><a href="#shop">Shop</a></nav></header>`;
+  const links =
+    navLinks && navLinks.length
+      ? navLinks
+      : [
+          { label: "Ritual", href: "#ritual" },
+          { label: "Products", href: "#products" },
+          { label: "Join", href: "#join" },
+          { label: "Shop", href: "#shop" },
+        ];
+  const nav = links
+    .slice(0, 5)
+    .map(
+      (link) =>
+        `<a href="${escapeHtml(link.href)}">${escapeHtml(link.label)}</a>`
+    )
+    .join("");
+  const homeHref = links.some((link) => link.href === "index.html")
+    ? "index.html"
+    : "#top";
+  return `<header class="et-site-header"><a class="et-site-logo" href="${homeHref}" aria-label="${label}">${mark}</a><nav aria-label="Primary">${nav}</nav></header>`;
 }
 
 function applyLogoHeader(html: string, options: SitePolishOptions): string {
@@ -217,12 +279,48 @@ function applyLogoHeader(html: string, options: SitePolishOptions): string {
             options.brandName || "Brand"
           )} logo">`
         : null;
-  const header = siteHeaderMarkup(options.brandName || "Brand", logoMarkup);
+  const header = siteHeaderMarkup(
+    options.brandName || "Brand",
+    logoMarkup,
+    options.navLinks
+  );
   if (/<header\b[\s\S]*?<\/header>/i.test(html)) {
     return html.replace(/<header\b[\s\S]*?<\/header>/i, header);
   }
   if (/<body\b[^>]*>/i.test(html)) {
     return html.replace(/<body\b[^>]*>/i, (match) => `${match}\n${header}`);
+  }
+  return html;
+}
+
+function promoBarMarkup(messages: string[]): string {
+  const clean = Array.from(
+    new Set(
+      messages
+        .map((message) => compactWhitespace(message).toUpperCase())
+        .filter((message) => message.length > 1 && message.length <= 48)
+    )
+  ).slice(0, 6);
+  if (!clean.length) return "";
+  // Repeat until the track is wide enough that a translateX(-50%) loop has no gap.
+  let half = clean.map((message) => `<span>${escapeHtml(message)}</span>`);
+  while (half.length < 8) half = [...half, ...half];
+  const halfHtml = half.join("");
+  const dupHtml = halfHtml.replace(/<span>/g, '<span aria-hidden="true">');
+  return `<div class="et-promo-bar" role="complementary" aria-label="Announcements"><div class="et-promo-bar__track">${halfHtml}${dupHtml}</div></div>`;
+}
+
+function applyPromoMarquee(
+  html: string,
+  messages: string[] | null | undefined
+): string {
+  if (!messages || !messages.length) return html;
+  const bar = promoBarMarkup(messages);
+  if (!bar || html.includes("et-promo-bar")) return html;
+  // Insert as the first child of <body>, ahead of the injected site header so
+  // the general-sibling rule (.et-promo-bar ~ .et-site-header) offsets the nav.
+  if (/<body\b[^>]*>/i.test(html)) {
+    return html.replace(/<body\b[^>]*>/i, (match) => `${match}\n${bar}`);
   }
   return html;
 }
@@ -391,6 +489,7 @@ export function polishGeneratedSiteHtmlWithAssets(
       : rawHtml;
   html = applyFontGuard(html, options);
   html = applyLogoHeader(html, options);
+  html = applyPromoMarquee(html, options.promoMessages);
   html = polishHeroSubhead(html, options.heroSubhead);
   html = normalizeDeadCtas(html);
   html = ensureCoreAnchorTargets(html, options);
