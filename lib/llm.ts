@@ -170,6 +170,14 @@ import {
 } from "./datasources/demographics";
 import { benchmarksForProfile } from "./datasources/benchmarks";
 import { isProviderQuotaError, isProviderTimeoutError } from "./providerErrors";
+import {
+  CostCapError,
+  estimateCostUsd,
+  estimateTokens,
+  projectedSpend,
+  releaseReservation,
+  reserveBudget,
+} from "./costGuard";
 
 const globalForLlm = globalThis as unknown as { openai?: OpenAI };
 
@@ -1017,6 +1025,20 @@ async function callJson<T>(opts: {
   // for ~12 minutes).
   requestMaxRetries?: number;
 }): Promise<T> {
+  // Reserve the call's worst-case budget before dispatch so concurrent fan-out
+  // can't collectively overshoot the run's cost/token cap (cost guard).
+  const estInputTokens = estimateTokens(opts.system + opts.user);
+  const estOutputTokens = opts.maxCompletionTokens ?? COMPLETION_BUDGET;
+  const estTokens = estInputTokens + estOutputTokens;
+  const estUsd = estimateCostUsd(
+    opts.tier ?? "frontier",
+    estInputTokens,
+    estOutputTokens
+  );
+  if (opts.runId && !reserveBudget(opts.runId, estUsd, estTokens)) {
+    throw new CostCapError(opts.runId, projectedSpend(opts.runId));
+  }
+  try {
   let lastError = "";
   for (let attempt = 0; attempt < (opts.maxAttempts ?? 2); attempt++) {
     const messages: Msg[] = [
@@ -1080,6 +1102,9 @@ async function callJson<T>(opts: {
     }
   }
   throw new Error(`LLM output failed validation after retry: ${lastError}`);
+  } finally {
+    if (opts.runId) releaseReservation(opts.runId, estUsd, estTokens);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -1177,6 +1202,18 @@ async function callDeskWebSearch(
   runId: string,
   system: string
 ): Promise<ExecutorOutput> {
+  // Reserve frontier budget incl. one estimated web-search call (cost guard).
+  const estTokens = estimateTokens(system) + COMPLETION_BUDGET;
+  const estUsd = estimateCostUsd(
+    "frontier",
+    estimateTokens(system),
+    COMPLETION_BUDGET,
+    1
+  );
+  if (!reserveBudget(runId, estUsd, estTokens)) {
+    throw new CostCapError(runId, projectedSpend(runId));
+  }
+  try {
   const response = await client().responses.create({
     model: config.model,
     tools: [{ type: "web_search" } as never],
@@ -1212,6 +1249,9 @@ async function callDeskWebSearch(
     );
   }
   return parsed.data;
+  } finally {
+    releaseReservation(runId, estUsd, estTokens);
+  }
 }
 
 /**
@@ -1249,6 +1289,20 @@ export async function callExecutor(
   const system = deskSystem(block, profile, inputConclusions, false, groundTruth);
   const user = "Begin. Output JSON only.";
 
+  // Reserve frontier budget for the ungrounded streaming desk call. The web
+  // path (above) and the validation-retry fallback (callJson, below) reserve
+  // separately, so this guards exactly the streaming branch (cost guard).
+  const estTokens = estimateTokens(system + user) + COMPLETION_BUDGET;
+  const estUsd = estimateCostUsd(
+    "frontier",
+    estimateTokens(system + user),
+    COMPLETION_BUDGET
+  );
+  if (!reserveBudget(runId, estUsd, estTokens)) {
+    throw new CostCapError(runId, projectedSpend(runId));
+  }
+  let snapshot = "";
+  try {
   const stream = await client().chat.completions.create({
     ...baseParams(),
     stream: true,
@@ -1260,7 +1314,6 @@ export async function callExecutor(
   });
 
   // Emit log lines in order as they complete inside the streamed JSON.
-  let snapshot = "";
   let emitted = 0;
   let emitChain = Promise.resolve();
   let usage: OpenAI.CompletionUsage | null = null;
@@ -1287,6 +1340,9 @@ export async function callExecutor(
       0,
       { feature: "simulation.web_research" }
     );
+  }
+  } finally {
+    releaseReservation(runId, estUsd, estTokens);
   }
 
   let parseError: string;
