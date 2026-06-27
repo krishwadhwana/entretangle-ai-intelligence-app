@@ -7029,11 +7029,13 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-print" ? "" : "hidden"
                 }
               >
-                <PrintSpecPanel
-                  printSpec={printSpec}
-                  savingKey={savingWorkspaceKey}
-                  onSave={savePrintSpec}
-                />
+                {activeWorkspaceSection === "workspace-print" && (
+                  <PrintSpecPanel
+                    printSpec={printSpec}
+                    savingKey={savingWorkspaceKey}
+                    onSave={savePrintSpec}
+                  />
+                )}
               </section>
 
               <section
@@ -7041,12 +7043,14 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-ops" ? "" : "hidden"
                 }
               >
-                <OperationsPanel
-                  modules={businessModules}
-                  metaPixel={metaPixel}
-                  savingKey={savingWorkspaceKey}
-                  onSaveMetaPixel={saveMetaPixel}
-                />
+                {activeWorkspaceSection === "workspace-ops" && (
+                  <OperationsPanel
+                    modules={businessModules}
+                    metaPixel={metaPixel}
+                    savingKey={savingWorkspaceKey}
+                    onSaveMetaPixel={saveMetaPixel}
+                  />
+                )}
               </section>
 
               <section
@@ -7098,7 +7102,8 @@ function IntakePageInner() {
                     </p>
                   </div>
                 </div>
-                {assetLibraryItems.length > 0 ? (
+                {activeWorkspaceSection === "workspace-assets" &&
+                assetLibraryItems.length > 0 ? (
                   <AssetLibraryCore
                     assets={assetLibraryItems}
                     ratingId={ratingAssetId}
