@@ -44,8 +44,32 @@ model Project {
   runs      Run[]
   documents Document[]
   jobs      RunJob[]
+  simulationRunRows ProjectSimulationRun[]
 
   @@map("projects")
+}
+
+// One completed simulation snapshot, extracted out of Project.simulationRuns
+// (the append-only JSONB array). That array grew unbounded and Postgres
+// rewrites the whole project row on every append (TOAST churn, slow reads).
+// Here each run is its own row, so appending a run no longer rewrites the
+// others, and reads can paginate. `record` holds the full SimulationRunRecord
+// (lib/schema.ts) verbatim so the storage swap needs no shape change upstream.
+// Dual-written alongside the legacy JSONB array during rollout; the array is
+// the read source of truth until the read path is cut over and contracted.
+model ProjectSimulationRun {
+  id        String   @id @default(cuid())
+  projectId String   @map("project_id")
+  runId     String   @unique @map("run_id")
+  timestamp DateTime
+  record    Json
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, timestamp])
+  @@map("project_simulation_runs")
 }
 
 // Nested organizer shared by the dashboard and project workspaces. One table

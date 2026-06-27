@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "./db";
 import { config } from "./config";
+import { log } from "./log";
 import {
   GeneratedPlaybookSchema,
   type GeneratedPlaybook,
@@ -1992,6 +1993,62 @@ export async function appendSimulationRun(
         -- would write server-local wall time and corrupt recency ordering.
         updated_at = now() AT TIME ZONE 'utc'
     WHERE id = ${id}`;
+  // Dual-write into the child table (MIGRATIONS_RUNBOOK §3, expand+dual-write
+  // stage). Best-effort: the JSONB array above is the read source of truth, so
+  // a child-table hiccup must never fail a completed run's snapshot. Once the
+  // table is backfilled and verified, the read path cuts over and the array is
+  // contracted away.
+  await mirrorSimulationRunToTable(id, record);
+}
+
+/** Upsert one SimulationRunRecord into the project_simulation_runs table. */
+async function mirrorSimulationRunToTable(
+  projectId: string,
+  record: SimulationRunRecord,
+): Promise<void> {
+  try {
+    const timestamp = new Date(record.timestamp);
+    await prisma.projectSimulationRun.upsert({
+      where: { runId: record.runId },
+      create: {
+        projectId,
+        runId: record.runId,
+        timestamp,
+        record: record as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        record: record as unknown as Prisma.InputJsonValue,
+        timestamp,
+      },
+    });
+  } catch (error) {
+    log
+      .child({ component: "store" })
+      .warn("simulation-run table mirror failed", {
+        projectId,
+        runId: record.runId,
+        error,
+      });
+  }
+}
+
+/**
+ * Paginated read of a project's simulation runs from the child table (newest
+ * first). This is the table-backed replacement for slicing the JSONB array; the
+ * loaders cut over to it once the table is backfilled and verified in prod.
+ */
+export async function getSimulationRunsPage(
+  projectId: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<SimulationRunRecord[]> {
+  const rows = await prisma.projectSimulationRun.findMany({
+    where: { projectId },
+    orderBy: { timestamp: "desc" },
+    take: opts.limit ?? 50,
+    skip: opts.offset ?? 0,
+    select: { record: true },
+  });
+  return rows.map((r) => r.record as unknown as SimulationRunRecord);
 }
 
 /**
@@ -2026,6 +2083,19 @@ export async function renameSimulationRun(
         updated_at = now() AT TIME ZONE 'utc'
     WHERE p.id = ${projectId}
        OR p.simulation_runs @> ${snapshotNeedle}::jsonb`;
+  // Keep the child-table mirror's brief in sync (best-effort, see dual-write).
+  try {
+    await prisma.$executeRaw`
+      UPDATE project_simulation_runs
+      SET record = jsonb_set(record, '{params,brief}', to_jsonb(${brief}::text), true),
+          updated_at = now() AT TIME ZONE 'utc'
+      WHERE run_id = ${runId}`;
+  } catch (error) {
+    log.child({ component: "store" }).warn("simulation-run table rename failed", {
+      runId,
+      error,
+    });
+  }
 }
 
 export async function deleteSimulationRun(runId: string): Promise<void> {
@@ -2058,6 +2128,7 @@ export async function deleteSimulationRun(runId: string): Promise<void> {
       where: { sourceRunId: runId },
       data: { sourceRunId: null },
     });
+    await tx.projectSimulationRun.deleteMany({ where: { runId } });
     await tx.personaConversation.deleteMany({ where: { runId } });
     await tx.launchOutcome.deleteMany({ where: { runId } });
     await tx.launchSimulation.deleteMany({ where: { runId } });
