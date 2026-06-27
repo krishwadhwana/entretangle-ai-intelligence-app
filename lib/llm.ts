@@ -1107,6 +1107,167 @@ async function callJson<T>(opts: {
   }
 }
 
+/**
+ * Decode the (possibly partial) value of the FIRST `"<field>": "..."` string in
+ * a streamed JSON snapshot — lets us surface a model's prose answer token-by-
+ * token before the full JSON object has finished generating. Returns null until
+ * the field's opening quote has arrived. Tolerates a snapshot that ends mid-
+ * escape by falling back to the raw (still-readable) text.
+ */
+export function extractStreamingStringField(
+  text: string,
+  field: string
+): string | null {
+  const m = text.match(new RegExp(`"${field}"\\s*:\\s*"`));
+  if (!m) return null;
+  let raw = "";
+  let escaped = false;
+  for (let i = (m.index ?? 0) + m[0].length; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) {
+      raw += ch;
+      escaped = false;
+    } else if (ch === "\\") {
+      raw += ch;
+      escaped = true;
+    } else if (ch === '"') {
+      break; // closing quote — value complete
+    } else {
+      raw += ch;
+    }
+  }
+  try {
+    return JSON.parse(`"${raw}"`);
+  } catch {
+    return raw; // mid-escape / partial — show what we have
+  }
+}
+
+/**
+ * Streaming sibling of {@link callJson}: runs ONE streamed completion, surfaces
+ * the named string field's text as it arrives via `onDelta` (full value each
+ * time — the client replaces, not appends), then validates the assembled JSON
+ * through the schema. On a parse/validation miss it falls back to a single
+ * clean non-streaming call so callers still get a typed result. Same cost-guard
+ * reservation + usage recording as callJson.
+ */
+async function callJsonStream<T>(opts: {
+  runId: string | null;
+  projectId?: string | null;
+  feature?: UsageFeatureKey;
+  system: string;
+  user: string;
+  schema: z.ZodType<T, z.ZodTypeDef, unknown>;
+  streamField: string;
+  onDelta: (textSoFar: string) => void | Promise<void>;
+  model?: string;
+  tier?: ModelTier;
+  maxCompletionTokens?: number;
+  requestTimeoutMs?: number;
+  requestMaxRetries?: number;
+}): Promise<T> {
+  const estInputTokens = estimateTokens(opts.system + opts.user);
+  const estOutputTokens = opts.maxCompletionTokens ?? COMPLETION_BUDGET;
+  const estTokens = estInputTokens + estOutputTokens;
+  const estUsd = estimateCostUsd(
+    opts.tier ?? "frontier",
+    estInputTokens,
+    estOutputTokens
+  );
+  if (opts.runId && !reserveBudget(opts.runId, estUsd, estTokens)) {
+    throw new CostCapError(opts.runId, projectedSpend(opts.runId));
+  }
+  let snapshot = "";
+  try {
+    const stream = await client().chat.completions.create(
+      {
+        ...baseParams(opts.model),
+        stream: true,
+        stream_options: { include_usage: true },
+        ...(opts.maxCompletionTokens
+          ? { max_completion_tokens: opts.maxCompletionTokens }
+          : {}),
+        messages: [
+          { role: "system", content: opts.system },
+          { role: "user", content: opts.user },
+        ],
+      },
+      opts.requestTimeoutMs || opts.requestMaxRetries !== undefined
+        ? {
+            ...(opts.requestTimeoutMs ? { timeout: opts.requestTimeoutMs } : {}),
+            ...(opts.requestMaxRetries !== undefined
+              ? { maxRetries: opts.requestMaxRetries }
+              : {}),
+          }
+        : undefined
+    );
+    let lastSent: string | null = null;
+    let usage: OpenAI.CompletionUsage | null = null;
+    let emitChain: Promise<void> = Promise.resolve();
+    for await (const chunk of stream) {
+      if (chunk.usage) usage = chunk.usage;
+      const delta = chunk.choices[0]?.delta?.content;
+      if (!delta) continue;
+      snapshot += delta;
+      const field = extractStreamingStringField(snapshot, opts.streamField);
+      if (field !== null && field !== lastSent) {
+        lastSent = field;
+        const text = field;
+        emitChain = emitChain
+          .then(() => opts.onDelta(text))
+          .catch(() => undefined);
+      }
+    }
+    await emitChain;
+    if (usage) {
+      if (opts.runId) {
+        await recordUsage(
+          opts.runId,
+          usage.prompt_tokens,
+          usage.completion_tokens,
+          opts.tier ?? "frontier",
+          0,
+          { feature: opts.feature, projectId: opts.projectId }
+        );
+      } else if (opts.projectId) {
+        await recordProjectOnlyUsage(
+          opts.projectId,
+          usage.prompt_tokens,
+          usage.completion_tokens,
+          opts.tier ?? "frontier",
+          0,
+          opts.feature ?? "simulation.core"
+        );
+      }
+    }
+  } finally {
+    if (opts.runId) releaseReservation(opts.runId, estUsd, estTokens);
+  }
+
+  try {
+    const parsed = opts.schema.safeParse(JSON.parse(stripFences(snapshot)));
+    if (parsed.success) return parsed.data;
+  } catch {
+    // fall through to the non-streaming retry
+  }
+  // Streamed JSON didn't validate — one clean non-streaming call (the prose the
+  // user already saw stands; this just recovers a well-typed object).
+  return callJson({
+    runId: opts.runId,
+    projectId: opts.projectId,
+    feature: opts.feature,
+    system: opts.system,
+    user: opts.user,
+    schema: opts.schema,
+    model: opts.model,
+    tier: opts.tier,
+    maxCompletionTokens: opts.maxCompletionTokens,
+    maxAttempts: 1,
+    requestTimeoutMs: opts.requestTimeoutMs,
+    requestMaxRetries: opts.requestMaxRetries,
+  });
+}
+
 // ---------------------------------------------------------------------------
 // The call sites. MOCK_MODE=true swaps in fixtures (SPEC §8) — all delays,
 // events, persistence and UI paths stay identical to real mode.
@@ -1972,7 +2133,53 @@ export async function callAudienceChat(
     schema: AudienceChatOutputSchema,
     model: config.miniModel,
     tier: "mini",
-    maxCompletionTokens: 5000,
+    maxCompletionTokens: 4000,
+    // Simple persona JSON on the mini model — a parse failure is rare and a
+    // full re-call costs more latency than it's worth; fail fast (no retry).
+    maxAttempts: 1,
+    requestTimeoutMs: config.blockTimeoutMs,
+    requestMaxRetries: 1,
+  });
+}
+
+/**
+ * Streaming variant of {@link callAudienceChat}: surfaces the persona's reply
+ * prose (the first message's `content`) via `onDelta` token-by-token, then
+ * returns the full typed output for persistence / intent re-derivation.
+ */
+export async function callAudienceChatStream(
+  runId: string,
+  profile: ClientProfile,
+  cohort: Cohort,
+  personas: Persona[],
+  mode: AudienceChatMode,
+  question: string,
+  history: AudienceChatHistoryItem[],
+  onDelta: (textSoFar: string) => void | Promise<void>
+): Promise<AudienceChatOutput> {
+  if (config.mockMode) {
+    const out = await callAudienceChat(
+      runId,
+      profile,
+      cohort,
+      personas,
+      mode,
+      question,
+      history
+    );
+    await onDelta(out.messages[0]?.content ?? "");
+    return out;
+  }
+  return callJsonStream({
+    runId,
+    system: audienceChatSystem(profile, cohort, personas, mode),
+    user: audienceChatUser(question, history),
+    schema: AudienceChatOutputSchema,
+    streamField: "content",
+    onDelta,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: 4000,
     requestTimeoutMs: config.blockTimeoutMs,
     requestMaxRetries: 1,
   });
@@ -2015,6 +2222,55 @@ export async function callPersonaReply(
     model: config.miniModel,
     tier: "mini",
     maxCompletionTokens: 1200,
+    maxAttempts: 1, // simple persona JSON — fail fast instead of re-calling
+    requestTimeoutMs: config.blockTimeoutMs,
+    requestMaxRetries: 1,
+  });
+}
+
+/**
+ * Streaming variant of {@link callPersonaReply}: the reply prose is surfaced
+ * via `onDelta` as it generates so the UI shows tokens immediately instead of
+ * waiting for the whole turn. Returns the same typed output once complete.
+ */
+export async function callPersonaReplyStream(
+  runId: string,
+  profile: ClientProfile,
+  speaker: PersonaCtx,
+  others: PersonaCtx[],
+  topic: string,
+  history: PersonaConversationMessage[],
+  onDelta: (textSoFar: string) => void | Promise<void>
+): Promise<PersonaReplyOutput> {
+  if (config.mockMode) {
+    const out = await callPersonaReply(
+      runId,
+      profile,
+      speaker,
+      others,
+      topic,
+      history
+    );
+    await onDelta(out.content);
+    return out;
+  }
+  return callJsonStream({
+    runId,
+    system: personaReplySystem(profile, speaker, others, topic),
+    user: personaReplyUser(
+      history.map((m) => ({
+        role: m.role,
+        speaker: m.speaker,
+        content: m.content,
+      })),
+      speaker.persona.name
+    ),
+    schema: PersonaReplyOutputSchema,
+    streamField: "content",
+    onDelta,
+    model: config.miniModel,
+    tier: "mini",
+    maxCompletionTokens: 1200,
     requestTimeoutMs: config.blockTimeoutMs,
     requestMaxRetries: 1,
   });
@@ -2049,6 +2305,7 @@ export async function callPersonaConclusion(
     model: config.miniModel,
     tier: "mini",
     maxCompletionTokens: 1500,
+    maxAttempts: 1, // simple persona JSON — fail fast instead of re-calling
     requestTimeoutMs: config.blockTimeoutMs,
     requestMaxRetries: 1,
   });

@@ -27,6 +27,7 @@ import type {
   AudienceAggregate,
   ClientProfile,
   Cohort,
+  CohortSimOutput,
   CohortStats,
   Persona,
   PlannerV2Output,
@@ -321,12 +322,106 @@ function computeCohortStats(
   };
 }
 
+type CohortRow = Awaited<ReturnType<typeof prisma.cohort.findUniqueOrThrow>>;
+
+/** Benchmark-derived persona calibration for a cohort (real wtp/objection priors). */
+function calibrationForCohort(
+  cohort: Pick<CohortRow, "locality" | "country" | "segment">,
+  profile: ClientProfile
+): string {
+  return cohortCalibrationBlock(
+    resolveBenchmarks(
+      categoryKeyFromProfile(profile),
+      [geoTierFromPlace(cohort.locality, cohort.country)],
+      marketFromCountries([cohort.country])
+    ),
+    cohort.segment
+  );
+}
+
+/**
+ * Persist one simulated persona batch and return the created personas (wire).
+ * The jitter seed is derived from (batchIndex, position) so batches that run in
+ * parallel still get unique, stable coordinates without a shared counter.
+ */
+async function persistCohortBatch(
+  emitter: RunEmitter,
+  cohort: CohortRow,
+  out: CohortSimOutput,
+  n: number,
+  batchIndex: number,
+  currency: string
+): Promise<Persona[]> {
+  const jitterDegrees = personaJitterDegreesForLocality(
+    cohort.locality,
+    cohort.country
+  );
+  const created: Persona[] = [];
+  const slice = out.personas.slice(0, n);
+  for (let k = 0; k < slice.length; k++) {
+    const p = slice[k];
+    await throwIfRunCancelled(emitter.runId);
+    const seedIdx = batchIndex * Math.max(1, config.personasPerCall) + k;
+    const row = await prisma.persona.create({
+      data: {
+        cohortId: cohort.id,
+        name: p.name,
+        age: p.age,
+        gender: p.gender,
+        occupation: p.occupation,
+        incomeBand: p.incomeBand,
+        lat: jitter(cohort.lat, `${cohort.id}:${seedIdx}:lat`, jitterDegrees),
+        lng: jitter(cohort.lng, `${cohort.id}:${seedIdx}:lng`, jitterDegrees),
+        intent: p.intent,
+        wtp: p.wtp,
+        wtpCurrency: currency,
+        channelPref: p.channelPref,
+        platforms: encodeStringArrayField(p.platforms),
+        objection: p.objection,
+        quote: p.quote,
+        lifestyle: p.lifestyle,
+        lifeStage: p.lifeStage,
+        values: encodeStringArrayField(p.values),
+        shoppingHabits: p.shoppingHabits,
+        priceSensitivity: p.priceSensitivity,
+        reasoning: p.reasoning,
+        personality: p.personality,
+        personalityTraits: encodeStringArrayField(p.personalityTraits),
+      },
+    });
+    created.push(personaToWire(row));
+  }
+  return created;
+}
+
+/**
+ * Stream a just-landed persona batch to the dashboard so the map fills in live
+ * mid-simulation (instead of one lump when the whole cohort finishes). Running
+ * stats are recomputed across every persona persisted so far for the cohort.
+ */
+async function emitCohortProgress(
+  emitter: RunEmitter,
+  cohortId: string,
+  batchPersonas: Persona[],
+  currency: string
+): Promise<void> {
+  if (batchPersonas.length === 0) return;
+  const rows = await prisma.persona.findMany({ where: { cohortId } });
+  const stats = computeCohortStats(rows.map(personaToWire), currency);
+  await emitter.emit({
+    type: "cohort_personas",
+    cohortId,
+    personas: batchPersonas,
+    stats,
+  });
+}
+
 /**
  * Simulate one cohort end-to-end. A cohort's target size is produced across
  * several mini-model calls (≤60 personas each), each a distinct batch — this
  * is how a cohort can hold hundreds of varied personas. A single batch
  * failing does not fail the cohort; only zero personas does. Returns true if
- * the cohort produced any personas.
+ * the cohort produced any personas. Batches stream to the UI as they land.
  */
 export async function simulateCohort(
   emitter: RunEmitter,
@@ -348,18 +443,10 @@ export async function simulateCohort(
     // Benchmark-derived calibration for THIS cohort (category from the venture
     // profile × geo tier from the cohort's locality), anchoring persona wtp /
     // objections / channels to real priors instead of model guesses.
-    const calibration = cohortCalibrationBlock(
-      resolveBenchmarks(
-        categoryKeyFromProfile(profile),
-        [geoTierFromPlace(cohort.locality, cohort.country)],
-        marketFromCountries([cohort.country])
-      ),
-      cohort.segment
-    );
+    const calibration = calibrationForCohort(cohort, profile);
 
     const personas: Persona[] = [];
     let summary = "";
-    let idx = 0;
     let batchIndex = 0;
     const maxAttempts =
       Math.ceil(cohort.size / Math.max(1, config.personasPerCall)) + 3;
@@ -392,42 +479,18 @@ export async function simulateCohort(
         continue; // partial-failure tolerant
       }
       if (!summary) summary = out.summary;
-      const jitterDegrees = personaJitterDegreesForLocality(
-        cohort.locality,
-        cohort.country
+      const created = await persistCohortBatch(
+        emitter,
+        cohort,
+        out,
+        n,
+        attemptIndex,
+        currency
       );
-      for (const p of out.personas.slice(0, n)) {
-        await throwIfRunCancelled(emitter.runId);
-        const row = await prisma.persona.create({
-          data: {
-            cohortId,
-            name: p.name,
-            age: p.age,
-            gender: p.gender,
-            occupation: p.occupation,
-            incomeBand: p.incomeBand,
-            lat: jitter(cohort.lat, `${cohortId}:${idx}:lat`, jitterDegrees),
-            lng: jitter(cohort.lng, `${cohortId}:${idx}:lng`, jitterDegrees),
-            intent: p.intent,
-            wtp: p.wtp,
-            wtpCurrency: currency,
-            channelPref: p.channelPref,
-            platforms: encodeStringArrayField(p.platforms),
-            objection: p.objection,
-            quote: p.quote,
-            lifestyle: p.lifestyle,
-            lifeStage: p.lifeStage,
-            values: encodeStringArrayField(p.values),
-            shoppingHabits: p.shoppingHabits,
-            priceSensitivity: p.priceSensitivity,
-            reasoning: p.reasoning,
-            personality: p.personality,
-            personalityTraits: encodeStringArrayField(p.personalityTraits),
-          },
-        });
-        personas.push(personaToWire(row));
-        idx += 1;
-      }
+      personas.push(...created);
+      // Stream this batch so the map fills in live instead of waiting for the
+      // whole cohort to finish.
+      await emitCohortProgress(emitter, cohortId, created, currency);
     }
 
     if (personas.length === 0) throw new Error("all cohort batches failed");
@@ -463,13 +526,20 @@ export async function simulateCohort(
 
 /**
  * Phase 2b: simulate all cohorts with a fixed-size WORKER POOL (size
- * AUDIENCE_CONCURRENCY). Each worker independently pulls the next cohort the
- * moment it finishes — so a slow or stuck cohort only ties up its own slot and
- * NEVER blocks the others or the cohorts waiting behind it (no wave barrier).
- * Cost/token caps are checked before each cohort; once capped, workers stop
- * pulling new work and the run keeps whatever finished. After every cohort a
- * tokens/cost update is emitted so the dashboard tracks spend live. Returns
- * the number of cohorts that completed.
+ * AUDIENCE_CONCURRENCY) over individual persona BATCHES — not whole cohorts.
+ *
+ * Every cohort is split into its persona batches up front and all batches are
+ * flattened into one queue, so the pool keeps `concurrency` LLM calls in flight
+ * regardless of which cohort they belong to. Previously a worker grabbed a
+ * cohort and ran its ~4 batches SEQUENTIALLY before releasing the slot, capping
+ * real parallelism at (cohorts in flight) instead of (calls in flight); a big
+ * cohort would hog a slot for minutes. Now a cohort finalises (stats → done →
+ * `cohort_simulated`) the moment its last batch lands, and each batch streams
+ * to the dashboard as it arrives.
+ *
+ * Termination is bounded three ways: the queue is a fixed list (each unit
+ * retried at most once), each cohort's batch count is fixed, and the cost/token
+ * cap stops new work. Returns the number of cohorts that completed.
  */
 export async function simulateAllCohorts(
   emitter: RunEmitter,
@@ -479,9 +549,86 @@ export async function simulateAllCohorts(
   focus?: RunFocus
 ): Promise<number> {
   const concurrency = Math.max(1, config.audienceConcurrency);
+  const perCall = Math.max(1, config.personasPerCall);
+
+  const rows = await prisma.cohort.findMany({
+    where: { id: { in: cohortIds } },
+  });
+  const byId = new Map(rows.map((c) => [c.id, c]));
+
+  type Ctx = {
+    cohort: CohortRow;
+    calibration: string;
+    remaining: number; // batch attempts not yet concluded
+    summary: string;
+  };
+  type Unit = {
+    cohortId: string;
+    batchIndex: number;
+    n: number;
+    retriesLeft: number;
+  };
+
+  const ctx = new Map<string, Ctx>();
+  const queue: Unit[] = [];
+  for (const id of cohortIds) {
+    const cohort = byId.get(id);
+    if (!cohort) continue;
+    const sizes = batchSizes(cohort.size, perCall);
+    ctx.set(id, {
+      cohort,
+      calibration: calibrationForCohort(cohort, profile),
+      remaining: sizes.length,
+      summary: "",
+    });
+    sizes.forEach((n, batchIndex) =>
+      queue.push({ cohortId: id, batchIndex, n, retriesLeft: 1 })
+    );
+  }
+
+  const started = new Set<string>();
   let done = 0;
-  let cursor = 0;
   let capped = false;
+  let cursor = 0;
+
+  // Aggregate a cohort's persisted personas into final stats, mark it done (or
+  // failed if nothing landed) and emit. Idempotent per cohort: only the call
+  // that drains the last outstanding batch (or the post-loop sweep) reaches it.
+  const finalizeCohort = async (cohortId: string): Promise<void> => {
+    const c = ctx.get(cohortId);
+    if (!c) return;
+    const personaRows = await prisma.persona.findMany({ where: { cohortId } });
+    if (personaRows.length === 0) {
+      await prisma.cohort.update({
+        where: { id: cohortId },
+        data: { state: "failed" },
+      });
+      await emitter.emit({
+        type: "cohort_failed",
+        cohortId,
+        error: "all cohort batches failed",
+      });
+      return;
+    }
+    const personas = personaRows.map(personaToWire);
+    const stats = computeCohortStats(personas, currency);
+    await prisma.cohort.update({
+      where: { id: cohortId },
+      data: {
+        state: "done",
+        stats: encodeCohortStatsField(stats),
+        summary: c.summary,
+      },
+    });
+    await emitter.emit({
+      type: "cohort_simulated",
+      cohortId,
+      stats,
+      summary: c.summary,
+      personas,
+    });
+    done += 1;
+  };
 
   async function worker(): Promise<void> {
     while (true) {
@@ -497,18 +644,60 @@ export async function simulateAllCohorts(
         return;
       }
       const i = cursor++;
-      if (i >= cohortIds.length) return;
-      // simulateCohort never throws (it catches + marks the cohort failed), so
-      // one bad cohort can't kill its worker — the worker just grabs the next.
-      const ok = await simulateCohort(
-        emitter,
-        cohortIds[i],
-        profile,
-        currency,
-        focus
-      );
-      if (ok) done += 1;
-      // Live spend tracking after each cohort.
+      if (i >= queue.length) return;
+      const unit = queue[i];
+      const c = ctx.get(unit.cohortId);
+      if (!c) continue;
+
+      // Mark the cohort "simulating" the first time one of its batches starts.
+      if (!started.has(unit.cohortId)) {
+        started.add(unit.cohortId);
+        await prisma.cohort.update({
+          where: { id: unit.cohortId },
+          data: { state: "simulating" },
+        });
+      }
+
+      try {
+        const out = await callCohortSim(
+          emitter.runId,
+          cohortToWire(c.cohort),
+          profile,
+          currency,
+          unit.n,
+          unit.batchIndex,
+          focus,
+          c.calibration
+        );
+        if (!c.summary && out.summary) c.summary = out.summary;
+        const created = await persistCohortBatch(
+          emitter,
+          c.cohort,
+          out,
+          unit.n,
+          unit.batchIndex,
+          currency
+        );
+        await emitCohortProgress(emitter, unit.cohortId, created, currency);
+      } catch (e) {
+        if (isRunCancelledError(e)) throw e;
+        console.log(
+          `[audience] cohort ${c.cohort.label} batch ${unit.batchIndex} failed: ${e}`
+        );
+        // Re-enqueue ONCE so a single timed-out batch doesn't shrink the cohort;
+        // a free worker picks it up. Don't decrement remaining for this attempt.
+        if (unit.retriesLeft > 0) {
+          queue.push({ ...unit, retriesLeft: unit.retriesLeft - 1 });
+          continue;
+        }
+      }
+
+      // Batch attempt concluded (success, or retries exhausted). Finalise the
+      // cohort when its last outstanding batch lands.
+      c.remaining -= 1;
+      if (c.remaining === 0) await finalizeCohort(unit.cohortId);
+
+      // Live spend tracking after each batch.
       await emitter.emit({
         type: "cost_used",
         costUsd: await getCostUsd(emitter.runId),
@@ -521,6 +710,15 @@ export async function simulateAllCohorts(
   }
 
   await Promise.all(Array.from({ length: concurrency }, () => worker()));
+
+  // A cap / early stop can leave started cohorts with batches unrun — finalise
+  // any that still have personas (fail the empty ones) so none stay stuck
+  // "simulating". Cohorts that never started stay "pending" for a later resume.
+  for (const cohortId of started) {
+    const c = ctx.get(cohortId);
+    if (c && c.remaining > 0) await finalizeCohort(cohortId);
+  }
+
   return done;
 }
 

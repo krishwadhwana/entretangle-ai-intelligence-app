@@ -33,16 +33,8 @@ import ScrollRow from "./ui/ScrollRow";
 import PortalMenu from "./ui/PortalMenu";
 import ErrorBoundary from "./ui/ErrorBoundary";
 import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
-import NetworkView from "./NetworkView";
-import KnowHowWorkspace from "./KnowHowWorkspace";
-import InsightsView from "./InsightsView";
-import PlaybookView from "./PlaybookView";
-import OwnerDashboard from "./OwnerDashboard";
-import LaunchSimulation from "./LaunchSimulation";
 import DossierExportMenu from "./DossierExportMenu";
 import { providerErrorMessage } from "@/lib/providerErrors";
-import ExportViability from "./ExportViability";
-import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
 import { searchKnownLocalities } from "@/lib/localityAnchors";
 
@@ -55,6 +47,25 @@ const MapView = dynamic(() => import("./MapView"), {
     </div>
   ),
 });
+
+// Each main view is rendered only when its `view` is active, so code-split them
+// out of the dashboard's initial bundle. This keeps recharts (Insights, Launch),
+// @xyflow/react (Network) and the heavy owner-facing sections (DesignStudio,
+// InvestorOS, Financials via OwnerDashboard) off the critical path until opened.
+const viewLoading = () => (
+  <div className="flex h-full items-center justify-center text-xs text-neutral-400">
+    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+    Loading…
+  </div>
+);
+const NetworkView = dynamic(() => import("./NetworkView"), { loading: viewLoading });
+const KnowHowWorkspace = dynamic(() => import("./KnowHowWorkspace"), { loading: viewLoading });
+const InsightsView = dynamic(() => import("./InsightsView"), { loading: viewLoading });
+const PlaybookView = dynamic(() => import("./PlaybookView"), { loading: viewLoading });
+const OwnerDashboard = dynamic(() => import("./OwnerDashboard"), { loading: viewLoading });
+const LaunchSimulation = dynamic(() => import("./LaunchSimulation"), { loading: viewLoading });
+const ExportViability = dynamic(() => import("./ExportViability"), { loading: viewLoading });
+const CohortDrawer = dynamic(() => import("./CohortDrawer"), { ssr: false });
 
 type SiblingRun = {
   id: string;

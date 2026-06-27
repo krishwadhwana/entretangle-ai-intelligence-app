@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { prisma } from "@/lib/db";
-import { callAudienceChat } from "@/lib/llm";
+import { callAudienceChat, callAudienceChatStream } from "@/lib/llm";
+import type { AudienceChatOutput } from "@/lib/schema";
 import { RunEmitter } from "@/lib/events";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -44,9 +45,116 @@ export async function POST(
   const persona = personaToWire(personaRow);
   const intentBefore = persona.intent;
 
-  let result;
+  const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
+
+  // Persist the exchange + (if the pitch moved the vote) update the persona and
+  // emit, then build the rich client payload. Shared by streaming + JSON paths.
+  const finalize = async (result: AudienceChatOutput) => {
+    // Last reply that carries a fresh intent reading is the persona's new stance.
+    const withIntent = [...result.messages]
+      .reverse()
+      .find((m) => typeof m.intentAfter === "number");
+    const intentAfter = withIntent?.intentAfter ?? null;
+    const newObjection = withIntent?.objection ?? null;
+
+    // ALWAYS persist the exchange to the transcript — not only when the vote
+    // moves — so the Win Back tab can replay every conversation after the
+    // drawer is closed/reopened (previously a non-moving chat vanished on close).
+    const now = new Date();
+    const turn = {
+      question: body.data.question,
+      messages: result.messages,
+      intentBefore,
+      intentAfter,
+      ts: now.toISOString(),
+    };
+    const chatLog = [...safeParseLog(personaRow.chatLog), turn];
+
+    const voteChanged = intentAfter !== null && intentAfter !== intentBefore;
+    if (voteChanged) {
+      const intentOriginal = personaRow.intentOriginal ?? intentBefore;
+      const objection = newObjection ?? personaRow.objection;
+      await prisma.persona.update({
+        where: { id: personaRow.id },
+        data: {
+          intent: intentAfter as number,
+          intentOriginal,
+          objection,
+          voteChangedAt: now,
+          chatLog: JSON.stringify(chatLog),
+        },
+      });
+
+      const emitter = await RunEmitter.create(run.id);
+      await emitter.emit({
+        type: "persona_updated",
+        cohortId: personaRow.cohortId,
+        personaId: personaRow.id,
+        intent: intentAfter as number,
+        intentOriginal,
+        objection,
+        voteChangedAt: now.toISOString(),
+      });
+    } else {
+      // No vote change — still append the transcript so it persists.
+      await prisma.persona.update({
+        where: { id: personaRow.id },
+        data: { chatLog: JSON.stringify(chatLog) },
+      });
+    }
+
+    return {
+      ...result,
+      intentBefore,
+      intentAfter,
+      voteBefore: classifySentiment(intentBefore),
+      voteAfter: classifySentiment(intentAfter ?? intentBefore),
+      voteChanged,
+      chatLog,
+    };
+  };
+
+  // Stream the persona's reply prose (SSE) when the client opts in — perceived
+  // latency on an interactive 1:1 matters more than total turnaround.
+  if (new URL(req.url).searchParams.get("stream") === "1") {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: unknown) =>
+          controller.enqueue(
+            enc.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
+          );
+        try {
+          const result = await callAudienceChatStream(
+            run.id,
+            profile,
+            cohortToWire(personaRow.cohort),
+            [persona],
+            "customer",
+            body.data.question,
+            body.data.history,
+            (textSoFar) => send("delta", { content: textSoFar })
+          );
+          send("done", await finalize(result));
+        } catch (e) {
+          const { payload } = toProviderErrorPayload(e, "persona chat failed");
+          send("error", payload);
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  let result: AudienceChatOutput;
   try {
-    const profile = ClientProfileSchema.parse(JSON.parse(run.clientProfile));
     result = await callAudienceChat(
       run.id,
       profile,
@@ -61,68 +169,7 @@ export async function POST(
     return NextResponse.json(payload, { status });
   }
 
-  // Last reply that carries a fresh intent reading is the persona's new stance.
-  const withIntent = [...result.messages]
-    .reverse()
-    .find((m) => typeof m.intentAfter === "number");
-  const intentAfter = withIntent?.intentAfter ?? null;
-  const newObjection = withIntent?.objection ?? null;
-
-  // ALWAYS persist the exchange to the transcript — not only when the vote
-  // moves — so the Win Back tab can replay every conversation after the drawer
-  // is closed/reopened (previously a non-moving chat vanished on close).
-  const now = new Date();
-  const turn = {
-    question: body.data.question,
-    messages: result.messages,
-    intentBefore,
-    intentAfter,
-    ts: now.toISOString(),
-  };
-  const chatLog = [...safeParseLog(personaRow.chatLog), turn];
-
-  const voteChanged = intentAfter !== null && intentAfter !== intentBefore;
-  if (voteChanged) {
-    const intentOriginal = personaRow.intentOriginal ?? intentBefore;
-    const objection = newObjection ?? personaRow.objection;
-    await prisma.persona.update({
-      where: { id: personaRow.id },
-      data: {
-        intent: intentAfter as number,
-        intentOriginal,
-        objection,
-        voteChangedAt: now,
-        chatLog: JSON.stringify(chatLog),
-      },
-    });
-
-    const emitter = await RunEmitter.create(run.id);
-    await emitter.emit({
-      type: "persona_updated",
-      cohortId: personaRow.cohortId,
-      personaId: personaRow.id,
-      intent: intentAfter as number,
-      intentOriginal,
-      objection,
-      voteChangedAt: now.toISOString(),
-    });
-  } else {
-    // No vote change — still append the transcript so it persists.
-    await prisma.persona.update({
-      where: { id: personaRow.id },
-      data: { chatLog: JSON.stringify(chatLog) },
-    });
-  }
-
-  return NextResponse.json({
-    ...result,
-    intentBefore,
-    intentAfter,
-    voteBefore: classifySentiment(intentBefore),
-    voteAfter: classifySentiment(intentAfter ?? intentBefore),
-    voteChanged,
-    chatLog,
-  });
+  return NextResponse.json(await finalize(result));
 }
 
 function safeParseLog(raw: string): unknown[] {

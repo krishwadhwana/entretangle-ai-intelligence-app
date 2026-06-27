@@ -71,13 +71,34 @@ import type {
   WorkspaceNodeWire,
   WebsiteAnalysis,
 } from "@/lib/schema";
-import DesignStudioSection from "@/components/DesignStudioSection";
-import ProjectMasterDossierSection from "@/components/ProjectMasterDossierSection";
+import dynamic from "next/dynamic";
 import WorkspaceTree, {
   workspaceDescendantIds,
   workspacePathLabel,
 } from "@/components/WorkspaceTree";
 import { providerErrorMessage } from "@/lib/providerErrors";
+
+// These two workspace sections are heavy (DesignStudioSection pulls in the full
+// design pipeline; the dossier pulls satori/pdf paths) and are only shown for
+// their own workspace tab. Code-split them so they stay out of the home bundle
+// and only download when the user opens that section.
+const DesignStudioSection = dynamic(
+  () => import("@/components/DesignStudioSection"),
+  { loading: () => <SectionLoading /> }
+);
+const ProjectMasterDossierSection = dynamic(
+  () => import("@/components/ProjectMasterDossierSection"),
+  { loading: () => <SectionLoading /> }
+);
+
+function SectionLoading() {
+  return (
+    <div className="flex items-center justify-center p-8 text-xs text-neutral-400">
+      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+      Loading…
+    </div>
+  );
+}
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
 // durable project: every message, the pending question, the finished profile
@@ -6482,16 +6503,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
@@ -6502,7 +6525,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
 
               <div className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -6884,16 +6908,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
@@ -6920,12 +6946,14 @@ function IntakePageInner() {
                     </span>
                   </div>
                 </div>
-                <ModuleRegistryGrid
-                  modules={businessModules}
-                  savingId={savingModuleIntentId}
-                  onSaveIntent={saveModuleIntent}
-                  onOpenModule={openBusinessModule}
-                />
+                {activeWorkspaceSection === "workspace-modules" && (
+                  <ModuleRegistryGrid
+                    modules={businessModules}
+                    savingId={savingModuleIntentId}
+                    onSaveIntent={saveModuleIntent}
+                    onOpenModule={openBusinessModule}
+                  />
+                )}
               </section>
 
               <section
@@ -6935,10 +6963,12 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <DesignStudioSection
-                  projectId={projectId}
-                  sourceRunId={latestRun?.runId ?? null}
-                />
+                {activeWorkspaceSection === "workspace-design" && (
+                  <DesignStudioSection
+                    projectId={projectId}
+                    sourceRunId={latestRun?.runId ?? null}
+                  />
+                )}
               </section>
 
               <section
@@ -6946,31 +6976,33 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-work" ? "" : "hidden"
                 }
               >
-                <ModuleWorkspaceHub
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  workspaceNodes={projectWorkspaceNodes}
-                  folders={workspaceFolders}
-                  campaigns={workspaceCampaigns}
-                  exportNodes={workspaceExportNodes}
-                  savingKey={savingWorkspaceKey}
-                  deletingKey={deletingWorkspaceItemId}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSaveFolder={saveWorkspaceFolder}
-                  onSaveCampaign={saveWorkspaceCampaign}
-                  onDeleteWorkspaceItem={deleteWorkspaceItem}
-                  onCreateSubfolder={(parentId) =>
-                    void createWorkspaceFolder(
-                      "project",
-                      parentId,
-                      selectedWorkspaceModuleId,
-                    )
-                  }
-                  onNoteNode={openWorkspaceNodeNote}
-                  onRenameNode={renameWorkspaceNode}
-                  onDeleteNode={deleteWorkspaceNode}
-                  onOpenExport={(node) => void downloadSavedExport(node)}
-                />
+                {activeWorkspaceSection === "workspace-work" && (
+                  <ModuleWorkspaceHub
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    workspaceNodes={projectWorkspaceNodes}
+                    folders={workspaceFolders}
+                    campaigns={workspaceCampaigns}
+                    exportNodes={workspaceExportNodes}
+                    savingKey={savingWorkspaceKey}
+                    deletingKey={deletingWorkspaceItemId}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSaveFolder={saveWorkspaceFolder}
+                    onSaveCampaign={saveWorkspaceCampaign}
+                    onDeleteWorkspaceItem={deleteWorkspaceItem}
+                    onCreateSubfolder={(parentId) =>
+                      void createWorkspaceFolder(
+                        "project",
+                        parentId,
+                        selectedWorkspaceModuleId,
+                      )
+                    }
+                    onNoteNode={openWorkspaceNodeNote}
+                    onRenameNode={renameWorkspaceNode}
+                    onDeleteNode={deleteWorkspaceNode}
+                    onOpenExport={(node) => void downloadSavedExport(node)}
+                  />
+                )}
               </section>
 
               <section
@@ -6980,14 +7012,16 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <GenerationControls
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  preferences={generationPrefs}
-                  savingKey={savingWorkspaceKey}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSavePreference={saveGenerationPreference}
-                />
+                {activeWorkspaceSection === "workspace-generations" && (
+                  <GenerationControls
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    preferences={generationPrefs}
+                    savingKey={savingWorkspaceKey}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSavePreference={saveGenerationPreference}
+                  />
+                )}
               </section>
 
               <section
@@ -6995,11 +7029,13 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-print" ? "" : "hidden"
                 }
               >
-                <PrintSpecPanel
-                  printSpec={printSpec}
-                  savingKey={savingWorkspaceKey}
-                  onSave={savePrintSpec}
-                />
+                {activeWorkspaceSection === "workspace-print" && (
+                  <PrintSpecPanel
+                    printSpec={printSpec}
+                    savingKey={savingWorkspaceKey}
+                    onSave={savePrintSpec}
+                  />
+                )}
               </section>
 
               <section
@@ -7007,12 +7043,14 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-ops" ? "" : "hidden"
                 }
               >
-                <OperationsPanel
-                  modules={businessModules}
-                  metaPixel={metaPixel}
-                  savingKey={savingWorkspaceKey}
-                  onSaveMetaPixel={saveMetaPixel}
-                />
+                {activeWorkspaceSection === "workspace-ops" && (
+                  <OperationsPanel
+                    modules={businessModules}
+                    metaPixel={metaPixel}
+                    savingKey={savingWorkspaceKey}
+                    onSaveMetaPixel={saveMetaPixel}
+                  />
+                )}
               </section>
 
               <section
@@ -7064,7 +7102,8 @@ function IntakePageInner() {
                     </p>
                   </div>
                 </div>
-                {assetLibraryItems.length > 0 ? (
+                {activeWorkspaceSection === "workspace-assets" &&
+                assetLibraryItems.length > 0 ? (
                   <AssetLibraryCore
                     assets={assetLibraryItems}
                     ratingId={ratingAssetId}
@@ -7573,7 +7612,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
             </div>
           </div>

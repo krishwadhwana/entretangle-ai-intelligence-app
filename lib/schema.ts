@@ -610,6 +610,16 @@ export const RunEventSchema = z.discriminatedUnion("type", [
     type: z.literal("cohort_spawned"),
     cohort: CohortSchema,
   }),
+  // A single persona BATCH of a still-simulating cohort landed — streamed so
+  // the map fills in live as personas generate, instead of waiting for the
+  // whole cohort to finish. `personas` is just this batch; `stats` is running.
+  z.object({
+    ...eventBase,
+    type: z.literal("cohort_personas"),
+    cohortId: z.string(),
+    personas: z.array(PersonaSchema),
+    stats: CohortStatsSchema,
+  }),
   z.object({
     ...eventBase,
     type: z.literal("cohort_simulated"),
