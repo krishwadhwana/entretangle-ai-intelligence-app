@@ -17,9 +17,13 @@ import { prisma } from "../lib/db";
 import { executeRun, resumeRun, addPendingCohorts } from "../lib/orchestrator";
 import { runDesignStudioJob } from "../lib/design/jobs";
 import { currentDeployInfo, deployInfoLabel } from "../lib/deployInfo";
+import { log } from "../lib/log";
+import { metrics, startMetricsFlush } from "../lib/metrics";
+import { clearRunBudget } from "../lib/costGuard";
 
 const workerId = process.env.WORKER_ID ?? `run-worker-${randomUUID()}`;
 const pollMs = Number.parseInt(process.env.WORKER_POLL_MS ?? "2000", 10);
+const workerLog = log.child({ component: "worker", workerId });
 let shuttingDown = false;
 
 function sleep(ms: number): Promise<void> {
@@ -27,9 +31,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 async function runJob(job: ClaimedRunJob): Promise<void> {
-  console.log(
-    `[worker ${workerId}] ${job.type} ${job.runId ?? job.projectId} (${job.id}) attempt ${job.attempts}`
-  );
+  const jlog = workerLog.child({
+    jobId: job.id,
+    runId: job.runId ?? undefined,
+    projectId: job.projectId ?? undefined,
+    jobType: job.type,
+  });
+  const startedAt = Date.now();
+  let outcome: "succeeded" | "failed" | "cancelled" = "succeeded";
+  jlog.info("job claimed", { attempt: job.attempts });
+  metrics.incr("job.claimed", { type: job.type });
+  // attempts > 1 means this job was reclaimed from a worker that died holding
+  // its lease — the rate of this is the signal for "is a poison job thrashing?"
+  if (job.attempts > 1) metrics.incr("job.reclaimed", { type: job.type });
   // Renew the lease while we work so the reclaim path never steals a job from
   // this live worker; cleared in finally so a dead worker's lease goes stale.
   const lease = setInterval(() => {
@@ -68,16 +82,12 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       job.type === "execute" &&
       ["complete", "failed", "capped", "cancelled"].includes(run.status)
     ) {
-      console.log(
-        `[worker ${workerId}] skipping ${job.type} ${job.runId}; run is ${run.status}`
-      );
+      jlog.info("skipping job; run already terminal", { runStatus: run.status });
       await markJobSucceeded(job.id);
       return;
     }
     if (job.type === "resume" && run.status === "complete") {
-      console.log(
-        `[worker ${workerId}] skipping resume ${job.runId}; run is already complete`
-      );
+      jlog.info("skipping resume; run already complete");
       await markJobSucceeded(job.id);
       return;
     }
@@ -93,24 +103,18 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       // finish it via resume (re-runs only unfinished cohorts, reuses the desks)
       // instead of skipping, which would strand the run "running" forever.
       if (job.attempts > 1) {
-        console.log(
-          `[worker ${workerId}] reclaimed interrupted execute ${job.runId}; resuming`
-        );
+        jlog.warn("reclaimed interrupted execute; resuming");
         await throwIfRunCancelled(job.runId);
         await resumeRun(job.runId);
         await markJobSucceeded(job.id);
         return;
       }
-      console.log(
-        `[worker ${workerId}] skipping stale execute ${job.runId}; run already has persisted work`
-      );
+      jlog.info("skipping stale execute; run already has persisted work");
       await markJobSucceeded(job.id);
       return;
     }
     if (job.type === "resume" && !hasSavedSimulationWork) {
-      console.log(
-        `[worker ${workerId}] resume ${job.runId} has no saved simulation work; starting from the beginning`
-      );
+      jlog.info("resume has no saved work; starting from the beginning");
       await executeRun(job.runId);
       await markJobSucceeded(job.id);
       return;
@@ -128,23 +132,59 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
       throw new Error(`unknown job type: ${job.type}`);
     }
     await markJobSucceeded(job.id);
+    outcome = "succeeded";
   } catch (error) {
     if (isRunCancelledError(error)) {
       if (job.runId) await markRunCancelled(job.runId);
       await markJobCancelled(job.id);
-      console.log(`[worker ${workerId}] cancelled ${job.runId}`);
+      outcome = "cancelled";
+      jlog.info("job cancelled");
       return;
     }
     await markJobFailed(job, error);
-    console.error(`[worker ${workerId}] failed ${job.runId}:`, error);
+    outcome = "failed";
+    jlog.error("job failed", { error });
   } finally {
     clearInterval(lease);
+    const durationMs = Date.now() - startedAt;
+    metrics.incr("job.finished", { type: job.type, outcome });
+    metrics.observe(`job.duration_ms.${job.type}`, durationMs);
+    // Run-terminal accounting: the orchestrator owns status/cost; we read the
+    // settled row here so "are runs silently capping?" and the cost-per-run
+    // distribution are answerable without touching orchestrator.ts.
+    if (job.runId && (job.type === "execute" || job.type === "resume")) {
+      try {
+        const run = await prisma.run.findUnique({
+          where: { id: job.runId },
+          select: { status: true, costUsd: true, tokensUsed: true },
+        });
+        if (run) {
+          metrics.incr("run.outcome", { status: run.status });
+          metrics.observe("run.cost_usd", run.costUsd);
+          metrics.observe("run.tokens", run.tokensUsed);
+          if (run.status === "capped") {
+            jlog.warn("run capped", { costUsd: run.costUsd, tokensUsed: run.tokensUsed });
+          }
+          // Free the in-process cost-reservation ledger for terminal runs so a
+          // long-lived worker doesn't accumulate them.
+          if (["complete", "failed", "capped", "cancelled"].includes(run.status)) {
+            clearRunBudget(job.runId);
+          }
+        }
+      } catch {
+        // Metrics are best-effort; never let accounting fail a settled job.
+      }
+    }
+    jlog.info("job finished", { outcome, durationMs });
   }
 }
 
 async function main(): Promise<void> {
-  console.log(`[worker ${workerId}] polling every ${pollMs}ms`);
-  console.log(`[worker ${workerId}] ${deployInfoLabel(currentDeployInfo("worker"))}`);
+  startMetricsFlush();
+  workerLog.info("worker started", {
+    pollMs,
+    deploy: deployInfoLabel(currentDeployInfo("worker")),
+  });
   while (!shuttingDown) {
     // A transient DB error while claiming must NOT kill the loop — that exits
     // the process, and after restartPolicyMaxRetries Railway stops restarting
@@ -157,7 +197,8 @@ async function main(): Promise<void> {
       }
       await runJob(job);
     } catch (error) {
-      console.error(`[worker ${workerId}] poll error:`, error);
+      metrics.incr("worker.poll_error");
+      workerLog.error("poll error", { error });
       await sleep(pollMs);
     }
   }
@@ -171,14 +212,16 @@ process.on("SIGTERM", () => {
 });
 // A stray rejection must not take the worker down (see the loop note above).
 process.on("unhandledRejection", (reason) => {
-  console.error(`[worker ${workerId}] unhandledRejection:`, reason);
+  metrics.incr("worker.unhandled_rejection");
+  workerLog.error("unhandledRejection", { reason: String(reason) });
 });
 
 main()
   .catch((error) => {
-    console.error(`[worker ${workerId}] fatal:`, error);
+    workerLog.error("fatal", { error });
     process.exitCode = 1;
   })
   .finally(() => {
-    console.log(`[worker ${workerId}] stopped`);
+    metrics.flush();
+    workerLog.info("worker stopped");
   });
