@@ -2,10 +2,15 @@ import { prisma } from "./db";
 import type {
   Block,
   Cohort,
-  CohortStats,
   Conclusion,
   Persona,
 } from "./schema";
+import {
+  parseBlockParamsField,
+  parseCohortStatsField,
+  parseLowerStringArrayField,
+  parseStringArrayField,
+} from "./dbJson";
 
 // ---------------------------------------------------------------------------
 // DB row -> wire-type converters. Kept in their own module (no imports beyond
@@ -31,8 +36,8 @@ export function conclusionToWire(row: DbConclusion): Conclusion {
     claim: row.claim,
     value: row.value,
     confidence: row.confidence,
-    entities: JSON.parse(row.entities),
-    sources: JSON.parse(row.sources),
+    entities: parseLowerStringArrayField(row.entities, "conclusion entities"),
+    sources: parseStringArrayField(row.sources, "conclusion sources"),
   };
 }
 
@@ -49,9 +54,9 @@ export function blockToWire(
     kind: row.kind as Block["kind"],
     domain: row.domain as Block["domain"],
     state: row.state as Block["state"],
-    inputBlockIds: JSON.parse(row.inputBlockIds),
-    params: JSON.parse(row.params),
-    logs: JSON.parse(row.logs),
+    inputBlockIds: parseStringArrayField(row.inputBlockIds, "block input ids"),
+    params: parseBlockParamsField(row.params),
+    logs: parseStringArrayField(row.logs, "block logs"),
     conclusions: conclusions.map(conclusionToWire),
   };
 }
@@ -70,7 +75,7 @@ export function cohortToWire(row: DbCohort): Cohort {
     weightPct: row.weightPct,
     size: row.size,
     state: row.state as Cohort["state"],
-    stats: row.stats ? (JSON.parse(row.stats) as CohortStats) : null,
+    stats: parseCohortStatsField(row.stats),
     summary: row.summary,
   };
 }
@@ -90,17 +95,20 @@ export function personaToWire(row: DbPersona): Persona {
     wtp: row.wtp,
     wtpCurrency: row.wtpCurrency,
     channelPref: row.channelPref,
-    platforms: JSON.parse(row.platforms),
+    platforms: parseStringArrayField(row.platforms, "persona platforms"),
     objection: row.objection,
     quote: row.quote,
     lifestyle: row.lifestyle,
     lifeStage: row.lifeStage,
-    values: JSON.parse(row.values),
+    values: parseStringArrayField(row.values, "persona values"),
     shoppingHabits: row.shoppingHabits,
     priceSensitivity: row.priceSensitivity,
     reasoning: row.reasoning,
     personality: row.personality,
-    personalityTraits: JSON.parse(row.personalityTraits),
+    personalityTraits: parseStringArrayField(
+      row.personalityTraits,
+      "persona personality traits"
+    ),
     intentOriginal: row.intentOriginal ?? null,
     voteChangedAt: row.voteChangedAt ? row.voteChangedAt.toISOString() : null,
   };

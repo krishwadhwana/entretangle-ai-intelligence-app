@@ -17,6 +17,11 @@ import { regionForLocality } from "./datasources/politicalGeography";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import { providerErrorMessage } from "./providerErrors";
+import {
+  encodeCohortStatsField,
+  encodeStringArrayField,
+  parseCohortStatsField,
+} from "./dbJson";
 import type { RunEmitter } from "./events";
 import type {
   AudienceAggregate,
@@ -256,11 +261,12 @@ export async function copyAudienceFrom(
         })
       );
     }
-    if (c.stats) {
+    const stats = parseCohortStatsField(c.stats);
+    if (stats) {
       await emitter.emit({
         type: "cohort_simulated",
         cohortId: newCohort.id,
-        stats: JSON.parse(c.stats) as CohortStats,
+        stats,
         summary: c.summary ?? "",
         personas: personas.map(personaToWire),
       });
@@ -406,17 +412,17 @@ export async function simulateCohort(
             wtp: p.wtp,
             wtpCurrency: currency,
             channelPref: p.channelPref,
-            platforms: JSON.stringify(p.platforms),
+            platforms: encodeStringArrayField(p.platforms),
             objection: p.objection,
             quote: p.quote,
             lifestyle: p.lifestyle,
             lifeStage: p.lifeStage,
-            values: JSON.stringify(p.values),
+            values: encodeStringArrayField(p.values),
             shoppingHabits: p.shoppingHabits,
             priceSensitivity: p.priceSensitivity,
             reasoning: p.reasoning,
             personality: p.personality,
-            personalityTraits: JSON.stringify(p.personalityTraits),
+            personalityTraits: encodeStringArrayField(p.personalityTraits),
           },
         });
         personas.push(personaToWire(row));
@@ -431,7 +437,7 @@ export async function simulateCohort(
       where: { id: cohortId },
       data: {
         state: "done",
-        stats: JSON.stringify(stats),
+        stats: encodeCohortStatsField(stats),
         summary,
       },
     });

@@ -5,10 +5,8 @@ import { executeBlock } from "./blocks";
 import { providerErrorMessage } from "./providerErrors";
 import {
   callPlannerV2,
-  callEntangler,
   callAudienceSynth,
   callDemographics,
-  callFinalReport,
   callClassifyVenture,
 } from "./llm";
 import { ProjectRetriever, formatGroundTruth } from "./rag";
@@ -48,13 +46,13 @@ import {
   copyAudienceFrom,
 } from "./audience";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
-import { getFinancialModel } from "./store";
 import {
   isRunCancelledError,
   markRunCancelled,
   throwIfRunCancelled,
 } from "./jobs";
 import { blockToWire, conclusionToWire } from "./wire";
+import { parseStringArrayField } from "./dbJson";
 import {
   appendSimulationRun,
   buildRunRecord,
@@ -64,16 +62,10 @@ import {
   ClientProfileSchema,
   type AudienceAggregate,
   type ClientProfile,
-  type Conclusion,
   type RunStatus,
 } from "./schema";
-import {
-  addEdge,
-  blockCount,
-  concludedBlocks,
-  setStatus,
-  spawnBlock,
-} from "./engine/graph";
+import { setStatus, spawnBlock } from "./engine/graph";
+import { entangleAndConverge } from "./orchestration/entangle";
 
 // ---------------------------------------------------------------------------
 // The orchestrator is a deterministic state machine; LLM calls fill in
@@ -82,223 +74,6 @@ import {
 // ---------------------------------------------------------------------------
 
 export { blockToWire, conclusionToWire } from "./wire";
-
-/** Mechanical verification of a shared_entity edge (SPEC §4.4). */
-function sharesEntity(
-  a: { conclusions: Conclusion[] },
-  b: { conclusions: Conclusion[] }
-): boolean {
-  const tagsA = new Set(a.conclusions.flatMap((c) => c.entities));
-  return b.conclusions.some((c) => c.entities.some((e) => tagsA.has(e)));
-}
-
-async function converge(
-  emitter: RunEmitter,
-  capped: boolean,
-  profile: ClientProfile
-): Promise<void> {
-  const runId = emitter.runId;
-  const [blocks, aggEvent] = await Promise.all([
-    prisma.block.findMany({ where: { runId }, include: { conclusions: true } }),
-    prisma.runEvent.findFirst({
-      where: { runId, type: "audience_aggregated" },
-      orderBy: { seq: "desc" },
-    }),
-  ]);
-  const conclusionCount = blocks.reduce(
-    (sum, block) => sum + block.conclusions.length,
-    0
-  );
-  const aggregate = aggEvent
-    ? JSON.parse(aggEvent.payload).aggregate as AudienceAggregate
-    : null;
-
-  try {
-    const existingReport = await prisma.runEvent.findFirst({
-      where: { runId, type: "final_report" },
-      select: { id: true },
-    });
-    if (!existingReport) {
-      await setStatus(emitter, "running", "Writing final business report");
-      // Make economics quantitative if the founder already built a financial
-      // model for this project (else the report stays qualitative).
-      const run = await prisma.run.findUnique({
-        where: { id: runId },
-        select: { projectId: true },
-      });
-      const financials = run?.projectId
-        ? await getFinancialModel(run.projectId, runId)
-        : null;
-      const report = await callFinalReport(
-        runId,
-        profile,
-        blocks.map((b) => blockToWire(b, b.conclusions)),
-        aggregate,
-        financials
-      );
-      await emitter.emit({ type: "final_report", report });
-    }
-  } catch (e) {
-    console.error(`[orchestrator] final report generation failed:`, e);
-  }
-
-  const [finalTokensUsed, finalCostUsd] = await Promise.all([
-    getTokensUsed(runId),
-    getCostUsd(runId),
-  ]);
-  await emitter.emit({ type: "tokens_used", tokensUsed: finalTokensUsed });
-  await emitter.emit({ type: "cost_used", costUsd: finalCostUsd });
-  await emitter.emit({
-    type: "world_model_ready",
-    conclusionCount,
-    blockCount: blocks.length,
-  });
-  // Terminal status last — the SSE route closes streams on terminal status.
-  await setStatus(
-    emitter,
-    capped ? "capped" : "complete",
-    capped ? "Converged early — token cap reached" : "World model ready"
-  );
-}
-
-/**
- * Entangle → synthesize → repeat until caps, then converge (SPEC §4.4–4.6).
- * Shared by fresh runs (fromLayer = 1) and forks (fromLayer = fork layer).
- */
-async function entangleAndConverge(
-  emitter: RunEmitter,
-  profile: ClientProfile,
-  fromLayer: number
-): Promise<void> {
-  const runId = emitter.runId;
-  let layer = fromLayer;
-  let round = 1;
-
-  while (true) {
-    await throwIfRunCancelled(runId);
-    if (await isOverTokenCap(runId)) {
-      console.log(`[orchestrator] run ${runId}: token cap reached, converging`);
-      await converge(emitter, true, profile);
-      return;
-    }
-    const count = await blockCount(runId);
-    if (layer >= config.maxLayers || count >= config.maxBlocksPerRun) break;
-
-    await throwIfRunCancelled(runId);
-    await setStatus(emitter, "running", `Entangling — round ${round}`);
-    const concluded = await concludedBlocks(runId);
-    if (concluded.length === 0) throw new Error("No blocks concluded");
-
-    const byId = new Map(concluded.map((b) => [b.id, b]));
-    let ent;
-    try {
-      ent = await callEntangler(runId, concluded, round);
-    } catch (e) {
-      // Entangler failure is non-fatal: converge with what we have.
-      console.log(`[orchestrator] entangler failed, converging: ${e}`);
-      break;
-    }
-
-    // Mechanical edge verification (SPEC §4.4). shared_entity edges must
-    // actually share ≥1 entity tag; contradiction/dependency accepted on the
-    // entangler's word in v0, logged with reason.
-    const existing = await prisma.edge.findMany({
-      where: { runId, kind: "entangle" },
-    });
-    const seenPairs = new Set(
-      existing.map((e) => [e.fromBlockId, e.toBlockId].sort().join("|"))
-    );
-    for (const edge of ent.edges) {
-      const from = byId.get(edge.fromBlockId);
-      const to = byId.get(edge.toBlockId);
-      if (!from || !to || from === to) {
-        console.log(
-          `[orchestrator] DROPPED edge (unknown block): ${edge.fromBlockId} -> ${edge.toBlockId} ("${edge.reason}")`
-        );
-        continue;
-      }
-      const pair = [from.id, to.id].sort().join("|");
-      if (seenPairs.has(pair)) {
-        console.log(
-          `[orchestrator] DROPPED edge (duplicate pair): ${from.name} -> ${to.name}`
-        );
-        continue;
-      }
-      if (edge.trigger === "shared_entity" && !sharesEntity(from, to)) {
-        console.log(
-          `[orchestrator] DROPPED hallucinated shared_entity edge: ${from.name} -> ${to.name} ("${edge.reason}") — no shared entity tag`
-        );
-        continue;
-      }
-      console.log(
-        `[orchestrator] edge accepted (${edge.trigger}): ${from.name} -> ${to.name}`
-      );
-      seenPairs.add(pair);
-      await addEdge(emitter, {
-        fromBlockId: from.id,
-        toBlockId: to.id,
-        kind: "entangle",
-        reason: edge.reason,
-      });
-    }
-
-    // Synthesis blocks: only with valid inputs, clamped to remaining budget.
-    const budget = config.maxBlocksPerRun - (await blockCount(runId));
-    const synth = ent.synthesisBlocks
-      .filter((s) => s.inputBlockIds.every((id) => byId.has(id)))
-      .slice(0, Math.max(0, budget));
-    if (synth.length < ent.synthesisBlocks.length) {
-      console.log(
-        `[orchestrator] clamped synthesis blocks ${ent.synthesisBlocks.length} -> ${synth.length} (cap/invalid inputs)`
-      );
-    }
-    if (synth.length === 0) break;
-
-    if (await isOverTokenCap(runId)) {
-      await converge(emitter, true, profile);
-      return;
-    }
-
-    const nextLayer = layer + 1;
-    await setStatus(emitter, "running", `Synthesizing — layer ${nextLayer}`);
-    const spawned: { id: string; inputBlockIds: string[] }[] = [];
-    for (const s of synth) {
-      await throwIfRunCancelled(runId);
-      const id = await spawnBlock(emitter, {
-        name: s.name,
-        mission: s.mission,
-        layer: nextLayer,
-        kind: "synthesis",
-        domain: s.domain ?? "synthesis",
-        inputBlockIds: s.inputBlockIds,
-        params: {},
-      });
-      for (const inputId of s.inputBlockIds) {
-        await addEdge(emitter, {
-          fromBlockId: inputId,
-          toBlockId: id,
-          kind: "feeds",
-          reason: "conclusions feed synthesis",
-        });
-      }
-      spawned.push({ id, inputBlockIds: s.inputBlockIds });
-    }
-
-    await Promise.allSettled(
-      spawned.map((s) => {
-        const inputConclusions = s.inputBlockIds.flatMap(
-          (id) => byId.get(id)?.conclusions ?? []
-        );
-        return executeBlock(emitter, s.id, profile, inputConclusions);
-      })
-    );
-
-    layer = nextLayer;
-    round += 1;
-  }
-
-  await converge(emitter, false, profile);
-}
 
 /**
  * Auto-save a finished (or failed) simulation into its project's append-only
@@ -1021,7 +796,7 @@ async function executeForkPhase(
     "running",
     `Fork — re-running "${forkBlock.name}"`
   );
-  const inputIds: string[] = JSON.parse(forkBlock.inputBlockIds);
+  const inputIds = parseStringArrayField(forkBlock.inputBlockIds, "block input ids");
   const inputConclusions = (
     await prisma.conclusion.findMany({ where: { blockId: { in: inputIds } } })
   ).map(conclusionToWire);

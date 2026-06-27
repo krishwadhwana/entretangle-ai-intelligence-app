@@ -2,6 +2,11 @@ import { prisma } from "./db";
 import { RunEmitter } from "./events";
 import { blockToWire, conclusionToWire } from "./orchestrator";
 import { aggregateAudience, copyAudienceFrom } from "./audience";
+import {
+  encodeBlockParamsField,
+  encodeStringArrayField,
+  parseStringArrayField,
+} from "./dbJson";
 import type { BlockParams } from "./schema";
 
 /**
@@ -37,7 +42,7 @@ export async function forkRun(
     grew = false;
     for (const b of parent.blocks) {
       if (downstream.has(b.id)) continue;
-      const inputs: string[] = JSON.parse(b.inputBlockIds);
+      const inputs = parseStringArrayField(b.inputBlockIds, "block input ids");
       if (inputs.some((id) => downstream.has(id))) {
         downstream.add(b.id);
         grew = true;
@@ -67,7 +72,7 @@ export async function forkRun(
   // Copy blocks (and conclusions byte-identically) with fresh ids.
   const idMap = new Map<string, string>(); // old block id -> new block id
   for (const b of toCopy) {
-    const inputs: string[] = JSON.parse(b.inputBlockIds);
+    const inputs = parseStringArrayField(b.inputBlockIds, "block input ids");
     const row = await prisma.block.create({
       data: {
         runId: run.id,
@@ -77,7 +82,9 @@ export async function forkRun(
         kind: b.kind,
         domain: b.domain,
         state: "concluded",
-        inputBlockIds: JSON.stringify(inputs.map((id) => idMap.get(id) ?? id)),
+        inputBlockIds: encodeStringArrayField(
+          inputs.map((id) => idMap.get(id) ?? id)
+        ),
         params: b.params,
         logs: b.logs,
       },
@@ -127,13 +134,13 @@ export async function forkRun(
       kind: forkBlock.kind,
       domain: forkBlock.domain,
       state: "spawning",
-      inputBlockIds: JSON.stringify(
-        (JSON.parse(forkBlock.inputBlockIds) as string[]).map(
+      inputBlockIds: encodeStringArrayField(
+        parseStringArrayField(forkBlock.inputBlockIds, "block input ids").map(
           (id) => idMap.get(id) ?? id
         )
       ),
-      params: JSON.stringify(newParams),
-      logs: JSON.stringify([]),
+      params: encodeBlockParamsField(newParams),
+      logs: encodeStringArrayField([]),
     },
   });
   idMap.set(forkBlock.id, forked.id);
