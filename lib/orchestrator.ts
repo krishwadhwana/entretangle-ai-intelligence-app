@@ -153,14 +153,6 @@ export async function executeRun(runId: string): Promise<void> {
     // 0 → research desks only (no audience).
     const audienceTarget = run.targetAudienceSize ?? config.targetAudienceSize;
 
-    // RAG (option B): load the founder's uploaded documents so research desks
-    // and audience synthesis can be grounded in their real data.
-    const retriever = run.projectId
-      ? await ProjectRetriever.load(run.projectId).catch((e) => {
-          console.error(`[orchestrator] retriever load failed:`, e);
-          return null;
-        })
-      : null;
     const planQuery = [
       run.brief,
       run.focusQuestion,
@@ -169,50 +161,71 @@ export async function executeRun(runId: string): Promise<void> {
     ]
       .filter(Boolean)
       .join(" ");
-    const ragPlanGroundTruth =
-      retriever?.hasDocs
-        ? formatGroundTruth(await retriever.search(planQuery, 6))
-        : "";
 
-    // Classify the venture FIRST (before planning) so industry knowledge + the
-    // planning template can shape which desks/cohorts/roles the planner picks.
-    const industry = await callClassifyVenture(runId, profile).catch((e) => {
-      console.error(`[orchestrator] industry classification failed:`, e);
-      return null;
-    });
-    if (industry) {
-      console.log(
-        `[orchestrator] industry=${industry.industry} hs=[${industry.hsCodes.join(
-          ","
-        )}] shops=[${industry.osmShopTags.join(
-          ","
-        )}] openData=[${industry.openDataQueries.join(",")}] library=${industry.libraryKey}`
-      );
-    }
-
-    // Auto-built industry knowledge (option A): cached-or-built, web-grounded,
-    // with provenance + freshness. Falls back to the curated library if the
-    // build fails AND nothing is cached.
-    const knowledge = industry
-      ? await getOrBuildIndustryKnowledge(
-          runId,
-          industry.industry,
-          industry.libraryKey,
-          profile.geography ?? []
-        ).catch((e) => {
-          console.error(`[orchestrator] knowledge build failed:`, e);
+    // Two independent setup chains run CONCURRENTLY — there is no data
+    // dependency between founder-RAG retrieval and venture classification, so
+    // serialising them just adds 5–10s of dead time before planning:
+    //   A) RAG (option B): load the founder's uploaded documents, then retrieve
+    //      plan-level ground truth so desks + synthesis can be grounded in it.
+    //   B) classify the venture FIRST so industry knowledge + the planning
+    //      template can shape which desks/cohorts/roles the planner picks, then
+    //      build/cache that web-grounded industry knowledge pack.
+    const [ragSetup, industrySetup] = await Promise.all([
+      (async () => {
+        const retriever = run.projectId
+          ? await ProjectRetriever.load(run.projectId).catch((e) => {
+              console.error(`[orchestrator] retriever load failed:`, e);
+              return null;
+            })
+          : null;
+        const ragPlanGroundTruth = retriever?.hasDocs
+          ? formatGroundTruth(await retriever.search(planQuery, 6))
+          : "";
+        return { retriever, ragPlanGroundTruth };
+      })(),
+      (async () => {
+        const industry = await callClassifyVenture(runId, profile).catch((e) => {
+          console.error(`[orchestrator] industry classification failed:`, e);
           return null;
-        })
-      : null;
-    if (knowledge) {
-      console.log(
-        `[orchestrator] industry knowledge ${
-          knowledge.fresh ? "cache-hit" : "built"
-        } (as of ${knowledge.builtAt.toISOString().slice(0, 10)}, ${
-          knowledge.sources.length
-        } sources)`
-      );
-    }
+        });
+        if (industry) {
+          console.log(
+            `[orchestrator] industry=${industry.industry} hs=[${industry.hsCodes.join(
+              ","
+            )}] shops=[${industry.osmShopTags.join(
+              ","
+            )}] openData=[${industry.openDataQueries.join(",")}] library=${industry.libraryKey}`
+          );
+        }
+        // Auto-built industry knowledge (option A): cached-or-built,
+        // web-grounded, with provenance + freshness. Falls back to the curated
+        // library if the build fails AND nothing is cached.
+        const knowledge = industry
+          ? await getOrBuildIndustryKnowledge(
+              runId,
+              industry.industry,
+              industry.libraryKey,
+              profile.geography ?? []
+            ).catch((e) => {
+              console.error(`[orchestrator] knowledge build failed:`, e);
+              return null;
+            })
+          : null;
+        if (knowledge) {
+          console.log(
+            `[orchestrator] industry knowledge ${
+              knowledge.fresh ? "cache-hit" : "built"
+            } (as of ${knowledge.builtAt.toISOString().slice(0, 10)}, ${
+              knowledge.sources.length
+            } sources)`
+          );
+        }
+        return { industry, knowledge };
+      })(),
+    ]);
+    const { retriever, ragPlanGroundTruth } = ragSetup;
+    const { industry, knowledge } = industrySetup;
+
     const curatedLib = industry ? getIndustryLibrary(industry.libraryKey) : null;
     // Prefer the auto-built pack; fall back to the curated library.
     const industryGroundTruth = knowledge
@@ -354,9 +367,27 @@ export async function executeRun(runId: string): Promise<void> {
       }))
     );
     const GOVERNANCE_DOMAINS = new Set(["regulation", "finance", "supply", "market"]);
+    // Founder-RAG retrieval is independent per desk — fire all of them at once
+    // instead of awaiting up to ~18 vector searches one at a time (~2–3.5s).
+    await throwIfRunCancelled(runId);
+    const deskRagByIndex = retriever?.hasDocs
+      ? await Promise.all(
+          desks.map((d) =>
+            retriever
+              .search(d.mission, 4)
+              .then(formatGroundTruth)
+              .catch((e) => {
+                console.error(
+                  `[orchestrator] desk RAG search failed for "${d.name}":`,
+                  e
+                );
+                return "";
+              })
+          )
+        )
+      : [];
     const deskGroundTruth = new Map<string, string>();
     for (const [i, d] of desks.entries()) {
-      await throwIfRunCancelled(runId);
       const parts: string[] = [];
       // Export run: every desk reasons against the home-market prior.
       if (exportPriorGroundTruth) parts.push(exportPriorGroundTruth);
@@ -364,10 +395,8 @@ export async function executeRun(runId: string): Promise<void> {
       if (industryGroundTruth) parts.push(industryGroundTruth);
       if (governanceGroundTruth && GOVERNANCE_DOMAINS.has(d.domain))
         parts.push(governanceGroundTruth);
-      if (retriever?.hasDocs) {
-        const gt = formatGroundTruth(await retriever.search(d.mission, 4));
-        if (gt) parts.push(gt);
-      }
+      const gt = deskRagByIndex[i];
+      if (gt) parts.push(gt);
       const sd = structuredByDomain.get(d.domain);
       if (sd) parts.push(formatStructured(sd));
       if (parts.length > 0) deskGroundTruth.set(deskIds[i], parts.join("\n\n"));
@@ -440,32 +469,50 @@ export async function executeRun(runId: string): Promise<void> {
           : `${desks.length} desks researching · ${cohortIds.length} cohorts (~${audienceTarget.toLocaleString()} personas) simulating`
     );
     const runDesks = async (): Promise<boolean> => {
-      const wave = Math.max(1, config.deskConcurrency);
+      // Fixed-size WORKER POOL (same pattern as the cohort sim): each worker
+      // pulls the next desk the instant it finishes, so a single slow desk only
+      // ties up its own slot instead of stalling the whole wave behind it.
+      const concurrency = Math.max(1, config.deskConcurrency);
       let anyConcluded = false;
-      for (let i = 0; i < deskIds.length; i += wave) {
-        await throwIfRunCancelled(runId);
-        const results = await Promise.allSettled(
-          deskIds
-            .slice(i, i + wave)
-            .map((id) =>
-              executeBlock(
-                emitter,
-                id,
-                profile,
-                [],
-                undefined,
-                deskGroundTruth.get(id)
-              )
-            )
-        );
-        anyConcluded =
-          anyConcluded ||
-          results.some((r) => r.status === "fulfilled" && r.value === true);
-        if (await isOverTokenCap(runId)) {
-          console.log(`[orchestrator] cap reached mid-desks — stopping waves`);
-          break;
+      let cursor = 0;
+      let capped = false;
+
+      async function worker(): Promise<void> {
+        while (true) {
+          if (capped) return;
+          await throwIfRunCancelled(runId);
+          if (await isOverTokenCap(runId)) {
+            if (!capped) {
+              capped = true;
+              console.log(`[orchestrator] cap reached mid-desks — stopping pool`);
+            }
+            return;
+          }
+          const i = cursor++;
+          if (i >= deskIds.length) return;
+          const id = deskIds[i];
+          // executeBlock may throw (it fails the block, not the run) — swallow
+          // so one bad desk can't kill its worker; the worker grabs the next.
+          const ok = await executeBlock(
+            emitter,
+            id,
+            profile,
+            [],
+            undefined,
+            deskGroundTruth.get(id)
+          ).catch((e) => {
+            console.error(`[orchestrator] desk ${id} failed:`, e);
+            return false;
+          });
+          if (ok === true) anyConcluded = true;
         }
       }
+
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, deskIds.length) }, () =>
+          worker()
+        )
+      );
       return anyConcluded;
     };
     // Phase 2 — export prior transfer: destination-market cohorts are simulated

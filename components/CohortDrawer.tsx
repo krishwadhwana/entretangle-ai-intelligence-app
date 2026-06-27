@@ -18,6 +18,7 @@ import { ValueTooltip } from "./ValueTooltip";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 import { providerErrorMessage } from "@/lib/providerErrors";
+import { postSSE } from "@/lib/sseClient";
 
 type Props = {
   runId: string;
@@ -326,6 +327,8 @@ export default function CohortDrawer({
     nextMove: string;
   } | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
+  // Live reply prose while a 1:1 customer chat streams in (null = not streaming).
+  const [chatStreaming, setChatStreaming] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   // Which panel the chat region shows: 1:1/group "chat" or two-persona "interaction".
   const [panel, setPanel] = useState<"chat" | "interaction">("chat");
@@ -501,37 +504,39 @@ export default function CohortDrawer({
     setChatQuestion("");
     setChatError(null);
     setChatLoading(true);
+    // Customer (1:1) chats go to the win-back endpoint, which persists any vote
+    // change and emits an event; group chats stay on the audience route.
+    const customer = chatMode === "customer" && selectedPersona;
     try {
-      // Customer (1:1) chats go to the win-back endpoint, which persists any
-      // vote change and emits an event; group chats stay on the audience route.
-      const customer = chatMode === "customer" && selectedPersona;
-      const res = await fetch(
-        customer
-          ? `/api/runs/${runId}/persona/${selectedPersona.id}/chat`
-          : `/api/runs/${runId}/audience-chat`,
-        {
+      let result: AudienceChatResponse;
+      if (customer) {
+        // 1:1 reply streams token-by-token for immediate feedback.
+        setChatStreaming("");
+        result = await postSSE<AudienceChatResponse>(
+          `/api/runs/${runId}/persona/${selectedPersona.id}/chat?stream=1`,
+          { question, history },
+          (text) => setChatStreaming(text)
+        );
+      } else {
+        const res = await fetch(`/api/runs/${runId}/audience-chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            customer
-              ? { question, history }
-              : {
-                  mode: chatMode,
-                  cohortId: cohort.id,
-                  personaId: null,
-                  question,
-                  history,
-                }
-          ),
+          body: JSON.stringify({
+            mode: chatMode,
+            cohortId: cohort.id,
+            personaId: null,
+            question,
+            history,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            providerErrorMessage(data.error ?? data, `chat failed (${res.status})`)
+          );
         }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          providerErrorMessage(data.error ?? data, `chat failed (${res.status})`)
-        );
+        result = data as AudienceChatResponse;
       }
-      const result = data as AudienceChatResponse;
       const received = result.messages.map((message, index) => ({
         id: `audience-${Date.now()}-${index}`,
         role:
@@ -552,6 +557,7 @@ export default function CohortDrawer({
     } catch (e) {
       setChatError(providerErrorMessage(e, "chat failed"));
     } finally {
+      setChatStreaming(null);
       setChatLoading(false);
     }
   };
@@ -806,7 +812,15 @@ export default function CohortDrawer({
                   ))}
                 </ul>
               )}
-              {chatLoading && (
+              {chatStreaming !== null && chatStreaming !== "" && (
+                <div className="mt-2 flex justify-start">
+                  <div className="max-w-[90%] rounded-lg border border-indigo-100 bg-indigo-50/50 px-2.5 py-2 text-[11px] leading-snug text-neutral-700">
+                    {chatStreaming}
+                    <span className="ml-0.5 inline-block animate-pulse">▍</span>
+                  </div>
+                </div>
+              )}
+              {chatLoading && (chatStreaming === null || chatStreaming === "") && (
                 <div className="mt-2 flex items-center gap-1 text-[10px] text-indigo-500">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Simulating response…
