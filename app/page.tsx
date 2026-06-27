@@ -71,13 +71,34 @@ import type {
   WorkspaceNodeWire,
   WebsiteAnalysis,
 } from "@/lib/schema";
-import DesignStudioSection from "@/components/DesignStudioSection";
-import ProjectMasterDossierSection from "@/components/ProjectMasterDossierSection";
+import dynamic from "next/dynamic";
 import WorkspaceTree, {
   workspaceDescendantIds,
   workspacePathLabel,
 } from "@/components/WorkspaceTree";
 import { providerErrorMessage } from "@/lib/providerErrors";
+
+// These two workspace sections are heavy (DesignStudioSection pulls in the full
+// design pipeline; the dossier pulls satori/pdf paths) and are only shown for
+// their own workspace tab. Code-split them so they stay out of the home bundle
+// and only download when the user opens that section.
+const DesignStudioSection = dynamic(
+  () => import("@/components/DesignStudioSection"),
+  { loading: () => <SectionLoading /> }
+);
+const ProjectMasterDossierSection = dynamic(
+  () => import("@/components/ProjectMasterDossierSection"),
+  { loading: () => <SectionLoading /> }
+);
+
+function SectionLoading() {
+  return (
+    <div className="flex items-center justify-center p-8 text-xs text-neutral-400">
+      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+      Loading…
+    </div>
+  );
+}
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
 // durable project: every message, the pending question, the finished profile
@@ -6502,7 +6523,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
 
               <div className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -6935,10 +6957,12 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <DesignStudioSection
-                  projectId={projectId}
-                  sourceRunId={latestRun?.runId ?? null}
-                />
+                {activeWorkspaceSection === "workspace-design" && (
+                  <DesignStudioSection
+                    projectId={projectId}
+                    sourceRunId={latestRun?.runId ?? null}
+                  />
+                )}
               </section>
 
               <section
@@ -7573,7 +7597,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
             </div>
           </div>
