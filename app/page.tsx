@@ -6503,16 +6503,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
@@ -6906,16 +6908,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
