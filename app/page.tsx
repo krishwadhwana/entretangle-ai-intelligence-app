@@ -71,16 +71,34 @@ import type {
   WorkspaceNodeWire,
   WebsiteAnalysis,
 } from "@/lib/schema";
-import DesignStudioSection from "@/components/DesignStudioSection";
-import CollapsibleSidebar, {
-  SidebarCollapseButton,
-} from "@/components/CollapsibleSidebar";
-import ProjectMasterDossierSection from "@/components/ProjectMasterDossierSection";
+import dynamic from "next/dynamic";
 import WorkspaceTree, {
   workspaceDescendantIds,
   workspacePathLabel,
 } from "@/components/WorkspaceTree";
 import { providerErrorMessage } from "@/lib/providerErrors";
+
+// These two workspace sections are heavy (DesignStudioSection pulls in the full
+// design pipeline; the dossier pulls satori/pdf paths) and are only shown for
+// their own workspace tab. Code-split them so they stay out of the home bundle
+// and only download when the user opens that section.
+const DesignStudioSection = dynamic(
+  () => import("@/components/DesignStudioSection"),
+  { loading: () => <SectionLoading /> }
+);
+const ProjectMasterDossierSection = dynamic(
+  () => import("@/components/ProjectMasterDossierSection"),
+  { loading: () => <SectionLoading /> }
+);
+
+function SectionLoading() {
+  return (
+    <div className="flex items-center justify-center p-8 text-xs text-neutral-400">
+      <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+      Loading…
+    </div>
+  );
+}
 
 // Conversational intake (SPEC Shot 8; v2.1 structured MCQ), now backed by a
 // durable project: every message, the pending question, the finished profile
@@ -601,69 +619,18 @@ function ProjectWorkspaceRail({
   items,
   activeId,
   onSelect,
-  collapsed,
-  onToggleCollapsed,
 }: {
   items: WorkspaceNavItem[];
   activeId: string;
   onSelect: (id: string) => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
 }) {
   return (
-    <CollapsibleSidebar
-      as="nav"
-      title="workspace sidebar"
-      collapsed={collapsed}
-      onToggle={onToggleCollapsed}
-      expandedClassName="space-y-1 rounded-lg border border-neutral-200 bg-white p-2"
-      collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white"
-      collapsedChildren={
-        <div className="flex w-full flex-col items-center gap-1">
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = item.id === activeId;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => onSelect(item.id)}
-                title={item.label}
-                aria-label={item.label}
-                className={`relative flex h-8 w-8 items-center justify-center rounded-md transition-colors ${
-                  active
-                    ? "bg-neutral-900 text-white"
-                    : "text-neutral-400 hover:bg-neutral-100 hover:text-neutral-900"
-                }`}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                {typeof item.count === "number" && item.count > 0 ? (
-                  <span
-                    className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
-                      active
-                        ? "bg-white text-neutral-900"
-                        : "bg-neutral-100 text-neutral-500"
-                    }`}
-                  >
-                    {item.count}
-                  </span>
-                ) : null}
-              </button>
-            );
-          })}
-        </div>
-      }
-    >
-      <div className="flex items-center justify-between gap-2 px-2 pb-1 pt-1">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-          Workspace
-        </p>
-        <SidebarCollapseButton
-          collapsed={collapsed}
-          onToggle={onToggleCollapsed}
-          title="workspace sidebar"
-        />
-      </div>
+    <div className="relative">
+    <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 rounded-r-lg bg-gradient-to-l from-white to-transparent xl:hidden" />
+    <nav className="flex gap-1 overflow-x-auto no-scrollbar rounded-lg border border-neutral-200 bg-white p-2 xl:flex-col xl:space-y-1 xl:overflow-visible">
+      <p className="hidden px-2 pb-1 pt-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400 xl:block">
+        Workspace
+      </p>
       {items.map((item) => {
         const Icon = item.icon;
         const active = item.id === activeId;
@@ -672,7 +639,7 @@ function ProjectWorkspaceRail({
             key={item.id}
             type="button"
             onClick={() => onSelect(item.id)}
-            className={`flex w-full items-center justify-between gap-2 rounded-md px-2 py-2 text-left text-xs font-medium transition-colors ${
+            className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-md px-2 py-2 text-left text-xs font-medium transition-colors xl:w-full ${
               active
                 ? "bg-neutral-900 text-white"
                 : "text-neutral-600 hover:bg-neutral-100 hover:text-neutral-900"
@@ -700,7 +667,8 @@ function ProjectWorkspaceRail({
           </button>
         );
       })}
-    </CollapsibleSidebar>
+    </nav>
+    </div>
   );
 }
 
@@ -893,8 +861,6 @@ function InfoCollectedPanel({
   const marketplaceLinks = info?.marketplaceLinks ?? [];
   const facts = info?.facts ?? [];
   const openQuestions = info?.openQuestions ?? [];
-  const [analysisSidebarCollapsed, setAnalysisSidebarCollapsed] =
-    useState(false);
   const scrapedImageCount =
     webImages.filter((image) => image.kind !== "logo" && image.kind !== "founder")
       .length +
@@ -1033,13 +999,13 @@ function InfoCollectedPanel({
 
       {analysis ? (
         <>
-          <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
+          <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(280px,0.8fr)]">
             <div className="rounded-lg border border-neutral-200 bg-white p-4">
               <h4 className="text-sm font-semibold text-neutral-900">
                 What the URL revealed
               </h4>
               {profileFacts.length > 0 ? (
-                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
                   {profileFacts.map(([label, value]) => (
                     <div
                       key={label}
@@ -1084,13 +1050,7 @@ function InfoCollectedPanel({
             </div>
           </div>
 
-          <div
-            className={`grid gap-4 ${
-              analysisSidebarCollapsed
-                ? "xl:grid-cols-[minmax(0,1fr)_3.5rem]"
-                : "xl:grid-cols-[minmax(0,1fr)_360px]"
-            }`}
-          >
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-4">
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -1103,7 +1063,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {imageCards.length > 0 ? (
-                  <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
                     {imageCards.map((image) => (
                       <article
                         key={image.id}
@@ -1162,7 +1122,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {products.length > 0 ? (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                     {products.map((product, index) => (
                       <article
                         key={`${product.name}-${index}`}
@@ -1229,7 +1189,7 @@ function InfoCollectedPanel({
                   </span>
                 </div>
                 {listingEvidence.length > 0 ? (
-                  <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-2">
                     {listingEvidence.map((listing, index) => (
                       <article
                         key={`${listing.url}-${index}`}
@@ -1363,37 +1323,7 @@ function InfoCollectedPanel({
               </section>
             </div>
 
-            <CollapsibleSidebar
-              title="source details sidebar"
-              side="right"
-              collapsed={analysisSidebarCollapsed}
-              onToggle={() =>
-                setAnalysisSidebarCollapsed((collapsed) => !collapsed)
-              }
-              expandedClassName="space-y-4"
-              collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white"
-              collapsedChildren={
-                <div className="flex flex-col items-center gap-1 text-neutral-400">
-                  <BadgeDollarSign className="h-4 w-4" />
-                  <Link2 className="h-4 w-4" />
-                  <Tags className="h-4 w-4" />
-                  <ExternalLink className="h-4 w-4" />
-                </div>
-              }
-            >
-              <div className="flex items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                  Source details
-                </p>
-                <SidebarCollapseButton
-                  collapsed={analysisSidebarCollapsed}
-                  onToggle={() =>
-                    setAnalysisSidebarCollapsed((collapsed) => !collapsed)
-                  }
-                  title="source details sidebar"
-                  side="right"
-                />
-              </div>
+            <aside className="space-y-4">
               <section className="rounded-lg border border-neutral-200 bg-white p-4">
                 <h4 className="flex items-center gap-2 text-sm font-semibold text-neutral-900">
                   <BadgeDollarSign className="h-4 w-4 text-neutral-400" />
@@ -1556,7 +1486,7 @@ function InfoCollectedPanel({
                   )}
                 </section>
               )}
-            </CollapsibleSidebar>
+            </aside>
           </div>
         </>
       ) : (
@@ -1598,7 +1528,7 @@ function ModuleRegistryGrid({
   }
 
   return (
-    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+    <div className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
       {modules.map((module) => {
         const Icon = module.icon;
         const editing = editingId === module.id;
@@ -1778,7 +1708,7 @@ function AssetLibraryCore({
               </span>
             </div>
             {bucketAssets.length > 0 ? (
-              <div className="grid gap-2 lg:grid-cols-2">
+              <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
                 {bucketAssets.map((asset) => (
                   <article
                     key={asset.id}
@@ -2220,7 +2150,7 @@ function ModuleWorkspaceHub({
         </div>
       ) : null}
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <form
           onSubmit={(e) => void submitFolder(e)}
           className="space-y-2 rounded-lg border border-neutral-200 p-3"
@@ -2274,7 +2204,7 @@ function ModuleWorkspaceHub({
             placeholder="Campaign name"
             className="w-full rounded-lg border border-neutral-300 px-3 py-2 text-xs outline-none focus:border-indigo-500"
           />
-          <div className="grid gap-2 sm:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <select
               value={campaignFolderId}
               onChange={(e) => setCampaignFolderId(e.target.value)}
@@ -2322,7 +2252,7 @@ function ModuleWorkspaceHub({
         </form>
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
         <div className="space-y-2">
           <h4 className="text-xs font-semibold text-neutral-800">
             {selectedModule?.label ?? "Module"} folders
@@ -2568,7 +2498,7 @@ function PrintSpecPanel({
 
       <div className="grid gap-2">
         {(["primary", "secondary", "accent"] as const).map((key) => (
-          <div key={key} className="grid gap-2 sm:grid-cols-2">
+          <div key={key} className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <input
               value={cmyk[key]}
               onChange={(e) =>
@@ -2750,7 +2680,7 @@ function OperationsPanel({
             Meta Pixel placeholder
           </h4>
         </div>
-        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
           <select
             value={pixelStatus}
             onChange={(e) => setPixelStatus(e.target.value as MetaPixelStatus)}
@@ -2808,8 +2738,6 @@ function ProjectSidebar({
   onSwitch,
   onRename,
   onDelete,
-  collapsed,
-  onToggleCollapsed,
 }: {
   projects: ProjectSummary[];
   activeId: string | null;
@@ -2817,8 +2745,6 @@ function ProjectSidebar({
   onSwitch: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDelete: (id: string) => void;
-  collapsed: boolean;
-  onToggleCollapsed: () => void;
 }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -2841,70 +2767,21 @@ function ProjectSidebar({
   }
 
   return (
-    <CollapsibleSidebar
-      title="projects sidebar"
-      collapsed={collapsed}
-      onToggle={onToggleCollapsed}
-      expandedClassName="flex min-h-0 flex-col border-r border-neutral-200 bg-white"
-      collapsedClassName="flex min-h-0 flex-col border-r border-neutral-200 bg-white"
-      collapsedChildren={
-        <>
-          {onDashboard ? (
-            <button
-              type="button"
-              onClick={onDashboard}
-              className="flex h-8 w-8 items-center justify-center rounded-md border border-neutral-200 text-neutral-400 hover:border-indigo-300 hover:bg-indigo-50 hover:text-indigo-700"
-              title="Dashboard"
-              aria-label="Dashboard"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-            </button>
-          ) : null}
-          <div className="flex min-h-0 w-full flex-1 flex-col items-center gap-1 overflow-y-auto">
-            {projects.map((p) => {
-              const active = p.id === activeId;
-              return (
-                <button
-                  key={p.id}
-                  type="button"
-                  onClick={() => onSwitch(p.id)}
-                  className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
-                    active
-                      ? "bg-neutral-900 text-white"
-                      : "bg-neutral-50 text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-                  }`}
-                  title={p.name}
-                  aria-label={p.name}
-                >
-                  {projectInitials(p.name)}
-                </button>
-              );
-            })}
-          </div>
-        </>
-      }
-    >
+    <aside className="hidden min-h-0 flex-col border-r border-neutral-200 bg-white md:flex">
       <div className="flex items-center justify-between gap-2 border-b border-neutral-200 px-4 py-3">
         <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
           Projects
         </p>
-        <div className="flex items-center gap-1">
-          {onDashboard ? (
-            <button
-              type="button"
-              onClick={onDashboard}
-              className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
-            >
-              <ArrowLeft className="h-3 w-3" />
-              Dashboard
-            </button>
-          ) : null}
-          <SidebarCollapseButton
-            collapsed={collapsed}
-            onToggle={onToggleCollapsed}
-            title="projects sidebar"
-          />
-        </div>
+        {onDashboard ? (
+          <button
+            type="button"
+            onClick={onDashboard}
+            className="flex items-center gap-1 rounded-md border border-neutral-200 px-2 py-1 text-[10px] font-medium text-neutral-500 hover:border-indigo-300 hover:text-indigo-700"
+          >
+            <ArrowLeft className="h-3 w-3" />
+            Dashboard
+          </button>
+        ) : null}
       </div>
       <nav className="max-h-56 min-h-0 flex-1 overflow-y-auto p-2 md:max-h-none">
         {projects.map((p) => {
@@ -3005,7 +2882,7 @@ function ProjectSidebar({
           );
         })}
       </nav>
-    </CollapsibleSidebar>
+    </aside>
   );
 }
 
@@ -3022,11 +2899,6 @@ function IntakePageInner() {
   const [projectName, setProjectName] = useState("Untitled venture");
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [projectPreviews, setProjectPreviews] = useState<ProjectData[]>([]);
-  const [projectSidebarCollapsed, setProjectSidebarCollapsed] = useState(false);
-  const [workspaceSidebarCollapsed, setWorkspaceSidebarCollapsed] =
-    useState(false);
-  const [dashboardSidebarCollapsed, setDashboardSidebarCollapsed] =
-    useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [dashboardViewMode, setDashboardViewMode] =
     useState<DashboardViewMode>("grid");
@@ -5718,7 +5590,7 @@ function IntakePageInner() {
             </div>
           </div>
         )}
-        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-4 sm:px-5 lg:px-6">
+        <section className="mx-auto flex w-full max-w-[1600px] flex-col gap-4 overflow-x-clip px-4 py-4 sm:px-5 lg:px-6">
           <header className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm lg:flex lg:items-center lg:justify-between">
             <div className="max-w-3xl">
               <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400">
@@ -5769,7 +5641,7 @@ function IntakePageInner() {
             </div>
           </header>
 
-          <section className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+          <section className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
             <div className="flex items-center gap-3 rounded-xl border border-neutral-200 bg-white px-3 py-3 shadow-sm">
               <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-neutral-100 text-neutral-700">
                 <FolderOpen className="h-4 w-4" />
@@ -5836,13 +5708,7 @@ function IntakePageInner() {
             </p>
           ) : null}
 
-          <div
-            className={`grid gap-4 ${
-              dashboardSidebarCollapsed
-                ? "xl:grid-cols-[minmax(0,1fr)_3.5rem]"
-                : "xl:grid-cols-[minmax(0,1fr)_300px]"
-            }`}
-          >
+          <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_300px]">
             <section className="min-w-0 space-y-3">
               <div className="rounded-xl border border-neutral-200 bg-white p-3 shadow-sm">
                 <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
@@ -6246,7 +6112,7 @@ function IntakePageInner() {
                     </div>
                   </div>
                 ) : (
-                  <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
                     {dashboardProjects.map((p) => {
                       const completed = p.hasPreview
                         ? projectCompletedRunCount(p)
@@ -6455,36 +6321,7 @@ function IntakePageInner() {
                   )}
             </section>
 
-            <CollapsibleSidebar
-              title="dashboard sidebar"
-              side="right"
-              collapsed={dashboardSidebarCollapsed}
-              onToggle={() =>
-                setDashboardSidebarCollapsed((collapsed) => !collapsed)
-              }
-              expandedClassName="space-y-3"
-              collapsedClassName="h-fit rounded-xl border border-neutral-200 bg-white shadow-sm"
-              collapsedChildren={
-                <div className="flex flex-col items-center gap-1 text-neutral-400">
-                  <Boxes className="h-4 w-4" />
-                  <BarChart3 className="h-4 w-4" />
-                  <ArrowRight className="h-4 w-4" />
-                </div>
-              }
-            >
-              <div className="flex items-center justify-between gap-2 rounded-xl border border-neutral-200 bg-white px-3 py-2 shadow-sm">
-                <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                  Dashboard tools
-                </p>
-                <SidebarCollapseButton
-                  collapsed={dashboardSidebarCollapsed}
-                  onToggle={() =>
-                    setDashboardSidebarCollapsed((collapsed) => !collapsed)
-                  }
-                  title="dashboard sidebar"
-                  side="right"
-                />
-              </div>
+            <aside className="space-y-3">
               <section className="rounded-xl border border-neutral-200 bg-white p-4 shadow-sm">
                 <div className="flex items-center justify-between gap-2">
                   <div>
@@ -6585,7 +6422,7 @@ function IntakePageInner() {
                   </p>
                 )}
               </section>
-            </CollapsibleSidebar>
+            </aside>
           </div>
         </section>
 
@@ -6597,13 +6434,7 @@ function IntakePageInner() {
 
   if (!done) {
     return (
-      <main
-        className={`grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-rows-1 ${
-          projectSidebarCollapsed
-            ? "md:grid-cols-[3.5rem_minmax(0,1fr)]"
-            : "md:grid-cols-[260px_minmax(0,1fr)]"
-        }`}
-      >
+      <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
         <ProjectSidebar
           projects={projects}
           activeId={projectId}
@@ -6611,28 +6442,14 @@ function IntakePageInner() {
           onSwitch={switchProject}
           onRename={renameProject}
           onDelete={deleteProject}
-          collapsed={projectSidebarCollapsed}
-          onToggleCollapsed={() =>
-            setProjectSidebarCollapsed((collapsed) => !collapsed)
-          }
         />
 
         <section className="min-h-0 overflow-y-auto px-4 py-6">
-          <div
-            className={`mx-auto grid max-w-7xl grid-cols-1 gap-5 ${
-              workspaceSidebarCollapsed
-                ? "lg:grid-cols-[3.5rem_minmax(0,1fr)]"
-                : "lg:grid-cols-[220px_minmax(0,1fr)]"
-            }`}
-          >
+          <div className="mx-auto grid max-w-7xl grid-cols-1 gap-5 xl:grid-cols-[220px_minmax(0,1fr)]">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
               onSelect={setActiveWorkspaceSection}
-              collapsed={workspaceSidebarCollapsed}
-              onToggleCollapsed={() =>
-                setWorkspaceSidebarCollapsed((collapsed) => !collapsed)
-              }
             />
             <div className="space-y-5">
               <section id="workspace-overview" className="space-y-3">
@@ -6648,7 +6465,7 @@ function IntakePageInner() {
                     comparison-ready project work will build from this base.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-neutral-200 bg-white p-3">
                     <p className="text-xs font-medium text-neutral-500">
                       Profile
@@ -6686,16 +6503,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
@@ -6706,7 +6525,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
 
               <div className="w-full max-w-2xl rounded-lg border border-neutral-200 bg-white p-5 shadow-sm">
@@ -6987,13 +6807,7 @@ function IntakePageInner() {
   }
 
   return (
-    <main
-      className={`grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-rows-1 ${
-        projectSidebarCollapsed
-          ? "md:grid-cols-[3.5rem_minmax(0,1fr)]"
-          : "md:grid-cols-[260px_minmax(0,1fr)]"
-      }`}
-    >
+    <main className="grid h-full grid-cols-1 grid-rows-[auto_minmax(0,1fr)] bg-neutral-50 text-neutral-900 md:grid-cols-[260px_minmax(0,1fr)] md:grid-rows-1">
       <ProjectSidebar
         projects={projects}
         activeId={projectId}
@@ -7001,37 +6815,19 @@ function IntakePageInner() {
         onSwitch={switchProject}
         onRename={renameProject}
         onDelete={deleteProject}
-        collapsed={projectSidebarCollapsed}
-        onToggleCollapsed={() =>
-          setProjectSidebarCollapsed((collapsed) => !collapsed)
-        }
       />
 
       <section className="min-h-0 overflow-hidden">
-        <div
-          className={`grid h-full grid-cols-1 ${
-            workspaceSidebarCollapsed
-              ? "xl:grid-cols-[3.5rem_minmax(0,1fr)]"
-              : "xl:grid-cols-[220px_minmax(0,1fr)]"
-          }`}
-        >
-          <aside
-            className={`min-h-0 overflow-y-auto border-r border-neutral-200 bg-neutral-50 ${
-              workspaceSidebarCollapsed ? "p-1" : "p-4"
-            }`}
-          >
+        <div className="flex h-full min-h-0 flex-col xl:grid xl:grid-cols-[220px_minmax(0,1fr)]">
+          <aside className="shrink-0 border-b border-neutral-200 bg-neutral-50 p-2 xl:min-h-0 xl:overflow-y-auto xl:border-b-0 xl:border-r xl:p-4">
             <ProjectWorkspaceRail
               items={workspaceNavItems}
               activeId={activeWorkspaceSection}
               onSelect={setActiveWorkspaceSection}
-              collapsed={workspaceSidebarCollapsed}
-              onToggleCollapsed={() =>
-                setWorkspaceSidebarCollapsed((collapsed) => !collapsed)
-              }
             />
           </aside>
 
-          <div className="min-w-0 overflow-y-auto px-5 py-5">
+          <div className="min-h-0 min-w-0 flex-1 overflow-y-auto px-4 py-4 sm:px-5 sm:py-5">
             <div className="mx-auto max-w-6xl space-y-5">
               <header
                 id="workspace-overview"
@@ -7062,7 +6858,11 @@ function IntakePageInner() {
                 </div>
               </header>
 
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <div
+                className={`grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4 ${
+                  activeWorkspaceSection === "workspace-overview" ? "" : "hidden"
+                }`}
+              >
                 <div className="rounded-lg border border-neutral-200 bg-white p-3">
                   <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-50 text-indigo-700">
                     <ClipboardList className="h-4 w-4" />
@@ -7108,16 +6908,18 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <InfoCollectedPanel
-                  analysis={websiteAnalysis}
-                  uploadedImages={productImages}
-                  websiteUrl={websiteUrl}
-                  analyzing={analyzing}
-                  importingScrapedImages={importingScrapedImages}
-                  onWebsiteUrlChange={setWebsiteUrl}
-                  onAnalyze={() => void analyzeWebsite()}
-                  onImportScrapedImages={() => void importScrapedProductImages()}
-                />
+                {activeWorkspaceSection === "workspace-info" && (
+                  <InfoCollectedPanel
+                    analysis={websiteAnalysis}
+                    uploadedImages={productImages}
+                    websiteUrl={websiteUrl}
+                    analyzing={analyzing}
+                    importingScrapedImages={importingScrapedImages}
+                    onWebsiteUrlChange={setWebsiteUrl}
+                    onAnalyze={() => void analyzeWebsite()}
+                    onImportScrapedImages={() => void importScrapedProductImages()}
+                  />
+                )}
               </section>
 
               <section
@@ -7144,12 +6946,14 @@ function IntakePageInner() {
                     </span>
                   </div>
                 </div>
-                <ModuleRegistryGrid
-                  modules={businessModules}
-                  savingId={savingModuleIntentId}
-                  onSaveIntent={saveModuleIntent}
-                  onOpenModule={openBusinessModule}
-                />
+                {activeWorkspaceSection === "workspace-modules" && (
+                  <ModuleRegistryGrid
+                    modules={businessModules}
+                    savingId={savingModuleIntentId}
+                    onSaveIntent={saveModuleIntent}
+                    onOpenModule={openBusinessModule}
+                  />
+                )}
               </section>
 
               <section
@@ -7159,10 +6963,12 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <DesignStudioSection
-                  projectId={projectId}
-                  sourceRunId={latestRun?.runId ?? null}
-                />
+                {activeWorkspaceSection === "workspace-design" && (
+                  <DesignStudioSection
+                    projectId={projectId}
+                    sourceRunId={latestRun?.runId ?? null}
+                  />
+                )}
               </section>
 
               <section
@@ -7170,31 +6976,33 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-work" ? "" : "hidden"
                 }
               >
-                <ModuleWorkspaceHub
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  workspaceNodes={projectWorkspaceNodes}
-                  folders={workspaceFolders}
-                  campaigns={workspaceCampaigns}
-                  exportNodes={workspaceExportNodes}
-                  savingKey={savingWorkspaceKey}
-                  deletingKey={deletingWorkspaceItemId}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSaveFolder={saveWorkspaceFolder}
-                  onSaveCampaign={saveWorkspaceCampaign}
-                  onDeleteWorkspaceItem={deleteWorkspaceItem}
-                  onCreateSubfolder={(parentId) =>
-                    void createWorkspaceFolder(
-                      "project",
-                      parentId,
-                      selectedWorkspaceModuleId,
-                    )
-                  }
-                  onNoteNode={openWorkspaceNodeNote}
-                  onRenameNode={renameWorkspaceNode}
-                  onDeleteNode={deleteWorkspaceNode}
-                  onOpenExport={(node) => void downloadSavedExport(node)}
-                />
+                {activeWorkspaceSection === "workspace-work" && (
+                  <ModuleWorkspaceHub
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    workspaceNodes={projectWorkspaceNodes}
+                    folders={workspaceFolders}
+                    campaigns={workspaceCampaigns}
+                    exportNodes={workspaceExportNodes}
+                    savingKey={savingWorkspaceKey}
+                    deletingKey={deletingWorkspaceItemId}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSaveFolder={saveWorkspaceFolder}
+                    onSaveCampaign={saveWorkspaceCampaign}
+                    onDeleteWorkspaceItem={deleteWorkspaceItem}
+                    onCreateSubfolder={(parentId) =>
+                      void createWorkspaceFolder(
+                        "project",
+                        parentId,
+                        selectedWorkspaceModuleId,
+                      )
+                    }
+                    onNoteNode={openWorkspaceNodeNote}
+                    onRenameNode={renameWorkspaceNode}
+                    onDeleteNode={deleteWorkspaceNode}
+                    onOpenExport={(node) => void downloadSavedExport(node)}
+                  />
+                )}
               </section>
 
               <section
@@ -7204,14 +7012,16 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                <GenerationControls
-                  modules={businessModules}
-                  selectedModuleId={selectedWorkspaceModuleId}
-                  preferences={generationPrefs}
-                  savingKey={savingWorkspaceKey}
-                  onSelectModule={setSelectedWorkspaceModuleId}
-                  onSavePreference={saveGenerationPreference}
-                />
+                {activeWorkspaceSection === "workspace-generations" && (
+                  <GenerationControls
+                    modules={businessModules}
+                    selectedModuleId={selectedWorkspaceModuleId}
+                    preferences={generationPrefs}
+                    savingKey={savingWorkspaceKey}
+                    onSelectModule={setSelectedWorkspaceModuleId}
+                    onSavePreference={saveGenerationPreference}
+                  />
+                )}
               </section>
 
               <section
@@ -7219,11 +7029,13 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-print" ? "" : "hidden"
                 }
               >
-                <PrintSpecPanel
-                  printSpec={printSpec}
-                  savingKey={savingWorkspaceKey}
-                  onSave={savePrintSpec}
-                />
+                {activeWorkspaceSection === "workspace-print" && (
+                  <PrintSpecPanel
+                    printSpec={printSpec}
+                    savingKey={savingWorkspaceKey}
+                    onSave={savePrintSpec}
+                  />
+                )}
               </section>
 
               <section
@@ -7231,12 +7043,14 @@ function IntakePageInner() {
                   activeWorkspaceSection === "workspace-ops" ? "" : "hidden"
                 }
               >
-                <OperationsPanel
-                  modules={businessModules}
-                  metaPixel={metaPixel}
-                  savingKey={savingWorkspaceKey}
-                  onSaveMetaPixel={saveMetaPixel}
-                />
+                {activeWorkspaceSection === "workspace-ops" && (
+                  <OperationsPanel
+                    modules={businessModules}
+                    metaPixel={metaPixel}
+                    savingKey={savingWorkspaceKey}
+                    onSaveMetaPixel={saveMetaPixel}
+                  />
+                )}
               </section>
 
               <section
@@ -7254,7 +7068,7 @@ function IntakePageInner() {
                     asset.
                   </p>
                 </div>
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
                   <div className="rounded-lg border border-neutral-200 bg-white p-3">
                     <p className="text-xs font-medium text-neutral-500">
                       Collateral
@@ -7288,7 +7102,8 @@ function IntakePageInner() {
                     </p>
                   </div>
                 </div>
-                {assetLibraryItems.length > 0 ? (
+                {activeWorkspaceSection === "workspace-assets" &&
+                assetLibraryItems.length > 0 ? (
                   <AssetLibraryCore
                     assets={assetLibraryItems}
                     ratingId={ratingAssetId}
@@ -7371,7 +7186,7 @@ function IntakePageInner() {
                       </div>
 
                       {productImages.length > 0 ? (
-                        <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                        <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
                           {productImages.map((image) => (
                             <div
                               key={image.id}
@@ -7460,7 +7275,7 @@ function IntakePageInner() {
                         Explore the next decision
                       </h3>
                     </div>
-                    <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
+                    <div className="grid grid-cols-1 gap-3 lg:grid-cols-[minmax(0,1fr)_320px]">
                       <div className="space-y-2">
                         <input
                           value={focusQuestion}
@@ -7797,7 +7612,8 @@ function IntakePageInner() {
                     : "hidden"
                 }
               >
-                {projectMasterDossierPanel}
+                {activeWorkspaceSection === "workspace-cover-letter" &&
+                  projectMasterDossierPanel}
               </section>
             </div>
           </div>

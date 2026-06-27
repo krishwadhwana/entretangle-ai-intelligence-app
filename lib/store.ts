@@ -3,6 +3,7 @@ import { randomUUID } from "crypto";
 import { z } from "zod";
 import { prisma } from "./db";
 import { config } from "./config";
+import { log } from "./log";
 import {
   GeneratedPlaybookSchema,
   type GeneratedPlaybook,
@@ -71,6 +72,13 @@ import {
   type WorkspaceNodeWire,
 } from "./schema";
 import { blockToWire, cohortToWire, personaToWire } from "./wire";
+import {
+  deleteDesignAssetObjects,
+  deleteSiteObjects,
+  externalizeDesignAsset,
+  externalizeFonts,
+  externalizeSiteAsset,
+} from "./design/assetStorage";
 
 // ---------------------------------------------------------------------------
 // Every operation on the `projects` table — the durable workspace each
@@ -497,37 +505,42 @@ function displayStatusForLiveRun(row: {
   return Date.now() - newestUpdate > staleAfterMs ? "cancelled" : "cancelling";
 }
 
-/**
- * Merge live Run rows into the saved project snapshots so the home page can
- * show queued/planning/running runs before the final snapshot is appended.
- */
-async function withLiveRunSummaries(
-  project: ProjectFull,
-): Promise<ProjectFull> {
-  const rows = await prisma.run.findMany({
-    where: { projectId: project.id },
-    orderBy: { createdAt: "asc" },
+// The run-row shape the live-run merge needs. Shared by the single-project and
+// batched-list paths so both issue the same select (incl. projectId, used to
+// group rows back to their project in the batched path).
+const LIVE_RUN_SELECT = {
+  id: true,
+  projectId: true,
+  brief: true,
+  clientProfile: true,
+  status: true,
+  focusQuestion: true,
+  additionalContext: true,
+  mode: true,
+  sourceRunId: true,
+  tokensUsed: true,
+  costUsd: true,
+  createdAt: true,
+  jobs: {
     select: {
-      id: true,
-      brief: true,
-      clientProfile: true,
       status: true,
-      focusQuestion: true,
-      additionalContext: true,
-      mode: true,
-      sourceRunId: true,
-      tokensUsed: true,
-      costUsd: true,
-      createdAt: true,
-      jobs: {
-        select: {
-          status: true,
-          cancelRequested: true,
-          updatedAt: true,
-        },
-      },
+      cancelRequested: true,
+      updatedAt: true,
     },
-  });
+  },
+} satisfies Prisma.RunSelect;
+
+type LiveRunRow = Prisma.RunGetPayload<{ select: typeof LIVE_RUN_SELECT }>;
+
+/**
+ * Merge already-fetched live Run rows into a project's saved snapshots. Pure
+ * (no DB) so the same logic serves both the single-project read and the
+ * batched list read below.
+ */
+function mergeLiveRunRows(
+  project: ProjectFull,
+  rows: LiveRunRow[],
+): ProjectFull {
   if (rows.length === 0) return project;
 
   const byRunId = new Map<string, SimulationRunRecord>();
@@ -566,6 +579,50 @@ async function withLiveRunSummaries(
         new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
     ),
   };
+}
+
+/**
+ * Merge live Run rows into one project's saved snapshots so the UI can show
+ * queued/planning/running runs before the final snapshot is appended.
+ */
+async function withLiveRunSummaries(
+  project: ProjectFull,
+): Promise<ProjectFull> {
+  const rows = await prisma.run.findMany({
+    where: { projectId: project.id },
+    orderBy: { createdAt: "asc" },
+    select: LIVE_RUN_SELECT,
+  });
+  return mergeLiveRunRows(project, rows);
+}
+
+/**
+ * Batched version of withLiveRunSummaries for the project list: ONE query for
+ * every project's runs instead of one-per-project. The per-project fan-out
+ * (Promise.all(projects.map(withLiveRunSummaries))) opened a DB connection per
+ * project at once, which exhausts a small serverless connection pool (Neon's
+ * default ~5) and surfaces as P2024 "Timed out fetching a connection from the
+ * pool" on the home page.
+ */
+async function withLiveRunSummariesBatch(
+  projects: ProjectFull[],
+): Promise<ProjectFull[]> {
+  if (projects.length === 0) return projects;
+  const rows = await prisma.run.findMany({
+    where: { projectId: { in: projects.map((p) => p.id) } },
+    orderBy: { createdAt: "asc" },
+    select: LIVE_RUN_SELECT,
+  });
+  const rowsByProject = new Map<string, LiveRunRow[]>();
+  for (const row of rows) {
+    if (!row.projectId) continue;
+    const bucket = rowsByProject.get(row.projectId);
+    if (bucket) bucket.push(row);
+    else rowsByProject.set(row.projectId, [row]);
+  }
+  return projects.map((project) =>
+    mergeLiveRunRows(project, rowsByProject.get(project.id) ?? []),
+  );
 }
 
 export async function listProjects(ownerId?: string): Promise<ProjectSummary[]> {
@@ -1625,14 +1682,81 @@ export async function saveDesignTokens(
   generatedAt: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  // Move any inline (base64) uploaded fonts out to object storage first.
+  const customFonts = await externalizeFonts(
+    id,
+    tokens.typography.customFonts ?? [],
+  );
   owner.designStudio = DesignStudioSectionSchema.parse({
     ...owner.designStudio,
-    tokens,
+    tokens: {
+      ...tokens,
+      typography: { ...tokens.typography, customFonts },
+    },
     generatedAt,
     sourceRunId,
   });
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
+}
+
+export type AssetMigrationResult = {
+  assets: number;
+  sites: number;
+  fonts: number;
+  changed: boolean;
+};
+
+/**
+ * One-time migration: move any still-inline Design Studio bytes (rendered SVGs,
+ * hero images, generated site html/files, uploaded fonts) for a single project
+ * out of the owner_dashboard JSONB and into object storage. Idempotent — skips
+ * projects that are already externalized — so it is safe to re-run.
+ */
+export async function migrateProjectAssetsToStorage(
+  id: string,
+  opts: { dryRun?: boolean } = {},
+): Promise<AssetMigrationResult> {
+  const owner = await readOwnerDashboard(id);
+  const ds = owner.designStudio;
+
+  const assetNeedsMigration = (a: DesignAsset) =>
+    (a.svg && !a.svgKey) ||
+    (!a.visualImageKey && a.visualImageDataUrl?.startsWith("data:"));
+  const siteNeedsMigration = (s: SiteAsset) =>
+    (s.html && !s.htmlKey) ||
+    s.files.some((f) => f.content && !f.contentKey);
+  const fontNeedsMigration = (f: { key?: string; dataUrl?: string }) =>
+    !f.key && Boolean(f.dataUrl);
+
+  const fonts = ds.tokens?.typography.customFonts ?? [];
+  const counts: AssetMigrationResult = {
+    assets: ds.assets.filter(assetNeedsMigration).length,
+    sites: ds.sites.filter(siteNeedsMigration).length,
+    fonts: fonts.filter(fontNeedsMigration).length,
+    changed: false,
+  };
+  if (opts.dryRun) return counts;
+  if (!counts.assets && !counts.sites && !counts.fonts) return counts;
+
+  ds.assets = await Promise.all(
+    ds.assets.map((a) => externalizeDesignAsset(id, a)),
+  );
+  ds.sites = await Promise.all(
+    ds.sites.map((s) => externalizeSiteAsset(id, s)),
+  );
+  if (ds.tokens && fonts.length) {
+    ds.tokens.typography.customFonts = await externalizeFonts(id, fonts);
+  }
+  await writeOwnerDashboard(id, owner);
+  counts.changed = true;
+  return counts;
+}
+
+/** All project ids (for batch migrations / maintenance scripts). */
+export async function listAllProjectIds(): Promise<string[]> {
+  const rows = await prisma.project.findMany({ select: { id: true } });
+  return rows.map((r) => r.id);
 }
 
 export async function getDesignStudio(
@@ -1652,9 +1776,10 @@ export async function saveDesignAsset(
   id: string,
   asset: DesignAsset,
 ): Promise<DesignStudioSection> {
+  const stored = await externalizeDesignAsset(id, asset);
   const owner = await readOwnerDashboard(id);
-  const rest = owner.designStudio.assets.filter((a) => a.id !== asset.id);
-  owner.designStudio.assets = [asset, ...rest];
+  const rest = owner.designStudio.assets.filter((a) => a.id !== stored.id);
+  owner.designStudio.assets = [stored, ...rest];
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
 }
@@ -1665,10 +1790,12 @@ export async function deleteDesignAsset(
   assetId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  const removed = owner.designStudio.assets.find((a) => a.id === assetId);
   owner.designStudio.assets = owner.designStudio.assets.filter(
     (a) => a.id !== assetId,
   );
   await writeOwnerDashboard(id, owner);
+  if (removed) await deleteDesignAssetObjects(removed);
   return owner.designStudio;
 }
 
@@ -1742,9 +1869,10 @@ export async function saveSiteAsset(
   id: string,
   site: SiteAsset,
 ): Promise<DesignStudioSection> {
+  const stored = await externalizeSiteAsset(id, site);
   const owner = await readOwnerDashboard(id);
-  const rest = owner.designStudio.sites.filter((s) => s.id !== site.id);
-  owner.designStudio.sites = [site, ...rest];
+  const rest = owner.designStudio.sites.filter((s) => s.id !== stored.id);
+  owner.designStudio.sites = [stored, ...rest];
   await writeOwnerDashboard(id, owner);
   return owner.designStudio;
 }
@@ -1769,10 +1897,12 @@ export async function deleteSiteAsset(
   siteId: string,
 ): Promise<DesignStudioSection> {
   const owner = await readOwnerDashboard(id);
+  const removed = owner.designStudio.sites.find((s) => s.id === siteId);
   owner.designStudio.sites = owner.designStudio.sites.filter(
     (s) => s.id !== siteId,
   );
   await writeOwnerDashboard(id, owner);
+  if (removed) await deleteSiteObjects(removed);
   return owner.designStudio;
 }
 
@@ -1966,6 +2096,62 @@ export async function appendSimulationRun(
         -- would write server-local wall time and corrupt recency ordering.
         updated_at = now() AT TIME ZONE 'utc'
     WHERE id = ${id}`;
+  // Dual-write into the child table (MIGRATIONS_RUNBOOK §3, expand+dual-write
+  // stage). Best-effort: the JSONB array above is the read source of truth, so
+  // a child-table hiccup must never fail a completed run's snapshot. Once the
+  // table is backfilled and verified, the read path cuts over and the array is
+  // contracted away.
+  await mirrorSimulationRunToTable(id, record);
+}
+
+/** Upsert one SimulationRunRecord into the project_simulation_runs table. */
+async function mirrorSimulationRunToTable(
+  projectId: string,
+  record: SimulationRunRecord,
+): Promise<void> {
+  try {
+    const timestamp = new Date(record.timestamp);
+    await prisma.projectSimulationRun.upsert({
+      where: { runId: record.runId },
+      create: {
+        projectId,
+        runId: record.runId,
+        timestamp,
+        record: record as unknown as Prisma.InputJsonValue,
+      },
+      update: {
+        record: record as unknown as Prisma.InputJsonValue,
+        timestamp,
+      },
+    });
+  } catch (error) {
+    log
+      .child({ component: "store" })
+      .warn("simulation-run table mirror failed", {
+        projectId,
+        runId: record.runId,
+        error,
+      });
+  }
+}
+
+/**
+ * Paginated read of a project's simulation runs from the child table (newest
+ * first). This is the table-backed replacement for slicing the JSONB array; the
+ * loaders cut over to it once the table is backfilled and verified in prod.
+ */
+export async function getSimulationRunsPage(
+  projectId: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<SimulationRunRecord[]> {
+  const rows = await prisma.projectSimulationRun.findMany({
+    where: { projectId },
+    orderBy: { timestamp: "desc" },
+    take: opts.limit ?? 50,
+    skip: opts.offset ?? 0,
+    select: { record: true },
+  });
+  return rows.map((r) => r.record as unknown as SimulationRunRecord);
 }
 
 /**
@@ -2000,6 +2186,19 @@ export async function renameSimulationRun(
         updated_at = now() AT TIME ZONE 'utc'
     WHERE p.id = ${projectId}
        OR p.simulation_runs @> ${snapshotNeedle}::jsonb`;
+  // Keep the child-table mirror's brief in sync (best-effort, see dual-write).
+  try {
+    await prisma.$executeRaw`
+      UPDATE project_simulation_runs
+      SET record = jsonb_set(record, '{params,brief}', to_jsonb(${brief}::text), true),
+          updated_at = now() AT TIME ZONE 'utc'
+      WHERE run_id = ${runId}`;
+  } catch (error) {
+    log.child({ component: "store" }).warn("simulation-run table rename failed", {
+      runId,
+      error,
+    });
+  }
 }
 
 export async function deleteSimulationRun(runId: string): Promise<void> {
@@ -2032,6 +2231,7 @@ export async function deleteSimulationRun(runId: string): Promise<void> {
       where: { sourceRunId: runId },
       data: { sourceRunId: null },
     });
+    await tx.projectSimulationRun.deleteMany({ where: { runId } });
     await tx.personaConversation.deleteMany({ where: { runId } });
     await tx.launchOutcome.deleteMany({ where: { runId } });
     await tx.launchSimulation.deleteMany({ where: { runId } });
@@ -2313,7 +2513,9 @@ export async function listProjectPreviews(ownerId?: string): Promise<ProjectFull
   const projects = metas.map((m) =>
     leanRowToFull(m, runsById.get(m.id) ?? []),
   );
-  const withRuns = await Promise.all(projects.map(withLiveRunSummaries));
+  // One query for every project's live runs (see withLiveRunSummariesBatch),
+  // not one query per project — the latter exhausted the connection pool.
+  const withRuns = await withLiveRunSummariesBatch(projects);
   return withRuns.map(stripPersonas);
 }
 

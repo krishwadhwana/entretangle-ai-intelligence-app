@@ -341,17 +341,24 @@ export function familyFromFileName(fileName: string): string {
   return cleaned || "Custom font";
 }
 
-type CustomFontFace = { family: string; dataUrl: string; format: string };
+type CustomFontFace = {
+  family: string;
+  dataUrl?: string;
+  url?: string;
+  format: string;
+};
 
 // Build @font-face rules so uploaded fonts render in previews and assets.
+// Prefer the object-storage serving URL; fall back to a legacy inline dataUrl.
 export function customFontFaceCss(
   fonts: ReadonlyArray<CustomFontFace>
 ): string {
   return fonts
-    .filter((font) => font.family.trim() && font.dataUrl)
-    .map((font) => {
+    .map((font) => ({ font, src: font.url || font.dataUrl }))
+    .filter(({ font, src }) => font.family.trim() && src)
+    .map(({ font, src }) => {
       const family = font.family.replace(/"/g, "");
-      return `@font-face{font-family:"${family}";src:url("${font.dataUrl}") format("${font.format}");font-weight:100 900;font-display:swap;}`;
+      return `@font-face{font-family:"${family}";src:url("${src}") format("${font.format}");font-weight:100 900;font-display:swap;}`;
     })
     .join("\n");
 }

@@ -1217,6 +1217,7 @@ function dataUrlByteSize(dataUrl: string): number {
   return Buffer.byteLength(match[1], "base64");
 }
 
+
 async function generateWebsiteHeroVisual(args: {
   projectId: string;
   profile: ClientProfile;
@@ -1537,8 +1538,16 @@ export async function runDesignStudioJob(args: {
       isSocial && !payload.generationRunId
         ? fallbackAdRunMeta(payload.useTemplates)
         : null;
+    const id = assetId(payload.type, content.brandName);
+    // The hero image (visualImageDataUrl) and the rendered svg are heavy; both
+    // are moved to object storage centrally by saveDesignAsset (which sets
+    // visualImageKey / svgKey and a serving URL). Here we just pass the raw
+    // data URL + svg through.
+    const visualImageFields = visual?.dataUrl
+      ? { visualImageDataUrl: visual.dataUrl }
+      : {};
     const asset = DesignAssetSchema.parse({
-      id: assetId(payload.type, content.brandName),
+      id,
       type: payload.type,
       title: `${COLLATERAL_LABELS[payload.type]} — ${content.brandName}`,
       format: "svg",
@@ -1548,7 +1557,7 @@ export async function runDesignStudioJob(args: {
       content,
       ...(visualBriefWithTemplate ? { visualBrief: visualBriefWithTemplate } : {}),
       ...(templateBrief ? { templateBrief } : {}),
-      ...(visual?.dataUrl ? { visualImageDataUrl: visual.dataUrl } : {}),
+      ...visualImageFields,
       ...(payload.generationRunId || generatedRunMeta
         ? {
             generationRunId:

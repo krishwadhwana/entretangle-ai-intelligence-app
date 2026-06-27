@@ -2,7 +2,6 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  Circle,
   CircleMarker,
   MapContainer,
   TileLayer,
@@ -31,10 +30,7 @@ import type {
 import type { CohortWithPersonas } from "./useRunEvents";
 import { SEGMENT_COLORS, ZONE_COLORS } from "./segments";
 import { regionForLocality } from "@/lib/datasources/politicalGeography";
-import {
-  cohortAreaRadiusMeters,
-  searchKnownLocalities,
-} from "@/lib/localityAnchors";
+import { searchKnownLocalities } from "@/lib/localityAnchors";
 import { ValueTooltip } from "./ValueTooltip";
 import { downloadDossier, type DossierSection } from "./pdf";
 import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
@@ -369,26 +365,28 @@ export default function MapView({
               ? (ZONE_COLORS[legendKey] ?? ZONE_COLORS.Other)
               : (SEGMENT_COLORS[c.segment] ?? "#6366f1");
           const baseFillOpacity =
-            c.state === "done" ? 0.24 : c.state === "failed" ? 0.08 : 0.14;
+            c.state === "done" ? 0.85 : c.state === "failed" ? 0.3 : 0.55;
           const fillOpacity = legendHovered
             ? highlighted
               ? c.state === "failed"
-                ? 0.18
-                : 0.5
-              : 0.04
+                ? 0.4
+                : 0.95
+              : 0.12
             : baseFillOpacity;
+          // Pixel-radius markers stay a visible, constant size at every zoom
+          // (the previous metre-radius circles shrank to dots when zoomed out).
           return (
-            <Circle
+            <CircleMarker
               key={c.id}
               center={[c.lat, c.lng]}
-              radius={cohortAreaRadiusMeters(c)}
+              radius={selected ? 9 : highlighted ? 8 : 6}
               pathOptions={{
                 color: selected ? "#171717" : color,
-                weight: selected ? 2.5 : highlighted ? 3 : 1.5,
+                weight: selected ? 2.5 : highlighted ? 2 : 1,
                 fillColor: color,
                 fillOpacity,
-                opacity: legendHovered && !highlighted ? 0.28 : 1,
-                dashArray: c.state === "done" ? undefined : "5 4",
+                opacity: legendHovered && !highlighted ? 0.35 : 1,
+                dashArray: c.state === "done" ? undefined : "4 3",
               }}
               eventHandlers={{
                 click: (e) => {
@@ -412,7 +410,7 @@ export default function MapView({
                   </div>
                 </div>
               </Tooltip>
-            </Circle>
+            </CircleMarker>
           );
         })}
         {pin && (
@@ -434,7 +432,7 @@ export default function MapView({
       </MapContainer>
 
       {/* Colour-mode toggle + legend: by income segment or by GoI region (zone). */}
-      <div className="absolute right-3 top-16 sm:top-3 z-[1000] max-w-[calc(100%-24px)] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur">
+      <div className="absolute bottom-3 right-3 z-[1000] max-w-[calc(100%-24px)] rounded-lg border border-neutral-200 bg-white/95 px-2 py-1.5 shadow-lg backdrop-blur sm:bottom-auto sm:top-3">
         <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
           <div className="flex items-center gap-1">
             <span className="text-neutral-400">Colour:</span>

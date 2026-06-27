@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "./db";
 import { config } from "./config";
 import { UsageLedgerSchema } from "./schema";
+import { syncCommitted, reservedSpend } from "./costGuard";
 
 // Single place for token AND dollar accounting (SPEC §10, SPEC-V2 §2).
 // This will later grow into per-user spend metering — keep every usage
@@ -148,6 +149,9 @@ export async function recordUsage(
     },
     select: { tokensUsed: true, costUsd: true, projectId: true },
   });
+  // Keep the in-process reservation ledger aligned with the authoritative DB
+  // total so projected-spend checks (cost guard) stay accurate.
+  syncCommitted(runId, run.costUsd, run.tokensUsed);
   const projectId = opts.projectId ?? run.projectId;
   if (projectId) {
     await recordProjectUsage(
@@ -196,14 +200,19 @@ export async function getCostUsd(runId: string): Promise<number> {
   return run.costUsd;
 }
 
-/** True when EITHER the token cap or the dollar cap is breached. */
+/**
+ * True when EITHER the token cap or the dollar cap is (or is about to be)
+ * breached. Counts committed spend PLUS in-flight reservations, so a between-
+ * wave check sees calls that have been dispatched but not yet recorded.
+ */
 export async function isOverTokenCap(runId: string): Promise<boolean> {
   const run = await prisma.run.findUniqueOrThrow({
     where: { id: runId },
     select: { tokensUsed: true, costUsd: true },
   });
+  const reserved = reservedSpend(runId);
   return (
-    run.tokensUsed >= config.maxTokensPerRun ||
-    run.costUsd >= config.maxCostUsd
+    run.tokensUsed + reserved.tokens >= config.maxTokensPerRun ||
+    run.costUsd + reserved.costUsd >= config.maxCostUsd
   );
 }

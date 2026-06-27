@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { callPersonaReply, callPersonaConclusion } from "@/lib/llm";
+import {
+  callPersonaReply,
+  callPersonaReplyStream,
+  callPersonaConclusion,
+} from "@/lib/llm";
 import { RunEmitter } from "@/lib/events";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import { ClientProfileSchema } from "@/lib/schema";
@@ -198,17 +202,105 @@ export async function POST(
     );
   }
   const others = participants.filter((p) => p.id !== speaker.id);
+  const speakerCtx = {
+    persona: personaToWire(speaker.row),
+    cohort: cohortToWire(speaker.cohort),
+  };
+  const otherCtx = others.map((p) => ({
+    persona: personaToWire(p.row),
+    cohort: cohortToWire(p.cohort),
+  }));
 
+  // Persist a generated turn + (if intent moved) update the persona and emit
+  // so sentiment/charts re-derive — shared by the streaming and JSON paths.
+  const persistReply = async (reply: {
+    content: string;
+    intentAfter: number | null;
+  }) => {
+    messages.push({
+      role: "persona",
+      speaker: speaker.row.name,
+      personaId: speaker.id,
+      content: reply.content,
+      intentAfter: reply.intentAfter,
+      ts: nowIso(),
+    });
+    const updated = await prisma.personaConversation.update({
+      where: { id: convo.id },
+      data: { messages: JSON.stringify(messages) },
+    });
+    if (reply.intentAfter !== null && reply.intentAfter !== speaker.row.intent) {
+      const intentOriginal = speaker.row.intentOriginal ?? speaker.row.intent;
+      const changedAt = new Date();
+      await prisma.persona.update({
+        where: { id: speaker.id },
+        data: {
+          intent: reply.intentAfter,
+          intentOriginal,
+          voteChangedAt: changedAt,
+        },
+      });
+      const emitter = await RunEmitter.create(run.id);
+      await emitter.emit({
+        type: "persona_updated",
+        cohortId: speaker.row.cohortId,
+        personaId: speaker.id,
+        intent: reply.intentAfter,
+        intentOriginal,
+        objection: speaker.row.objection,
+        voteChangedAt: changedAt.toISOString(),
+      });
+    }
+    return wire(updated);
+  };
+
+  // Interactive replies stream tokens (SSE) so the user sees the persona
+  // "typing" immediately; the client opts in with ?stream=1.
+  if (new URL(req.url).searchParams.get("stream") === "1") {
+    const enc = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const send = (event: string, payload: unknown) =>
+          controller.enqueue(
+            enc.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`)
+          );
+        try {
+          const reply = await callPersonaReplyStream(
+            run.id,
+            profile,
+            speakerCtx,
+            otherCtx,
+            convo.topic,
+            messages,
+            (textSoFar) => send("delta", { content: textSoFar })
+          );
+          const wired = await persistReply(reply);
+          send("done", wired);
+        } catch (e) {
+          const { payload } = toProviderErrorPayload(e, "reply failed");
+          send("error", payload);
+        } finally {
+          controller.close();
+        }
+      },
+    });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+      },
+    });
+  }
+
+  // Non-streaming fallback (unchanged behaviour).
   let reply;
   try {
     reply = await callPersonaReply(
       run.id,
       profile,
-      { persona: personaToWire(speaker.row), cohort: cohortToWire(speaker.cohort) },
-      others.map((p) => ({
-        persona: personaToWire(p.row),
-        cohort: cohortToWire(p.cohort),
-      })),
+      speakerCtx,
+      otherCtx,
       convo.topic,
       messages
     );
@@ -216,46 +308,7 @@ export async function POST(
     const { payload, status } = toProviderErrorPayload(e, "reply failed");
     return NextResponse.json(payload, { status });
   }
-
-  messages.push({
-    role: "persona",
-    speaker: speaker.row.name,
-    personaId: speaker.id,
-    content: reply.content,
-    intentAfter: reply.intentAfter,
-    ts: nowIso(),
-  });
-  const updated = await prisma.personaConversation.update({
-    where: { id: convo.id },
-    data: { messages: JSON.stringify(messages) },
-  });
-
-  // If the exchange genuinely moved the speaker's intent, persist it to the
-  // persona and emit so sentiment/charts re-derive (same as 1:1 win-back).
-  if (reply.intentAfter !== null && reply.intentAfter !== speaker.row.intent) {
-    const intentOriginal = speaker.row.intentOriginal ?? speaker.row.intent;
-    const changedAt = new Date();
-    await prisma.persona.update({
-      where: { id: speaker.id },
-      data: {
-        intent: reply.intentAfter,
-        intentOriginal,
-        voteChangedAt: changedAt,
-      },
-    });
-    const emitter = await RunEmitter.create(run.id);
-    await emitter.emit({
-      type: "persona_updated",
-      cohortId: speaker.row.cohortId,
-      personaId: speaker.id,
-      intent: reply.intentAfter,
-      intentOriginal,
-      objection: speaker.row.objection,
-      voteChangedAt: changedAt.toISOString(),
-    });
-  }
-
-  return NextResponse.json(wire(updated));
+  return NextResponse.json(await persistReply(reply));
 }
 
 async function loadPersona(runId: string, personaId: string) {

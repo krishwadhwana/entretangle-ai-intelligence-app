@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
 import { requireRunForApi } from "@/lib/apiAuth";
 import { prisma } from "@/lib/db";
-import { subscribeRunEvents } from "@/lib/bus";
+import { subscribeRunEvents, subscribeRunWakeups } from "@/lib/bus";
 import { loadPersistedEvents } from "@/lib/events";
 import type { RunEvent } from "@/lib/schema";
 
@@ -50,6 +50,7 @@ export async function GET(
         clearInterval(heartbeat);
         clearInterval(pollPersisted);
         unsubscribe();
+        unsubscribeWakeups();
         try {
           controller.close();
         } catch {
@@ -65,10 +66,13 @@ export async function GET(
           close();
         }
       }, 15000);
-      let polling = false;
-      const pollPersisted = setInterval(async () => {
-        if (closed || polling) return;
-        polling = true;
+      // Fetch persisted events past maxSeq and forward them. Shared by the
+      // periodic poll (fallback) and the cross-instance wakeup (postgres
+      // transport), so a single in-flight drain never overlaps itself.
+      let draining = false;
+      const drain = async () => {
+        if (closed || draining || replaying) return;
+        draining = true;
         try {
           const rows = await prisma.runEvent.findMany({
             where: { runId, seq: { gt: maxSeq } },
@@ -86,9 +90,14 @@ export async function GET(
           // Keep the SSE stream alive; the next poll/reconnect can recover
           // from the durable event log.
         } finally {
-          polling = false;
+          draining = false;
         }
-      }, 1000);
+      };
+      // Periodic poll is the universal fallback (covers the memory transport
+      // and any missed wakeup). Cross-instance wakeups make delivery near-
+      // instant when EVENT_BUS=postgres.
+      const pollPersisted = setInterval(drain, 1000);
+      const unsubscribeWakeups = subscribeRunWakeups(runId, () => void drain());
 
       // Subscribe BEFORE replaying so no live event falls in the gap;
       // `send` dedupes any overlap by seq.

@@ -46,9 +46,6 @@ import {
 import { DOMAIN_META } from "./domains";
 import { DOMAIN_COLORS } from "./segments";
 import GlossaryText from "./GlossaryText";
-import CollapsibleSidebar, {
-  SidebarCollapseButton,
-} from "./CollapsibleSidebar";
 import { providerErrorMessage } from "@/lib/providerErrors";
 
 type Props = {
@@ -156,8 +153,6 @@ export default function KnowHowWorkspace({
   const [loadingProgress, setLoadingProgress] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [moduleSidebarCollapsed, setModuleSidebarCollapsed] = useState(false);
-  const [toolsSidebarCollapsed, setToolsSidebarCollapsed] = useState(false);
   const selectedModule =
     moduleByKey(selectedKey) ?? moduleByKey(progress.selectedModuleKey) ??
     defaultKnowHowModule();
@@ -167,13 +162,6 @@ export default function KnowHowWorkspace({
   );
   const notes = progress.notesByModule[selectedModule.key] ?? "";
   const history = progress.askHistoryByModule[selectedModule.key] ?? [];
-  const gridClassName = moduleSidebarCollapsed
-    ? toolsSidebarCollapsed
-      ? "xl:grid-cols-[3.5rem_minmax(0,1fr)_3.5rem]"
-      : "xl:grid-cols-[3.5rem_minmax(0,1fr)_340px]"
-    : toolsSidebarCollapsed
-      ? "xl:grid-cols-[260px_minmax(0,1fr)_3.5rem]"
-      : "xl:grid-cols-[260px_minmax(0,1fr)_340px]";
 
   useEffect(() => {
     if (!projectId) return;
@@ -288,51 +276,8 @@ export default function KnowHowWorkspace({
 
   return (
     <div className="h-full overflow-y-auto bg-neutral-50">
-      <div className={`mx-auto grid max-w-[1500px] gap-4 p-4 ${gridClassName}`}>
-        <CollapsibleSidebar
-          title="know-how modules sidebar"
-          collapsed={moduleSidebarCollapsed}
-          onToggle={() =>
-            setModuleSidebarCollapsed((collapsed) => !collapsed)
-          }
-          expandedClassName="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4"
-          collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white xl:sticky xl:top-4"
-          collapsedChildren={
-            <div className="flex w-full flex-col items-center gap-1">
-              {KNOW_HOW_MODULES.map((module) => {
-                const active = module.key === selectedModule.key;
-                const done = taskProgress(module, progress);
-                return (
-                  <button
-                    key={module.key}
-                    type="button"
-                    onClick={() => selectModule(module)}
-                    title={module.title}
-                    aria-label={module.title}
-                    className={`relative flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
-                      active
-                        ? "bg-neutral-900 text-white"
-                        : "text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-                    }`}
-                  >
-                    {module.title.charAt(0)}
-                    {done > 0 ? (
-                      <span
-                        className={`absolute -right-1 -top-1 rounded-full px-1 text-[9px] leading-4 ${
-                          active
-                            ? "bg-white text-neutral-900"
-                            : "bg-neutral-100 text-neutral-500"
-                        }`}
-                      >
-                        {done}
-                      </span>
-                    ) : null}
-                  </button>
-                );
-              })}
-            </div>
-          }
-        >
+      <div className="mx-auto grid grid-cols-1 max-w-[1500px] gap-4 p-4 xl:grid-cols-[260px_minmax(0,1fr)_340px]">
+        <aside className="h-fit rounded-lg border border-neutral-200 bg-white p-3 xl:sticky xl:top-4">
           <div className="mb-3 flex items-center justify-between gap-2">
             <div>
               <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
@@ -347,15 +292,10 @@ export default function KnowHowWorkspace({
             ) : (
               <CheckCircle2 className="h-4 w-4 text-emerald-500" />
             )}
-            <SidebarCollapseButton
-              collapsed={moduleSidebarCollapsed}
-              onToggle={() =>
-                setModuleSidebarCollapsed((collapsed) => !collapsed)
-              }
-              title="know-how modules sidebar"
-            />
           </div>
-          <nav className="space-y-1">
+          <div className="relative">
+          <div className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-white to-transparent xl:hidden" />
+          <nav className="flex gap-1.5 overflow-x-auto no-scrollbar xl:flex-col xl:gap-0 xl:space-y-1 xl:overflow-visible">
             {KNOW_HOW_MODULES.map((module) => {
               const done = taskProgress(module, progress);
               const active = module.key === selectedModule.key;
@@ -364,7 +304,7 @@ export default function KnowHowWorkspace({
                   key={module.key}
                   type="button"
                   onClick={() => selectModule(module)}
-                  className={`flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-2 text-left text-xs transition ${
+                  className={`flex shrink-0 items-center justify-between gap-2 whitespace-nowrap rounded-lg px-2.5 py-2 text-left text-xs transition xl:w-full ${
                     active
                       ? "bg-neutral-900 text-white"
                       : "text-neutral-600 hover:bg-neutral-100"
@@ -399,12 +339,13 @@ export default function KnowHowWorkspace({
               );
             })}
           </nav>
+          </div>
           {saveError ? (
             <p className="mt-3 rounded-md bg-red-50 px-2 py-1.5 text-[11px] text-red-600">
               {saveError}
             </p>
           ) : null}
-        </CollapsibleSidebar>
+        </aside>
 
         <main className="min-w-0 space-y-4">
           <section className="rounded-lg border border-neutral-200 bg-white p-5">
@@ -434,7 +375,7 @@ export default function KnowHowWorkspace({
             </div>
           </section>
 
-          <section className="grid gap-3 lg:grid-cols-2">
+          <section className="grid grid-cols-1 gap-3 lg:grid-cols-2">
             <InfoPanel
               icon={Target}
               title="What this helps you decide"
@@ -536,33 +477,7 @@ export default function KnowHowWorkspace({
           />
         </main>
 
-        <CollapsibleSidebar
-          title="know-how tools sidebar"
-          side="right"
-          collapsed={toolsSidebarCollapsed}
-          onToggle={() => setToolsSidebarCollapsed((collapsed) => !collapsed)}
-          expandedClassName="space-y-4 xl:sticky xl:top-4 xl:h-fit"
-          collapsedClassName="h-fit rounded-lg border border-neutral-200 bg-white xl:sticky xl:top-4"
-          collapsedChildren={
-            <div className="flex flex-col items-center gap-1 text-neutral-400">
-              <MessageCircleQuestion className="h-4 w-4" />
-              <NotebookPen className="h-4 w-4" />
-            </div>
-          }
-        >
-          <div className="flex items-center justify-between gap-2 rounded-lg border border-neutral-200 bg-white px-3 py-2">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-              Tools
-            </p>
-            <SidebarCollapseButton
-              collapsed={toolsSidebarCollapsed}
-              onToggle={() =>
-                setToolsSidebarCollapsed((collapsed) => !collapsed)
-              }
-              title="know-how tools sidebar"
-              side="right"
-            />
-          </div>
+        <aside className="space-y-4 xl:sticky xl:top-4 xl:h-fit">
           <AskPanel
             module={selectedModule}
             ready={ready}
@@ -583,7 +498,7 @@ export default function KnowHowWorkspace({
             }}
           />
           <NotesPanel notes={notes} onSave={saveNotes} />
-        </CollapsibleSidebar>
+        </aside>
       </div>
     </div>
   );
@@ -654,7 +569,7 @@ function ToolArea({
             Audience signals
           </h3>
         </div>
-        <div className="grid gap-2 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
           <Metric label="Cohorts" value={cohorts.length.toLocaleString()} />
           <Metric label="Personas" value={personas.toLocaleString()} />
           <Metric
@@ -824,13 +739,13 @@ function FinancialTool({
         </p>
       ) : model ? (
         <div className="space-y-4">
-          <div className="grid gap-2 sm:grid-cols-3">
+          <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
             {financialMetrics(model).map((metric) => (
               <Metric key={metric.label} {...metric} />
             ))}
           </div>
           {baseTier && inputs ? (
-            <div className="grid gap-3 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               <NumberField
                 label={`Base price (${baseTier.label})`}
                 value={baseTier.price}
@@ -1113,7 +1028,7 @@ function EvidencePanel({
         </p>
       ) : items.length > 0 ? (
         <>
-          <div className="grid gap-2 lg:grid-cols-2">
+          <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
             {visibleItems.map(({ block, conclusion }) => (
               <EvidenceCard
                 key={conclusion.id}

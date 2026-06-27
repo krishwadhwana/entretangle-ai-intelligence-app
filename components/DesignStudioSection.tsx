@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+} from "react";
 import {
   AlertCircle,
   Archive,
@@ -24,8 +31,6 @@ import {
   RefreshCw,
   Rocket,
   Save,
-  Scissors,
-  ShoppingCart,
   Trash2,
   Type,
   Upload,
@@ -37,7 +42,6 @@ import type {
   DesignStudioSection as DesignStudioState,
   DesignTokens,
   LogoAsset,
-  ProductImageRef,
   SiteAsset,
   SiteFile,
 } from "@/lib/schema";
@@ -51,12 +55,53 @@ import {
   googleFontUrlForFamilies,
   googleFontUrlForFamily,
 } from "@/lib/design/fontLibrary";
-import CollapsibleSidebar, {
-  SidebarCollapseButton,
-} from "./CollapsibleSidebar";
+import {
+  assetSvgUrl,
+  siteFileUrl,
+} from "@/lib/design/assetUrls";
+import {
+  istParts,
+  downloadBlob,
+  downloadSvgString,
+  svgDims,
+  downloadPngString,
+  dataUrlExtension,
+  downloadDataUrl,
+  downloadVisualImage,
+  downloadPromptAudit,
+  formatGeneratedAt,
+  formatGeneratedAtIst,
+  siteGenerationStamp,
+  siteFolderName,
+  siteFiles,
+  siteDownloadName,
+  siteFileDownloadName,
+  siteZipDownloadName,
+  svgPreviewSrc,
+  makeZipBlob,
+} from "./design-studio/download";
 
-// Max uploaded font size. Fonts ride inline (base64) in the tokens JSON, so keep
-// them small enough to stay well under request/JSONB limits.
+// Provides the current projectId to deeply-nested asset/site cards so they can
+// build serving URLs for externalized (R2-stored) svg/html/font bytes.
+const DesignProjectContext = createContext<string | null>(null);
+
+// The asset's self-contained SVG text. Externalized rows keep it in object
+// storage (svgKey) and ship empty `svg`; fetch it from the serving route.
+// Legacy/hydrated rows still have it inline.
+async function loadAssetSvg(
+  projectId: string | null,
+  asset: DesignAsset,
+): Promise<string> {
+  if (asset.svg) return asset.svg;
+  if (asset.svgKey && projectId) {
+    const res = await fetch(assetSvgUrl(projectId, asset.id));
+    if (res.ok) return res.text();
+  }
+  return "";
+}
+
+// Max uploaded font size. Externalized to object storage on save, so keep them
+// small enough to stay well under request limits.
 const MAX_CUSTOM_FONT_BYTES = 2 * 1024 * 1024;
 
 const AD_TYPE: CollateralType = "ad";
@@ -68,31 +113,13 @@ type GenerationRunMeta = {
   generationRunCreatedAt: string;
   generationRunStamp: string;
 };
-type SocialImageUsage = "product-reference" | "social-inspiration";
-type SocialPromptSnapshot = NonNullable<DesignAsset["socialPrompt"]>;
-type CampaignPackDraft = {
-  name: string;
-  label: string;
-  note: string;
-};
 type AdRunFolder = {
   id: string;
-  name: string;
-  defaultName: string;
-  packLabel?: string;
-  packNote?: string;
-  packUpdatedAt?: string;
+  label: string;
   createdAtMs: number;
   stamp?: string;
   templateFrameEnabled?: boolean;
-  socialPrompt?: SocialPromptSnapshot;
   assets: DesignAsset[];
-};
-
-const EMPTY_CAMPAIGN_PACK_DRAFT: CampaignPackDraft = {
-  name: "",
-  label: "",
-  note: "",
 };
 
 const AD_CAMPAIGN_VARIANTS = [
@@ -172,43 +199,6 @@ function campaignScenePrompt(
   return variant.visuals[seededIndex(runId, index, variant.visuals.length)];
 }
 
-function productImageUsage(ref: ProductImageRef): SocialImageUsage {
-  if (ref.usage === "social-inspiration") return "social-inspiration";
-  if ((ref.tags ?? []).some((tag) => /social[-\s]?inspiration/i.test(tag))) {
-    return "social-inspiration";
-  }
-  return "product-reference";
-}
-
-function socialPromptFromAsset(asset: DesignAsset): SocialPromptSnapshot | null {
-  if (asset.socialPrompt) {
-    return {
-      brief: asset.socialPrompt.brief ?? "",
-      visualBrief: asset.socialPrompt.visualBrief ?? "",
-      templateBrief: asset.socialPrompt.templateBrief ?? "",
-      useTemplates: Boolean(asset.socialPrompt.useTemplates),
-    };
-  }
-  return null;
-}
-
-function istParts(date: Date): Record<string, string> {
-  return Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false,
-    })
-      .formatToParts(date)
-      .map((part) => [part.type, part.value])
-  );
-}
-
 function createGenerationRunMeta(
   kind: "Campaign pack" | "Single creative",
   useTemplates: boolean
@@ -233,56 +223,29 @@ function buildAdRunFolders(adAssets: DesignAsset[]): AdRunFolder[] {
     const id = asset.generationRunId || "legacy-ad-assets";
     const createdAt = Date.parse(asset.generationRunCreatedAt || asset.createdAt);
     const prior = byId.get(id);
-    const socialPrompt = socialPromptFromAsset(asset);
-    const defaultName =
-      asset.generationRunLabel ||
-      "Previous assets · before run folders were added";
-    const packName = asset.campaignPackName?.trim();
-    const packLabel = asset.campaignPackLabel?.trim();
-    const packNote = asset.campaignPackNote?.trim();
-    const packUpdatedAt = asset.campaignPackUpdatedAt?.trim();
     if (prior) {
       prior.assets.push(asset);
       prior.createdAtMs = Math.max(
         prior.createdAtMs,
         Number.isFinite(createdAt) ? createdAt : 0
       );
-      if (packName) prior.name = packName;
-      if (packLabel) prior.packLabel = packLabel;
-      if (packNote) prior.packNote = packNote;
-      if (packUpdatedAt) prior.packUpdatedAt = packUpdatedAt;
       if (asset.templateFrameEnabled !== undefined) {
         prior.templateFrameEnabled = asset.templateFrameEnabled;
-      }
-      if (!prior.socialPrompt && socialPrompt) {
-        prior.socialPrompt = socialPrompt;
       }
       continue;
     }
     byId.set(id, {
       id,
-      name: packName || defaultName,
-      defaultName,
-      packLabel: packLabel || undefined,
-      packNote: packNote || undefined,
-      packUpdatedAt: packUpdatedAt || undefined,
+      label:
+        asset.generationRunLabel ||
+        "Previous assets · before run folders were added",
       createdAtMs: Number.isFinite(createdAt) ? createdAt : 0,
       stamp: asset.generationRunStamp,
       templateFrameEnabled: asset.templateFrameEnabled,
-      socialPrompt: socialPrompt ?? undefined,
       assets: [asset],
     });
   }
   return [...byId.values()].sort((a, b) => b.createdAtMs - a.createdAtMs);
-}
-
-function assetBelongsToAdRun(asset: DesignAsset, runId: string): boolean {
-  return (
-    asset.type === AD_TYPE &&
-    (runId === "legacy-ad-assets"
-      ? !asset.generationRunId
-      : asset.generationRunId === runId)
-  );
 }
 
 function extractWebsiteUrl(value: string): string {
@@ -652,284 +615,6 @@ function FontPicker({
   );
 }
 
-function downloadBlob(blob: Blob, filename: string) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
-}
-
-function downloadSvgString(svg: string, id: string) {
-  downloadBlob(new Blob([svg], { type: "image/svg+xml" }), `${id}.svg`);
-}
-
-// Pull intrinsic pixel size from the SVG header so logo variants (which don't
-// carry stored dimensions) still rasterize at the right resolution.
-function svgDims(svg: string, fallback = 512): { width: number; height: number } {
-  const w = svg.match(/<svg[^>]*\bwidth="(\d+(?:\.\d+)?)"/);
-  const h = svg.match(/<svg[^>]*\bheight="(\d+(?:\.\d+)?)"/);
-  return {
-    width: w ? Math.round(Number(w[1])) : fallback,
-    height: h ? Math.round(Number(h[1])) : fallback,
-  };
-}
-
-// Rasterize a self-contained SVG to PNG fully client-side (glyphs are already
-// vector paths, so no fonts are needed) — keeps the server free of native deps.
-function downloadPngString(svg: string, width: number, height: number, id: string) {
-  const img = new Image();
-  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-  img.onload = () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob((blob) => {
-        if (blob) downloadBlob(blob, `${id}.png`);
-      }, "image/png");
-    }
-    URL.revokeObjectURL(url);
-  };
-  img.src = url;
-}
-
-function downloadSvg(asset: DesignAsset) {
-  downloadSvgString(asset.svg, asset.id);
-}
-
-function downloadPng(asset: DesignAsset) {
-  downloadPngString(asset.svg, asset.width, asset.height, asset.id);
-}
-
-function dataUrlExtension(dataUrl: string): string {
-  const mime = dataUrl.match(/^data:([^;,]+)[;,]/)?.[1]?.toLowerCase();
-  if (mime === "image/jpeg" || mime === "image/jpg") return "jpg";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/gif") return "gif";
-  if (mime === "image/svg+xml") return "svg";
-  return "png";
-}
-
-function downloadDataUrl(dataUrl: string, filename: string) {
-  const a = document.createElement("a");
-  a.href = dataUrl;
-  a.download = filename;
-  a.click();
-}
-
-function downloadVisualImage(asset: DesignAsset) {
-  if (!asset.visualImageDataUrl) return;
-  downloadDataUrl(
-    asset.visualImageDataUrl,
-    `${asset.id}-generated-image.${dataUrlExtension(asset.visualImageDataUrl)}`
-  );
-}
-
-function downloadPromptAudit(asset: DesignAsset) {
-  if (!asset.generationPrompt && !asset.collateralPrompt) return;
-  downloadBlob(
-    new Blob(
-      [
-        JSON.stringify(
-          {
-            id: asset.id,
-            title: asset.title,
-            type: asset.type,
-            createdAt: asset.createdAt,
-            visualBrief: asset.visualBrief,
-            templateBrief: asset.templateBrief,
-            socialPrompt: asset.socialPrompt ?? null,
-            content: asset.content,
-            generationPrompt: asset.generationPrompt ?? null,
-            collateralPrompt: asset.collateralPrompt ?? null,
-          },
-          null,
-          2
-        ),
-      ],
-      {
-        type: "application/json",
-      }
-    ),
-    `${asset.id}-prompts.json`
-  );
-}
-
-function formatGeneratedAt(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown time";
-  return date.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  });
-}
-
-function formatGeneratedAtIst(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "Unknown IST time";
-  const p = istParts(date);
-  return `${p.day}/${p.month}/${p.year} ${p.hour}:${p.minute}:${p.second} IST`;
-}
-
-function siteGenerationStamp(site: SiteAsset): string {
-  if (site.generationRunStamp) return site.generationRunStamp;
-  const date = new Date(site.createdAt);
-  if (Number.isNaN(date.getTime())) return site.id;
-  const p = istParts(date);
-  return `${p.year}-${p.month}-${p.day}_${p.hour}-${p.minute}-${p.second}_IST`;
-}
-
-function siteFolderName(site: SiteAsset): string {
-  return `website-${siteGenerationStamp(site)}`;
-}
-
-function siteFiles(site: SiteAsset): SiteFile[] {
-  return site.files?.length
-    ? site.files
-    : [{ path: "index.html", content: site.html, contentType: "text/html" }];
-}
-
-function titleCaseFromSitePath(path: string): string {
-  if (/^index\.html?$/i.test(path)) return "Home";
-  return path
-    .replace(/\.html?$/i, "")
-    .replace(/[-_/]+/g, " ")
-    .trim()
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-}
-
-function siteDownloadName(site: SiteAsset): string {
-  const stamp = site.createdAt.replace(/[:.]/g, "-").slice(0, 19);
-  return `index-${stamp || site.id}.html`;
-}
-
-function siteFileDownloadName(site: SiteAsset, file: SiteFile): string {
-  const clean = file.path.split("/").filter(Boolean).join("-");
-  return `${siteFolderName(site)}-${clean || siteDownloadName(site)}`;
-}
-
-function siteZipDownloadName(site: SiteAsset): string {
-  return `${siteFolderName(site)}.zip`;
-}
-
-function svgPreviewSrc(svg: string): string {
-  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-}
-
-function createCrc32Table(): Uint32Array {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i += 1) {
-    let c = i;
-    for (let j = 0; j < 8; j += 1) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[i] = c >>> 0;
-  }
-  return table;
-}
-
-const CRC32_TABLE = createCrc32Table();
-
-function crc32(bytes: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (let i = 0; i < bytes.length; i += 1) {
-    crc = CRC32_TABLE[(crc ^ bytes[i]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function zipDosDateTime(date: Date): { time: number; date: number } {
-  const year = Math.max(1980, date.getFullYear());
-  const month = date.getMonth() + 1;
-  return {
-    time:
-      (date.getHours() << 11) |
-      (date.getMinutes() << 5) |
-      Math.floor(date.getSeconds() / 2),
-    date: ((year - 1980) << 9) | (month << 5) | date.getDate(),
-  };
-}
-
-function zipHeader(size: number): { bytes: Uint8Array; view: DataView } {
-  const bytes = new Uint8Array(size);
-  return { bytes, view: new DataView(bytes.buffer) };
-}
-
-function zipBlobPart(bytes: Uint8Array): ArrayBuffer {
-  const copy = new Uint8Array(bytes.length);
-  copy.set(bytes);
-  return copy.buffer;
-}
-
-function makeZipBlob(files: SiteFile[], createdAt: string): Blob {
-  const encoder = new TextEncoder();
-  const chunks: Uint8Array[] = [];
-  const central: Uint8Array[] = [];
-  const created = new Date(createdAt);
-  const stamp = zipDosDateTime(
-    Number.isNaN(created.getTime()) ? new Date() : created
-  );
-  let offset = 0;
-
-  for (const file of files) {
-    const name = encoder.encode(file.path);
-    const data = encoder.encode(file.content);
-    const crc = crc32(data);
-    const local = zipHeader(30);
-    local.view.setUint32(0, 0x04034b50, true);
-    local.view.setUint16(4, 20, true);
-    local.view.setUint16(6, 0x0800, true);
-    local.view.setUint16(8, 0, true);
-    local.view.setUint16(10, stamp.time, true);
-    local.view.setUint16(12, stamp.date, true);
-    local.view.setUint32(14, crc, true);
-    local.view.setUint32(18, data.length, true);
-    local.view.setUint32(22, data.length, true);
-    local.view.setUint16(26, name.length, true);
-    local.view.setUint16(28, 0, true);
-    chunks.push(local.bytes, name, data);
-
-    const centralHeader = zipHeader(46);
-    centralHeader.view.setUint32(0, 0x02014b50, true);
-    centralHeader.view.setUint16(4, 20, true);
-    centralHeader.view.setUint16(6, 20, true);
-    centralHeader.view.setUint16(8, 0x0800, true);
-    centralHeader.view.setUint16(10, 0, true);
-    centralHeader.view.setUint16(12, stamp.time, true);
-    centralHeader.view.setUint16(14, stamp.date, true);
-    centralHeader.view.setUint32(16, crc, true);
-    centralHeader.view.setUint32(20, data.length, true);
-    centralHeader.view.setUint32(24, data.length, true);
-    centralHeader.view.setUint16(28, name.length, true);
-    centralHeader.view.setUint16(30, 0, true);
-    centralHeader.view.setUint16(32, 0, true);
-    centralHeader.view.setUint16(34, 0, true);
-    centralHeader.view.setUint16(36, 0, true);
-    centralHeader.view.setUint32(38, 0, true);
-    centralHeader.view.setUint32(42, offset, true);
-    central.push(centralHeader.bytes, name);
-    offset += local.bytes.length + name.length + data.length;
-  }
-
-  const centralSize = central.reduce((sum, part) => sum + part.length, 0);
-  const end = zipHeader(22);
-  end.view.setUint32(0, 0x06054b50, true);
-  end.view.setUint16(8, files.length, true);
-  end.view.setUint16(10, files.length, true);
-  end.view.setUint32(12, centralSize, true);
-  end.view.setUint32(16, offset, true);
-  end.view.setUint16(20, 0, true);
-  return new Blob([...chunks, ...central, end.bytes].map(zipBlobPart), {
-    type: "application/zip",
-  });
-}
-
 function PipelineStep({
   label,
   info,
@@ -965,11 +650,18 @@ function AssetCard({
   asset: DesignAsset;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
+  // Externalized rows serve the SVG from object storage; legacy/hydrated rows
+  // still carry it inline as a data URL.
+  const previewSrc =
+    asset.svgKey && projectId
+      ? assetSvgUrl(projectId, asset.id)
+      : svgPreviewSrc(asset.svg);
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
       <div className="flex items-center justify-center bg-neutral-50 p-3">
         <img
-          src={svgPreviewSrc(asset.svg)}
+          src={previewSrc}
           alt={asset.title}
           className="h-auto max-w-full"
         />
@@ -978,14 +670,23 @@ function AssetCard({
         <p className="truncate text-[11px] text-neutral-500">{asset.title}</p>
         <div className="flex shrink-0 items-center gap-1">
           <button
-            onClick={() => downloadSvg(asset)}
+            onClick={async () =>
+              downloadSvgString(await loadAssetSvg(projectId, asset), asset.id)
+            }
             title="Download SVG (editable / Figma-ready)"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => downloadPng(asset)}
+            onClick={async () =>
+              downloadPngString(
+                await loadAssetSvg(projectId, asset),
+                asset.width,
+                asset.height,
+                asset.id,
+              )
+            }
             title="Download PNG"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
@@ -1139,22 +840,61 @@ function LogoCard({
   );
 }
 
-function downloadHtml(site: SiteAsset, file?: SiteFile) {
+// A site file's text. Externalized rows ship empty content + a key; fetch it
+// from the serving route (which resolves htmlKey/contentKey or legacy inline).
+async function loadSiteFileText(
+  projectId: string | null,
+  site: SiteAsset,
+  file: SiteFile,
+): Promise<string> {
+  if (file.content) return file.content;
+  if (projectId) {
+    const res = await fetch(siteFileUrl(projectId, site.id, file.path));
+    if (res.ok) return res.text();
+  }
+  return "";
+}
+
+// All of a site's files with their content hydrated from storage.
+async function loadSiteFilesHydrated(
+  projectId: string | null,
+  site: SiteAsset,
+): Promise<SiteFile[]> {
+  return Promise.all(
+    siteFiles(site).map(async (file) => ({
+      ...file,
+      content: await loadSiteFileText(projectId, site, file),
+    })),
+  );
+}
+
+async function downloadHtml(
+  projectId: string | null,
+  site: SiteAsset,
+  file?: SiteFile,
+) {
   const target = file ?? siteFiles(site)[0];
+  const content = await loadSiteFileText(projectId, site, target);
   downloadBlob(
-    new Blob([target.content], { type: target.contentType || "text/html" }),
+    new Blob([content], { type: target.contentType || "text/html" }),
     file ? siteFileDownloadName(site, file) : siteDownloadName(site)
   );
 }
 
-function downloadSiteZip(site: SiteAsset) {
-  downloadBlob(makeZipBlob(siteFiles(site), site.createdAt), siteZipDownloadName(site));
+async function downloadSiteZip(projectId: string | null, site: SiteAsset) {
+  const files = await loadSiteFilesHydrated(projectId, site);
+  downloadBlob(makeZipBlob(files, site.createdAt), siteZipDownloadName(site));
 }
 
-function openHtmlPreview(site: SiteAsset, file?: SiteFile) {
+async function openHtmlPreview(
+  projectId: string | null,
+  site: SiteAsset,
+  file?: SiteFile,
+) {
   const target = file ?? siteFiles(site)[0];
+  const content = await loadSiteFileText(projectId, site, target);
   const url = URL.createObjectURL(
-    new Blob([target.content], { type: target.contentType || "text/html" })
+    new Blob([content], { type: target.contentType || "text/html" })
   );
   window.open(url, "_blank", "noopener,noreferrer");
   window.setTimeout(() => URL.revokeObjectURL(url), 30_000);
@@ -1175,8 +915,15 @@ function SiteCard({
   onDeploy: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
   const [loaded, setLoaded] = useState(false);
-  const hasHtml = site.html.trim().length > 0;
+  // Externalized rows ship empty html + an htmlKey served from storage.
+  const externalized = Boolean(site.htmlKey);
+  const hasHtml = site.html.trim().length > 0 || externalized;
+  const previewProps =
+    externalized && projectId
+      ? { src: siteFileUrl(projectId, site.id) }
+      : { srcDoc: site.html };
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
@@ -1187,7 +934,7 @@ function SiteCard({
             <iframe
               key={`${site.id}-${site.createdAt}`}
               title={site.title}
-              srcDoc={site.html}
+              {...previewProps}
               sandbox="allow-forms allow-popups"
               onLoad={() => setLoaded(true)}
               className="block h-72 w-full border-0 bg-white"
@@ -1236,14 +983,14 @@ function SiteCard({
             </a>
           ) : null}
           <button
-            onClick={() => downloadHtml(site)}
+            onClick={() => void downloadHtml(projectId, site)}
             title={`Download ${siteDownloadName(site)}`}
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
           >
             <Download className="h-3.5 w-3.5" />
           </button>
           <button
-            onClick={() => openHtmlPreview(site)}
+            onClick={() => void openHtmlPreview(projectId, site)}
             disabled={!hasHtml}
             title="Open preview in a new tab"
             className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700 disabled:opacity-40"
@@ -1338,6 +1085,17 @@ function WebsiteCodingConsole({
   );
 }
 
+function titleCaseFromSitePath(path: string): string {
+  if (/^index\.html?$/i.test(path)) return "Home";
+  return (
+    path
+      .replace(/\.html?$/i, "")
+      .replace(/[-_/]+/g, " ")
+      .trim()
+      .replace(/\b\w/g, (char) => char.toUpperCase()) || "Home"
+  );
+}
+
 function SiteHistoryBrowser({
   sites,
   selectedSiteId,
@@ -1359,13 +1117,24 @@ function SiteHistoryBrowser({
   onDeploy: (id: string) => void;
   onDelete: (id: string) => void;
 }) {
+  const projectId = useContext(DesignProjectContext);
   const activeSite =
     sites.find((site) => site.id === selectedSiteId) ?? sites[0] ?? null;
   const files = activeSite ? siteFiles(activeSite) : [];
   const activeFile =
     files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
   const [loaded, setLoaded] = useState(false);
-  const [historyCollapsed, setHistoryCollapsed] = useState(false);
+  // Preview the active file: externalized rows are served from object storage
+  // by URL (an <iframe src> — robust for the multi-MB pages that break when
+  // inlined into srcDoc); legacy rows still have their content inline.
+  const filePreviewProps =
+    activeSite && activeFile
+      ? activeFile.content
+        ? { srcDoc: activeFile.content }
+        : projectId
+          ? { src: siteFileUrl(projectId, activeSite.id, activeFile.path) }
+          : { srcDoc: "" }
+      : { srcDoc: "" };
 
   useEffect(() => {
     setLoaded(false);
@@ -1385,58 +1154,11 @@ function SiteHistoryBrowser({
 
   return (
     <div className="overflow-hidden rounded-xl border border-neutral-200 bg-white">
-      <div
-        className={`grid min-h-[520px] grid-cols-1 ${
-          historyCollapsed
-            ? "lg:grid-cols-[3.5rem_minmax(0,1fr)]"
-            : "lg:grid-cols-[260px_minmax(0,1fr)]"
-        }`}
-      >
-        <CollapsibleSidebar
-          title="website history sidebar"
-          collapsed={historyCollapsed}
-          onToggle={() => setHistoryCollapsed((collapsed) => !collapsed)}
-          expandedClassName="border-b border-neutral-200 bg-neutral-50 p-3 lg:border-b-0 lg:border-r"
-          collapsedClassName="border-b border-neutral-200 bg-neutral-50 lg:border-b-0 lg:border-r"
-          collapsedChildren={
-            <div className="flex w-full flex-col items-center gap-1">
-              {sites.map((site, index) => {
-                const selected = site.id === activeSite.id;
-                const label = index === 0 ? "Latest" : `Generation ${index + 1}`;
-                return (
-                  <button
-                    key={site.id}
-                    type="button"
-                    onClick={() => {
-                      onSelectSite(site.id);
-                      onSelectPath(siteFiles(site)[0]?.path ?? "index.html");
-                    }}
-                    title={label}
-                    aria-label={label}
-                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-[10px] font-semibold transition-colors ${
-                      selected
-                        ? "bg-neutral-900 text-white"
-                        : "bg-white text-neutral-500 hover:bg-neutral-100 hover:text-neutral-900"
-                    }`}
-                  >
-                    {index === 0 ? "L" : index + 1}
-                  </button>
-                );
-              })}
-            </div>
-          }
-        >
-          <div className="mb-2 flex items-center justify-between gap-2">
-            <p className="flex min-w-0 items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
-              <FolderTree className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">Website history</span>
-            </p>
-            <SidebarCollapseButton
-              collapsed={historyCollapsed}
-              onToggle={() => setHistoryCollapsed((collapsed) => !collapsed)}
-              title="website history sidebar"
-            />
-          </div>
+      <div className="grid min-h-[520px] grid-cols-1 lg:grid-cols-[260px_minmax(0,1fr)]">
+        <aside className="border-b border-neutral-200 bg-neutral-50 p-3 lg:border-b-0 lg:border-r">
+          <p className="mb-2 flex items-center gap-1.5 text-[11px] font-semibold uppercase tracking-wide text-neutral-400">
+            <FolderTree className="h-3.5 w-3.5" /> Website history
+          </p>
           <div className="space-y-2">
             {sites.map((site, index) => {
               const selected = site.id === activeSite.id;
@@ -1475,7 +1197,7 @@ function SiteHistoryBrowser({
               );
             })}
           </div>
-        </CollapsibleSidebar>
+        </aside>
 
         <div className="min-w-0">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-neutral-100 px-3 py-2">
@@ -1512,21 +1234,21 @@ function SiteHistoryBrowser({
                 </a>
               ) : null}
               <button
-                onClick={() => downloadHtml(activeSite, activeFile)}
+                onClick={() => void downloadHtml(projectId, activeSite, activeFile)}
                 title={`Download ${activeFile.path}`}
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
                 <FileCode2 className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => downloadSiteZip(activeSite)}
+                onClick={() => void downloadSiteZip(projectId, activeSite)}
                 title={`Download ${siteZipDownloadName(activeSite)}`}
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
                 <Archive className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={() => openHtmlPreview(activeSite, activeFile)}
+                onClick={() => void openHtmlPreview(projectId, activeSite, activeFile)}
                 title="Open selected file in a new tab"
                 className="rounded p-1 text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
               >
@@ -1556,7 +1278,7 @@ function SiteHistoryBrowser({
               </button>
             </div>
           </div>
-          {files.length > 1 ? (
+          {files.filter((file) => /\.html?$/i.test(file.path)).length > 1 ? (
             <div className="flex flex-wrap items-center gap-1 border-b border-neutral-100 bg-neutral-50/60 px-3 py-1.5">
               <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
                 Pages
@@ -1583,7 +1305,7 @@ function SiteHistoryBrowser({
             <iframe
               key={`${activeSite.id}-${activeFile.path}`}
               title={`${activeSite.title} ${activeFile.path}`}
-              srcDoc={activeFile.content}
+              {...filePreviewProps}
               sandbox="allow-forms allow-popups"
               onLoad={() => setLoaded(true)}
               className="block h-full w-full border-0 bg-white"
@@ -1634,25 +1356,14 @@ export default function DesignStudioSection({
   const [makingSite, setMakingSite] = useState(false);
   const [deployingId, setDeployingId] = useState<string | null>(null);
   const [websiteBrief, setWebsiteBrief] = useState("");
-  const [websiteRemoveBackgrounds, setWebsiteRemoveBackgrounds] = useState(true);
-  const [websiteUseCreatives, setWebsiteUseCreatives] = useState(true);
-  const [websiteIncludeCheckout, setWebsiteIncludeCheckout] = useState(true);
   const [socialBrief, setSocialBrief] = useState("");
   const [collateralBrief, setCollateralBrief] = useState("");
   const [useSocialTemplates, setUseSocialTemplates] = useState(false);
   const [socialTemplateBrief, setSocialTemplateBrief] = useState("");
   const [socialVisualBrief, setSocialVisualBrief] = useState("");
   const [selectedAdRunId, setSelectedAdRunId] = useState("");
-  const [campaignPackDraft, setCampaignPackDraft] =
-    useState<CampaignPackDraft>(EMPTY_CAMPAIGN_PACK_DRAFT);
-  const [savingCampaignPackId, setSavingCampaignPackId] = useState<string | null>(
-    null
-  );
   const [websiteImageRefs, setWebsiteImageRefs] = useState<WebsiteImageRef[]>([]);
-  const [productImages, setProductImages] = useState<ProductImageRef[]>([]);
   const [pullingRefs, setPullingRefs] = useState(false);
-  const [uploadingSocialRef, setUploadingSocialRef] =
-    useState<SocialImageUsage | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const refreshStudio = useCallback(async () => {
@@ -1663,7 +1374,6 @@ export default function DesignStudioSection({
         designStudio: DesignStudioState | null;
         sourceWebsiteUrl?: string;
         websiteImageRefs?: WebsiteImageRef[];
-        productImages?: ProductImageRef[];
       };
       const { designStudio } = data;
       setStudio(designStudio);
@@ -1680,7 +1390,6 @@ export default function DesignStudioSection({
       setTokenDraft(designStudio?.tokens ?? null);
       setSourceWebsiteUrl((current) => current || data.sourceWebsiteUrl || "");
       setWebsiteImageRefs(data.websiteImageRefs ?? []);
-      setProductImages(data.productImages ?? []);
     }
     const siteRes = await fetch(`/api/projects/${projectId}/design/site`);
     if (siteRes.ok) {
@@ -1810,71 +1519,6 @@ export default function DesignStudioSection({
     }
   }, [projectId, refreshStudio, sourceWebsiteUrl, tokenGuidance]);
 
-  const uploadSocialReference = useCallback(
-    async (usage: SocialImageUsage, file: File | null | undefined) => {
-      if (!projectId || !file) return;
-      setUploadingSocialRef(usage);
-      setError(null);
-      try {
-        const form = new FormData();
-        form.append("image", file);
-        form.append("usage", usage);
-        const res = await fetch(`/api/projects/${projectId}/product-images`, {
-          method: "POST",
-          body: form,
-        });
-        const data = await readJsonResponse(res);
-        if (!res.ok) {
-          setError(
-            providerErrorMessage(
-              data.error ?? data,
-              `Upload failed (${res.status}).`
-            )
-          );
-          return;
-        }
-        setProductImages((data.productImages as ProductImageRef[]) ?? []);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Upload failed.");
-      } finally {
-        setUploadingSocialRef(null);
-      }
-    },
-    [projectId]
-  );
-
-  const removeProductImage = useCallback(
-    async (imageId: string) => {
-      if (!projectId) return;
-      const previous = productImages;
-      setProductImages((images) => images.filter((image) => image.id !== imageId));
-      try {
-        const res = await fetch(
-          `/api/projects/${projectId}/product-images/${encodeURIComponent(
-            imageId
-          )}`,
-          { method: "DELETE" }
-        );
-        const data = await readJsonResponse(res);
-        if (!res.ok) {
-          setProductImages(previous);
-          setError(
-            providerErrorMessage(
-              data.error ?? data,
-              `Delete failed (${res.status}).`
-            )
-          );
-          return;
-        }
-        setProductImages((data.productImages as ProductImageRef[]) ?? []);
-      } catch (e) {
-        setProductImages(previous);
-        setError(e instanceof Error ? e.message : "Delete failed.");
-      }
-    },
-    [productImages, projectId]
-  );
-
   const saveTokenDraft = useCallback(async () => {
     if (!projectId || !tokenDraft) return;
     setGenerating(true);
@@ -1916,7 +1560,6 @@ export default function DesignStudioSection({
         generationRunLabel?: string;
         generationRunCreatedAt?: string;
         generationRunStamp?: string;
-        socialPrompt?: SocialPromptSnapshot;
         useTemplates?: boolean;
         useAiVisual?: boolean;
         useProductImages?: boolean;
@@ -1929,18 +1572,6 @@ export default function DesignStudioSection({
         (type === "business-card" ? true : isSocial ? useSocialTemplates : true);
       const visualBrief =
         options.visualBrief ?? (isSocial ? socialVisualBrief : "");
-      const templateBrief =
-        options.templateBrief ??
-        (isSocial && resolvedUseTemplates ? socialTemplateBrief : "");
-      const socialPrompt =
-        isSocial
-          ? options.socialPrompt ?? {
-              brief: options.brief ?? socialBrief,
-              visualBrief,
-              templateBrief,
-              useTemplates: resolvedUseTemplates,
-            }
-          : undefined;
       const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1953,18 +1584,16 @@ export default function DesignStudioSection({
             options.useProductImages ??
             (type === "business-card" ? false : isSocial),
           visualBrief,
-          templateBrief,
+          templateBrief:
+            options.templateBrief ??
+            (isSocial && useSocialTemplates ? socialTemplateBrief : ""),
           generationRunId: options.generationRunId ?? "",
           generationRunLabel: options.generationRunLabel ?? "",
           generationRunCreatedAt: options.generationRunCreatedAt ?? "",
           generationRunStamp: options.generationRunStamp ?? "",
-          socialPrompt,
           sourceRunId: sourceRunId ?? null,
           sourceWebsiteUrl:
             sourceWebsiteUrl.trim() || extractWebsiteUrl(tokenGuidance),
-          removeImageBackgrounds: websiteRemoveBackgrounds,
-          useCreativeAssets: websiteUseCreatives,
-          includeCheckout: websiteIncludeCheckout,
         }),
       });
       const data = await readJsonResponse(res);
@@ -2049,12 +1678,6 @@ export default function DesignStudioSection({
           useAiVisual: true,
           useProductImages: true,
           templateBrief: useSocialTemplates ? socialTemplateBrief : "",
-          socialPrompt: {
-            brief: baseBrief,
-            visualBrief: baseVisualBrief,
-            templateBrief: useSocialTemplates ? socialTemplateBrief : "",
-            useTemplates: useSocialTemplates,
-          },
           visualBrief: [
             `Variant role: ${variant.name}. ${campaignScenePrompt(
               variant,
@@ -2100,63 +1723,6 @@ export default function DesignStudioSection({
     },
     [projectId, assets]
   );
-
-  const saveCampaignPackDetails = useCallback(async () => {
-    if (!projectId || !selectedAdRunId) return;
-    const name = campaignPackDraft.name.trim();
-    if (!name) {
-      setError("Campaign pack name is required.");
-      return;
-    }
-    const label = campaignPackDraft.label.trim();
-    const note = campaignPackDraft.note.trim();
-    const prev = assets;
-    const updatedAt = new Date().toISOString();
-    setSavingCampaignPackId(selectedAdRunId);
-    setError(null);
-    setAssets((current) =>
-      current.map((asset) =>
-        assetBelongsToAdRun(asset, selectedAdRunId)
-          ? {
-              ...asset,
-              campaignPackName: name,
-              campaignPackLabel: label,
-              campaignPackNote: note,
-              campaignPackUpdatedAt: updatedAt,
-            }
-          : asset
-      )
-    );
-    try {
-      const res = await fetch(`/api/projects/${projectId}/design/collateral`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          generationRunId: selectedAdRunId,
-          campaignPackName: name,
-          campaignPackLabel: label,
-          campaignPackNote: note,
-        }),
-      });
-      const data = await readJsonResponse(res);
-      if (!res.ok) {
-        setAssets(prev);
-        setError(
-          providerErrorMessage(
-            data.error ?? data,
-            `Campaign pack update failed (${res.status}).`
-          )
-        );
-        return;
-      }
-      setAssets((data.assets as DesignAsset[]) ?? []);
-    } catch (e) {
-      setAssets(prev);
-      setError(e instanceof Error ? e.message : "Campaign pack update failed.");
-    } finally {
-      setSavingCampaignPackId(null);
-    }
-  }, [assets, campaignPackDraft, projectId, selectedAdRunId]);
 
   const makeLogo = useCallback(async () => {
     if (!projectId) return;
@@ -2282,9 +1848,6 @@ export default function DesignStudioSection({
     sourceWebsiteUrl,
     tokenGuidance,
     waitForJob,
-    websiteRemoveBackgrounds,
-    websiteUseCreatives,
-    websiteIncludeCheckout,
   ]);
 
   const deploySite = useCallback(
@@ -2523,27 +2086,6 @@ export default function DesignStudioSection({
   const selectedAdRun =
     adRunFolders.find((run) => run.id === selectedAdRunId) ?? adRunFolders[0];
   const visibleAdAssets = selectedAdRun?.assets ?? [];
-  const campaignPackDirty = Boolean(
-    selectedAdRun &&
-      (campaignPackDraft.name.trim() !== selectedAdRun.name ||
-        campaignPackDraft.label.trim() !== (selectedAdRun.packLabel ?? "") ||
-        campaignPackDraft.note.trim() !== (selectedAdRun.packNote ?? ""))
-  );
-  const campaignPackSaving = savingCampaignPackId === selectedAdRun?.id;
-  const socialProductRefs = useMemo(
-    () =>
-      productImages.filter(
-        (image) => productImageUsage(image) === "product-reference"
-      ),
-    [productImages]
-  );
-  const socialInspirationRefs = useMemo(
-    () =>
-      productImages.filter(
-        (image) => productImageUsage(image) === "social-inspiration"
-      ),
-    [productImages]
-  );
   const businessCardAssets = useMemo(
     () => assets.filter((asset) => asset.type === "business-card"),
     [assets]
@@ -2569,34 +2111,6 @@ export default function DesignStudioSection({
     );
   }, [adRunFolders]);
 
-  useEffect(() => {
-    if (!selectedAdRun) {
-      setCampaignPackDraft(EMPTY_CAMPAIGN_PACK_DRAFT);
-      return;
-    }
-    setCampaignPackDraft({
-      name: selectedAdRun.name,
-      label: selectedAdRun.packLabel ?? "",
-      note: selectedAdRun.packNote ?? "",
-    });
-  }, [
-    selectedAdRun?.id,
-    selectedAdRun?.name,
-    selectedAdRun?.packLabel,
-    selectedAdRun?.packNote,
-  ]);
-
-  useEffect(() => {
-    const prompt = selectedAdRun?.socialPrompt;
-    if (!prompt) return;
-    setSocialBrief(prompt.brief ?? "");
-    setSocialVisualBrief(prompt.visualBrief ?? "");
-    setSocialTemplateBrief(prompt.templateBrief ?? "");
-    if (prompt.useTemplates !== undefined) {
-      setUseSocialTemplates(Boolean(prompt.useTemplates));
-    }
-  }, [selectedAdRun?.id]);
-
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center text-xs text-neutral-400">
@@ -2610,6 +2124,7 @@ export default function DesignStudioSection({
   );
 
   return (
+    <DesignProjectContext.Provider value={projectId}>
     <div className="mx-auto max-w-3xl p-6">
       {FONT_PREVIEW_CSS ? <style>{FONT_PREVIEW_CSS}</style> : null}
       {customFontCss ? <style>{customFontCss}</style> : null}
@@ -3012,40 +2527,8 @@ export default function DesignStudioSection({
               value={websiteBrief}
               onChange={(e) => setWebsiteBrief(e.target.value)}
               placeholder="Website brief — e.g. 'multi-page product site for hydration cleanser, emphasize bundles, press, stockists, and Instagram'"
-              className="mb-2 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
+              className="mb-3 w-full rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
-            <div className="mb-3 grid grid-cols-1 gap-1 rounded-lg border border-neutral-200 bg-neutral-50 p-2 sm:grid-cols-3">
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={websiteRemoveBackgrounds}
-                  onChange={(e) => setWebsiteRemoveBackgrounds(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                <Scissors className="h-3.5 w-3.5 text-neutral-400" />
-                Product cutouts
-              </label>
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={websiteUseCreatives}
-                  onChange={(e) => setWebsiteUseCreatives(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                <ImageIcon className="h-3.5 w-3.5 text-neutral-400" />
-                Use creatives
-              </label>
-              <label className="flex items-center gap-2 rounded-md bg-white px-3 py-2 text-[11px] font-medium text-neutral-700">
-                <input
-                  type="checkbox"
-                  checked={websiteIncludeCheckout}
-                  onChange={(e) => setWebsiteIncludeCheckout(e.target.checked)}
-                  className="h-3.5 w-3.5 accent-indigo-600"
-                />
-                <ShoppingCart className="h-3.5 w-3.5 text-neutral-400" />
-                Checkout pages
-              </label>
-            </div>
             <WebsiteCodingConsole
               progress={websiteBuildProgress}
               running={makingSite}
@@ -3151,143 +2634,11 @@ export default function DesignStudioSection({
               rows={3}
               className="mb-2 w-full resize-none rounded-lg border border-neutral-200 px-3 py-2 text-[12px] outline-none focus:border-indigo-400"
             />
-            <div className="mb-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                    <FileImage className="h-3.5 w-3.5" /> Product reference
-                  </p>
-                  <label
-                    title="Upload the product or design-stage item to preserve in the generated post"
-                    className={`flex cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 ${
-                      uploadingSocialRef ? "pointer-events-none opacity-50" : ""
-                    }`}
-                  >
-                    {uploadingSocialRef === "product-reference" ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Upload className="h-3 w-3" />
-                    )}
-                    Upload
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={Boolean(uploadingSocialRef)}
-                      onChange={(e) => {
-                        void uploadSocialReference(
-                          "product-reference",
-                          e.currentTarget.files?.[0]
-                        );
-                        e.currentTarget.value = "";
-                      }}
-                    />
-                  </label>
-                </div>
-                {socialProductRefs.length ? (
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {socialProductRefs.slice(0, 6).map((ref) => (
-                      <div
-                        key={ref.id}
-                        className="group overflow-hidden rounded-md border border-neutral-200 bg-white"
-                      >
-                        <div className="aspect-square bg-white">
-                          <img
-                            src={ref.url}
-                            alt={ref.name}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1 px-1.5 py-1">
-                          <span className="min-w-0 flex-1 truncate text-[9px] text-neutral-500">
-                            {ref.name}
-                          </span>
-                          <button
-                            type="button"
-                            title="Remove"
-                            onClick={() => void removeProductImage(ref.id)}
-                            className="rounded p-0.5 text-neutral-300 hover:bg-red-50 hover:text-red-600"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-              <div className="rounded-lg border border-neutral-200 bg-neutral-50 p-2">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                    <ImageIcon className="h-3.5 w-3.5" /> Social inspiration
-                  </p>
-                  <label
-                    title="Upload art direction, photoshoot, framing, or mood references"
-                    className={`flex cursor-pointer items-center gap-1 rounded-md border border-neutral-200 bg-white px-2 py-1 text-[10px] font-medium text-neutral-700 transition-colors hover:border-indigo-300 hover:bg-indigo-50 ${
-                      uploadingSocialRef ? "pointer-events-none opacity-50" : ""
-                    }`}
-                  >
-                    {uploadingSocialRef === "social-inspiration" ? (
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                    ) : (
-                      <Upload className="h-3 w-3" />
-                    )}
-                    Upload
-                    <input
-                      type="file"
-                      accept="image/*"
-                      className="hidden"
-                      disabled={Boolean(uploadingSocialRef)}
-                      onChange={(e) => {
-                        void uploadSocialReference(
-                          "social-inspiration",
-                          e.currentTarget.files?.[0]
-                        );
-                        e.currentTarget.value = "";
-                      }}
-                    />
-                  </label>
-                </div>
-                {socialInspirationRefs.length ? (
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {socialInspirationRefs.slice(0, 6).map((ref) => (
-                      <div
-                        key={ref.id}
-                        className="group overflow-hidden rounded-md border border-neutral-200 bg-white"
-                      >
-                        <div className="aspect-square bg-white">
-                          <img
-                            src={ref.url}
-                            alt={ref.name}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1 px-1.5 py-1">
-                          <span className="min-w-0 flex-1 truncate text-[9px] text-neutral-500">
-                            {ref.name}
-                          </span>
-                          <button
-                            type="button"
-                            title="Remove"
-                            onClick={() => void removeProductImage(ref.id)}
-                            className="rounded p-0.5 text-neutral-300 hover:bg-red-50 hover:text-red-600"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-              </div>
-            </div>
             {adRunFolders.length ? (
               <>
                 <div className="mt-3 rounded-lg border border-neutral-200 bg-neutral-50 p-2">
                   <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                    Campaign pack
+                    Campaign run
                   </label>
                   <select
                     value={selectedAdRun?.id ?? ""}
@@ -3297,122 +2648,26 @@ export default function DesignStudioSection({
                     {adRunFolders.map((run, index) => (
                       <option key={run.id} value={run.id}>
                         {index === 0 ? "Latest — " : ""}
-                        {run.name} · {run.assets.length} creative
+                        {run.label} · {run.assets.length} creative
                         {run.assets.length === 1 ? "" : "s"}
                       </option>
                     ))}
                   </select>
                   {selectedAdRun ? (
-                    <>
-                      <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(8rem,0.55fr)]">
-                        <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                            Pack name
-                          </span>
-                          <input
-                            value={campaignPackDraft.name}
-                            onChange={(e) =>
-                              setCampaignPackDraft((draft) => ({
-                                ...draft,
-                                name: e.target.value,
-                              }))
-                            }
-                            className="w-full rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
-                          />
-                        </label>
-                        <label className="block">
-                          <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                            Label
-                          </span>
-                          <input
-                            value={campaignPackDraft.label}
-                            onChange={(e) =>
-                              setCampaignPackDraft((draft) => ({
-                                ...draft,
-                                label: e.target.value,
-                              }))
-                            }
-                            placeholder="Meta launch"
-                            className="w-full rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
-                          />
-                        </label>
-                      </div>
-                      <label className="mt-2 block">
-                        <span className="mb-1 block text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
-                          Notes
-                        </span>
-                        <textarea
-                          value={campaignPackDraft.note}
-                          onChange={(e) =>
-                            setCampaignPackDraft((draft) => ({
-                              ...draft,
-                              note: e.target.value,
-                            }))
-                          }
-                          rows={2}
-                          placeholder="Audience, offer, channel, or test goal"
-                          className="w-full resize-y rounded-md border border-neutral-200 bg-white px-2 py-2 text-[12px] text-neutral-700 outline-none focus:border-indigo-400"
-                        />
-                      </label>
-                      <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
-                        <div className="min-w-0 text-[11px] text-neutral-500">
-                          <p className="truncate">
-                            Showing {visibleAdAssets.length} creative
-                            {visibleAdAssets.length === 1 ? "" : "s"} from{" "}
-                            {selectedAdRun.stamp
-                              ? selectedAdRun.stamp.replace(/_/g, " ")
-                              : selectedAdRun.defaultName}
-                          </p>
-                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-                            {selectedAdRun.packLabel ? (
-                              <span className="rounded-full border border-indigo-100 bg-indigo-50 px-2 py-0.5 text-[10px] font-medium text-indigo-700">
-                                {selectedAdRun.packLabel}
-                              </span>
-                            ) : null}
-                            {selectedAdRun.templateFrameEnabled !== undefined ? (
-                              <span className="rounded-full bg-white px-2 py-0.5 text-[10px] font-medium text-neutral-500">
-                                {selectedAdRun.templateFrameEnabled
-                                  ? "Template on"
-                                  : "Template off"}
-                              </span>
-                            ) : null}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-1.5">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setCampaignPackDraft({
-                                name: selectedAdRun.name,
-                                label: selectedAdRun.packLabel ?? "",
-                                note: selectedAdRun.packNote ?? "",
-                              })
-                            }
-                            disabled={!campaignPackDirty || campaignPackSaving}
-                            className="rounded-md border border-neutral-200 bg-white px-2.5 py-1.5 text-[11px] font-medium text-neutral-600 transition-colors hover:border-neutral-300 hover:bg-neutral-100 disabled:opacity-50"
-                          >
-                            Revert
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void saveCampaignPackDetails()}
-                            disabled={
-                              !campaignPackDirty ||
-                              !campaignPackDraft.name.trim() ||
-                              campaignPackSaving
-                            }
-                            className="flex items-center gap-1.5 rounded-md border border-neutral-900 bg-neutral-900 px-2.5 py-1.5 text-[11px] font-medium text-white transition-colors hover:bg-neutral-700 disabled:opacity-50"
-                          >
-                            {campaignPackSaving ? (
-                              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            ) : (
-                              <Save className="h-3.5 w-3.5" />
-                            )}
-                            Save pack
-                          </button>
-                        </div>
-                      </div>
-                    </>
+                    <p className="mt-1 text-[11px] text-neutral-500">
+                      Showing {visibleAdAssets.length} creative
+                      {visibleAdAssets.length === 1 ? "" : "s"} from{" "}
+                      {selectedAdRun.stamp
+                        ? selectedAdRun.stamp.replace(/_/g, " ")
+                        : selectedAdRun.label}
+                      {selectedAdRun.templateFrameEnabled !== undefined
+                        ? ` · ${
+                            selectedAdRun.templateFrameEnabled
+                              ? "Template on"
+                              : "Template off"
+                          }`
+                        : ""}
+                    </p>
                   ) : null}
                 </div>
                 <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -3474,5 +2729,6 @@ export default function DesignStudioSection({
         </div>
       )}
     </div>
+    </DesignProjectContext.Provider>
   );
 }

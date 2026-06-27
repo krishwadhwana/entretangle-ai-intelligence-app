@@ -5,10 +5,8 @@ import { executeBlock } from "./blocks";
 import { providerErrorMessage } from "./providerErrors";
 import {
   callPlannerV2,
-  callEntangler,
   callAudienceSynth,
   callDemographics,
-  callFinalReport,
   callClassifyVenture,
 } from "./llm";
 import { ProjectRetriever, formatGroundTruth } from "./rag";
@@ -48,13 +46,13 @@ import {
   copyAudienceFrom,
 } from "./audience";
 import { getCostUsd, getTokensUsed, isOverTokenCap } from "./usage";
-import { getFinancialModel } from "./store";
 import {
   isRunCancelledError,
   markRunCancelled,
   throwIfRunCancelled,
 } from "./jobs";
 import { blockToWire, conclusionToWire } from "./wire";
+import { parseStringArrayField } from "./dbJson";
 import {
   appendSimulationRun,
   buildRunRecord,
@@ -64,16 +62,10 @@ import {
   ClientProfileSchema,
   type AudienceAggregate,
   type ClientProfile,
-  type Conclusion,
   type RunStatus,
 } from "./schema";
-import {
-  addEdge,
-  blockCount,
-  concludedBlocks,
-  setStatus,
-  spawnBlock,
-} from "./engine/graph";
+import { setStatus, spawnBlock } from "./engine/graph";
+import { entangleAndConverge } from "./orchestration/entangle";
 
 // ---------------------------------------------------------------------------
 // The orchestrator is a deterministic state machine; LLM calls fill in
@@ -82,223 +74,6 @@ import {
 // ---------------------------------------------------------------------------
 
 export { blockToWire, conclusionToWire } from "./wire";
-
-/** Mechanical verification of a shared_entity edge (SPEC §4.4). */
-function sharesEntity(
-  a: { conclusions: Conclusion[] },
-  b: { conclusions: Conclusion[] }
-): boolean {
-  const tagsA = new Set(a.conclusions.flatMap((c) => c.entities));
-  return b.conclusions.some((c) => c.entities.some((e) => tagsA.has(e)));
-}
-
-async function converge(
-  emitter: RunEmitter,
-  capped: boolean,
-  profile: ClientProfile
-): Promise<void> {
-  const runId = emitter.runId;
-  const [blocks, aggEvent] = await Promise.all([
-    prisma.block.findMany({ where: { runId }, include: { conclusions: true } }),
-    prisma.runEvent.findFirst({
-      where: { runId, type: "audience_aggregated" },
-      orderBy: { seq: "desc" },
-    }),
-  ]);
-  const conclusionCount = blocks.reduce(
-    (sum, block) => sum + block.conclusions.length,
-    0
-  );
-  const aggregate = aggEvent
-    ? JSON.parse(aggEvent.payload).aggregate as AudienceAggregate
-    : null;
-
-  try {
-    const existingReport = await prisma.runEvent.findFirst({
-      where: { runId, type: "final_report" },
-      select: { id: true },
-    });
-    if (!existingReport) {
-      await setStatus(emitter, "running", "Writing final business report");
-      // Make economics quantitative if the founder already built a financial
-      // model for this project (else the report stays qualitative).
-      const run = await prisma.run.findUnique({
-        where: { id: runId },
-        select: { projectId: true },
-      });
-      const financials = run?.projectId
-        ? await getFinancialModel(run.projectId, runId)
-        : null;
-      const report = await callFinalReport(
-        runId,
-        profile,
-        blocks.map((b) => blockToWire(b, b.conclusions)),
-        aggregate,
-        financials
-      );
-      await emitter.emit({ type: "final_report", report });
-    }
-  } catch (e) {
-    console.error(`[orchestrator] final report generation failed:`, e);
-  }
-
-  const [finalTokensUsed, finalCostUsd] = await Promise.all([
-    getTokensUsed(runId),
-    getCostUsd(runId),
-  ]);
-  await emitter.emit({ type: "tokens_used", tokensUsed: finalTokensUsed });
-  await emitter.emit({ type: "cost_used", costUsd: finalCostUsd });
-  await emitter.emit({
-    type: "world_model_ready",
-    conclusionCount,
-    blockCount: blocks.length,
-  });
-  // Terminal status last — the SSE route closes streams on terminal status.
-  await setStatus(
-    emitter,
-    capped ? "capped" : "complete",
-    capped ? "Converged early — token cap reached" : "World model ready"
-  );
-}
-
-/**
- * Entangle → synthesize → repeat until caps, then converge (SPEC §4.4–4.6).
- * Shared by fresh runs (fromLayer = 1) and forks (fromLayer = fork layer).
- */
-async function entangleAndConverge(
-  emitter: RunEmitter,
-  profile: ClientProfile,
-  fromLayer: number
-): Promise<void> {
-  const runId = emitter.runId;
-  let layer = fromLayer;
-  let round = 1;
-
-  while (true) {
-    await throwIfRunCancelled(runId);
-    if (await isOverTokenCap(runId)) {
-      console.log(`[orchestrator] run ${runId}: token cap reached, converging`);
-      await converge(emitter, true, profile);
-      return;
-    }
-    const count = await blockCount(runId);
-    if (layer >= config.maxLayers || count >= config.maxBlocksPerRun) break;
-
-    await throwIfRunCancelled(runId);
-    await setStatus(emitter, "running", `Entangling — round ${round}`);
-    const concluded = await concludedBlocks(runId);
-    if (concluded.length === 0) throw new Error("No blocks concluded");
-
-    const byId = new Map(concluded.map((b) => [b.id, b]));
-    let ent;
-    try {
-      ent = await callEntangler(runId, concluded, round);
-    } catch (e) {
-      // Entangler failure is non-fatal: converge with what we have.
-      console.log(`[orchestrator] entangler failed, converging: ${e}`);
-      break;
-    }
-
-    // Mechanical edge verification (SPEC §4.4). shared_entity edges must
-    // actually share ≥1 entity tag; contradiction/dependency accepted on the
-    // entangler's word in v0, logged with reason.
-    const existing = await prisma.edge.findMany({
-      where: { runId, kind: "entangle" },
-    });
-    const seenPairs = new Set(
-      existing.map((e) => [e.fromBlockId, e.toBlockId].sort().join("|"))
-    );
-    for (const edge of ent.edges) {
-      const from = byId.get(edge.fromBlockId);
-      const to = byId.get(edge.toBlockId);
-      if (!from || !to || from === to) {
-        console.log(
-          `[orchestrator] DROPPED edge (unknown block): ${edge.fromBlockId} -> ${edge.toBlockId} ("${edge.reason}")`
-        );
-        continue;
-      }
-      const pair = [from.id, to.id].sort().join("|");
-      if (seenPairs.has(pair)) {
-        console.log(
-          `[orchestrator] DROPPED edge (duplicate pair): ${from.name} -> ${to.name}`
-        );
-        continue;
-      }
-      if (edge.trigger === "shared_entity" && !sharesEntity(from, to)) {
-        console.log(
-          `[orchestrator] DROPPED hallucinated shared_entity edge: ${from.name} -> ${to.name} ("${edge.reason}") — no shared entity tag`
-        );
-        continue;
-      }
-      console.log(
-        `[orchestrator] edge accepted (${edge.trigger}): ${from.name} -> ${to.name}`
-      );
-      seenPairs.add(pair);
-      await addEdge(emitter, {
-        fromBlockId: from.id,
-        toBlockId: to.id,
-        kind: "entangle",
-        reason: edge.reason,
-      });
-    }
-
-    // Synthesis blocks: only with valid inputs, clamped to remaining budget.
-    const budget = config.maxBlocksPerRun - (await blockCount(runId));
-    const synth = ent.synthesisBlocks
-      .filter((s) => s.inputBlockIds.every((id) => byId.has(id)))
-      .slice(0, Math.max(0, budget));
-    if (synth.length < ent.synthesisBlocks.length) {
-      console.log(
-        `[orchestrator] clamped synthesis blocks ${ent.synthesisBlocks.length} -> ${synth.length} (cap/invalid inputs)`
-      );
-    }
-    if (synth.length === 0) break;
-
-    if (await isOverTokenCap(runId)) {
-      await converge(emitter, true, profile);
-      return;
-    }
-
-    const nextLayer = layer + 1;
-    await setStatus(emitter, "running", `Synthesizing — layer ${nextLayer}`);
-    const spawned: { id: string; inputBlockIds: string[] }[] = [];
-    for (const s of synth) {
-      await throwIfRunCancelled(runId);
-      const id = await spawnBlock(emitter, {
-        name: s.name,
-        mission: s.mission,
-        layer: nextLayer,
-        kind: "synthesis",
-        domain: s.domain ?? "synthesis",
-        inputBlockIds: s.inputBlockIds,
-        params: {},
-      });
-      for (const inputId of s.inputBlockIds) {
-        await addEdge(emitter, {
-          fromBlockId: inputId,
-          toBlockId: id,
-          kind: "feeds",
-          reason: "conclusions feed synthesis",
-        });
-      }
-      spawned.push({ id, inputBlockIds: s.inputBlockIds });
-    }
-
-    await Promise.allSettled(
-      spawned.map((s) => {
-        const inputConclusions = s.inputBlockIds.flatMap(
-          (id) => byId.get(id)?.conclusions ?? []
-        );
-        return executeBlock(emitter, s.id, profile, inputConclusions);
-      })
-    );
-
-    layer = nextLayer;
-    round += 1;
-  }
-
-  await converge(emitter, false, profile);
-}
 
 /**
  * Auto-save a finished (or failed) simulation into its project's append-only
@@ -378,14 +153,6 @@ export async function executeRun(runId: string): Promise<void> {
     // 0 → research desks only (no audience).
     const audienceTarget = run.targetAudienceSize ?? config.targetAudienceSize;
 
-    // RAG (option B): load the founder's uploaded documents so research desks
-    // and audience synthesis can be grounded in their real data.
-    const retriever = run.projectId
-      ? await ProjectRetriever.load(run.projectId).catch((e) => {
-          console.error(`[orchestrator] retriever load failed:`, e);
-          return null;
-        })
-      : null;
     const planQuery = [
       run.brief,
       run.focusQuestion,
@@ -394,50 +161,71 @@ export async function executeRun(runId: string): Promise<void> {
     ]
       .filter(Boolean)
       .join(" ");
-    const ragPlanGroundTruth =
-      retriever?.hasDocs
-        ? formatGroundTruth(await retriever.search(planQuery, 6))
-        : "";
 
-    // Classify the venture FIRST (before planning) so industry knowledge + the
-    // planning template can shape which desks/cohorts/roles the planner picks.
-    const industry = await callClassifyVenture(runId, profile).catch((e) => {
-      console.error(`[orchestrator] industry classification failed:`, e);
-      return null;
-    });
-    if (industry) {
-      console.log(
-        `[orchestrator] industry=${industry.industry} hs=[${industry.hsCodes.join(
-          ","
-        )}] shops=[${industry.osmShopTags.join(
-          ","
-        )}] openData=[${industry.openDataQueries.join(",")}] library=${industry.libraryKey}`
-      );
-    }
-
-    // Auto-built industry knowledge (option A): cached-or-built, web-grounded,
-    // with provenance + freshness. Falls back to the curated library if the
-    // build fails AND nothing is cached.
-    const knowledge = industry
-      ? await getOrBuildIndustryKnowledge(
-          runId,
-          industry.industry,
-          industry.libraryKey,
-          profile.geography ?? []
-        ).catch((e) => {
-          console.error(`[orchestrator] knowledge build failed:`, e);
+    // Two independent setup chains run CONCURRENTLY — there is no data
+    // dependency between founder-RAG retrieval and venture classification, so
+    // serialising them just adds 5–10s of dead time before planning:
+    //   A) RAG (option B): load the founder's uploaded documents, then retrieve
+    //      plan-level ground truth so desks + synthesis can be grounded in it.
+    //   B) classify the venture FIRST so industry knowledge + the planning
+    //      template can shape which desks/cohorts/roles the planner picks, then
+    //      build/cache that web-grounded industry knowledge pack.
+    const [ragSetup, industrySetup] = await Promise.all([
+      (async () => {
+        const retriever = run.projectId
+          ? await ProjectRetriever.load(run.projectId).catch((e) => {
+              console.error(`[orchestrator] retriever load failed:`, e);
+              return null;
+            })
+          : null;
+        const ragPlanGroundTruth = retriever?.hasDocs
+          ? formatGroundTruth(await retriever.search(planQuery, 6))
+          : "";
+        return { retriever, ragPlanGroundTruth };
+      })(),
+      (async () => {
+        const industry = await callClassifyVenture(runId, profile).catch((e) => {
+          console.error(`[orchestrator] industry classification failed:`, e);
           return null;
-        })
-      : null;
-    if (knowledge) {
-      console.log(
-        `[orchestrator] industry knowledge ${
-          knowledge.fresh ? "cache-hit" : "built"
-        } (as of ${knowledge.builtAt.toISOString().slice(0, 10)}, ${
-          knowledge.sources.length
-        } sources)`
-      );
-    }
+        });
+        if (industry) {
+          console.log(
+            `[orchestrator] industry=${industry.industry} hs=[${industry.hsCodes.join(
+              ","
+            )}] shops=[${industry.osmShopTags.join(
+              ","
+            )}] openData=[${industry.openDataQueries.join(",")}] library=${industry.libraryKey}`
+          );
+        }
+        // Auto-built industry knowledge (option A): cached-or-built,
+        // web-grounded, with provenance + freshness. Falls back to the curated
+        // library if the build fails AND nothing is cached.
+        const knowledge = industry
+          ? await getOrBuildIndustryKnowledge(
+              runId,
+              industry.industry,
+              industry.libraryKey,
+              profile.geography ?? []
+            ).catch((e) => {
+              console.error(`[orchestrator] knowledge build failed:`, e);
+              return null;
+            })
+          : null;
+        if (knowledge) {
+          console.log(
+            `[orchestrator] industry knowledge ${
+              knowledge.fresh ? "cache-hit" : "built"
+            } (as of ${knowledge.builtAt.toISOString().slice(0, 10)}, ${
+              knowledge.sources.length
+            } sources)`
+          );
+        }
+        return { industry, knowledge };
+      })(),
+    ]);
+    const { retriever, ragPlanGroundTruth } = ragSetup;
+    const { industry, knowledge } = industrySetup;
+
     const curatedLib = industry ? getIndustryLibrary(industry.libraryKey) : null;
     // Prefer the auto-built pack; fall back to the curated library.
     const industryGroundTruth = knowledge
@@ -579,9 +367,27 @@ export async function executeRun(runId: string): Promise<void> {
       }))
     );
     const GOVERNANCE_DOMAINS = new Set(["regulation", "finance", "supply", "market"]);
+    // Founder-RAG retrieval is independent per desk — fire all of them at once
+    // instead of awaiting up to ~18 vector searches one at a time (~2–3.5s).
+    await throwIfRunCancelled(runId);
+    const deskRagByIndex = retriever?.hasDocs
+      ? await Promise.all(
+          desks.map((d) =>
+            retriever
+              .search(d.mission, 4)
+              .then(formatGroundTruth)
+              .catch((e) => {
+                console.error(
+                  `[orchestrator] desk RAG search failed for "${d.name}":`,
+                  e
+                );
+                return "";
+              })
+          )
+        )
+      : [];
     const deskGroundTruth = new Map<string, string>();
     for (const [i, d] of desks.entries()) {
-      await throwIfRunCancelled(runId);
       const parts: string[] = [];
       // Export run: every desk reasons against the home-market prior.
       if (exportPriorGroundTruth) parts.push(exportPriorGroundTruth);
@@ -589,10 +395,8 @@ export async function executeRun(runId: string): Promise<void> {
       if (industryGroundTruth) parts.push(industryGroundTruth);
       if (governanceGroundTruth && GOVERNANCE_DOMAINS.has(d.domain))
         parts.push(governanceGroundTruth);
-      if (retriever?.hasDocs) {
-        const gt = formatGroundTruth(await retriever.search(d.mission, 4));
-        if (gt) parts.push(gt);
-      }
+      const gt = deskRagByIndex[i];
+      if (gt) parts.push(gt);
       const sd = structuredByDomain.get(d.domain);
       if (sd) parts.push(formatStructured(sd));
       if (parts.length > 0) deskGroundTruth.set(deskIds[i], parts.join("\n\n"));
@@ -665,32 +469,50 @@ export async function executeRun(runId: string): Promise<void> {
           : `${desks.length} desks researching · ${cohortIds.length} cohorts (~${audienceTarget.toLocaleString()} personas) simulating`
     );
     const runDesks = async (): Promise<boolean> => {
-      const wave = Math.max(1, config.deskConcurrency);
+      // Fixed-size WORKER POOL (same pattern as the cohort sim): each worker
+      // pulls the next desk the instant it finishes, so a single slow desk only
+      // ties up its own slot instead of stalling the whole wave behind it.
+      const concurrency = Math.max(1, config.deskConcurrency);
       let anyConcluded = false;
-      for (let i = 0; i < deskIds.length; i += wave) {
-        await throwIfRunCancelled(runId);
-        const results = await Promise.allSettled(
-          deskIds
-            .slice(i, i + wave)
-            .map((id) =>
-              executeBlock(
-                emitter,
-                id,
-                profile,
-                [],
-                undefined,
-                deskGroundTruth.get(id)
-              )
-            )
-        );
-        anyConcluded =
-          anyConcluded ||
-          results.some((r) => r.status === "fulfilled" && r.value === true);
-        if (await isOverTokenCap(runId)) {
-          console.log(`[orchestrator] cap reached mid-desks — stopping waves`);
-          break;
+      let cursor = 0;
+      let capped = false;
+
+      async function worker(): Promise<void> {
+        while (true) {
+          if (capped) return;
+          await throwIfRunCancelled(runId);
+          if (await isOverTokenCap(runId)) {
+            if (!capped) {
+              capped = true;
+              console.log(`[orchestrator] cap reached mid-desks — stopping pool`);
+            }
+            return;
+          }
+          const i = cursor++;
+          if (i >= deskIds.length) return;
+          const id = deskIds[i];
+          // executeBlock may throw (it fails the block, not the run) — swallow
+          // so one bad desk can't kill its worker; the worker grabs the next.
+          const ok = await executeBlock(
+            emitter,
+            id,
+            profile,
+            [],
+            undefined,
+            deskGroundTruth.get(id)
+          ).catch((e) => {
+            console.error(`[orchestrator] desk ${id} failed:`, e);
+            return false;
+          });
+          if (ok === true) anyConcluded = true;
         }
       }
+
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, deskIds.length) }, () =>
+          worker()
+        )
+      );
       return anyConcluded;
     };
     // Phase 2 — export prior transfer: destination-market cohorts are simulated
@@ -1021,7 +843,7 @@ async function executeForkPhase(
     "running",
     `Fork — re-running "${forkBlock.name}"`
   );
-  const inputIds: string[] = JSON.parse(forkBlock.inputBlockIds);
+  const inputIds = parseStringArrayField(forkBlock.inputBlockIds, "block input ids");
   const inputConclusions = (
     await prisma.conclusion.findMany({ where: { blockId: { in: inputIds } } })
   ).map(conclusionToWire);

@@ -1,6 +1,10 @@
 import { prisma } from "../db";
 import { throwIfRunCancelled } from "../jobs";
 import { blockToWire, conclusionToWire } from "../wire";
+import {
+  encodeBlockParamsField,
+  encodeStringArrayField,
+} from "../dbJson";
 import type { RunEmitter } from "../events";
 import type { Block, Edge, RunStatus } from "../schema";
 
@@ -26,9 +30,9 @@ export async function spawnBlock(
       kind: data.kind,
       domain: data.domain,
       state: "spawning",
-      inputBlockIds: JSON.stringify(data.inputBlockIds),
-      params: JSON.stringify(data.params),
-      logs: JSON.stringify([]),
+      inputBlockIds: encodeStringArrayField(data.inputBlockIds),
+      params: encodeBlockParamsField(data.params),
+      logs: encodeStringArrayField([]),
     },
   });
   await emitter.emit({ type: "block_spawned", block: blockToWire(row) });

@@ -18,7 +18,7 @@ import { ValueTooltip } from "./ValueTooltip";
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, isRejector, SENTIMENT_META } from "@/lib/vote";
 import { providerErrorMessage } from "@/lib/providerErrors";
-import { SidebarCollapseButton } from "./CollapsibleSidebar";
+import { postSSE } from "@/lib/sseClient";
 
 type Props = {
   runId: string;
@@ -306,7 +306,6 @@ export default function CohortDrawer({
     return out;
   }, [allCohorts, cohort]);
   const [shown, setShown] = useState(12);
-  const [collapsed, setCollapsed] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(() => {
     if (typeof window === "undefined") return DRAWER_DEFAULT_WIDTH;
@@ -328,6 +327,8 @@ export default function CohortDrawer({
     nextMove: string;
   } | null>(null);
   const [chatLoading, setChatLoading] = useState(false);
+  // Live reply prose while a 1:1 customer chat streams in (null = not streaming).
+  const [chatStreaming, setChatStreaming] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   // Which panel the chat region shows: 1:1/group "chat" or two-persona "interaction".
   const [panel, setPanel] = useState<"chat" | "interaction">("chat");
@@ -503,37 +504,39 @@ export default function CohortDrawer({
     setChatQuestion("");
     setChatError(null);
     setChatLoading(true);
+    // Customer (1:1) chats go to the win-back endpoint, which persists any vote
+    // change and emits an event; group chats stay on the audience route.
+    const customer = chatMode === "customer" && selectedPersona;
     try {
-      // Customer (1:1) chats go to the win-back endpoint, which persists any
-      // vote change and emits an event; group chats stay on the audience route.
-      const customer = chatMode === "customer" && selectedPersona;
-      const res = await fetch(
-        customer
-          ? `/api/runs/${runId}/persona/${selectedPersona.id}/chat`
-          : `/api/runs/${runId}/audience-chat`,
-        {
+      let result: AudienceChatResponse;
+      if (customer) {
+        // 1:1 reply streams token-by-token for immediate feedback.
+        setChatStreaming("");
+        result = await postSSE<AudienceChatResponse>(
+          `/api/runs/${runId}/persona/${selectedPersona.id}/chat?stream=1`,
+          { question, history },
+          (text) => setChatStreaming(text)
+        );
+      } else {
+        const res = await fetch(`/api/runs/${runId}/audience-chat`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(
-            customer
-              ? { question, history }
-              : {
-                  mode: chatMode,
-                  cohortId: cohort.id,
-                  personaId: null,
-                  question,
-                  history,
-                }
-          ),
+          body: JSON.stringify({
+            mode: chatMode,
+            cohortId: cohort.id,
+            personaId: null,
+            question,
+            history,
+          }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(
+            providerErrorMessage(data.error ?? data, `chat failed (${res.status})`)
+          );
         }
-      );
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(
-          providerErrorMessage(data.error ?? data, `chat failed (${res.status})`)
-        );
+        result = data as AudienceChatResponse;
       }
-      const result = data as AudienceChatResponse;
       const received = result.messages.map((message, index) => ({
         id: `audience-${Date.now()}-${index}`,
         role:
@@ -554,55 +557,20 @@ export default function CohortDrawer({
     } catch (e) {
       setChatError(providerErrorMessage(e, "chat failed"));
     } finally {
+      setChatStreaming(null);
       setChatLoading(false);
     }
   };
 
   return (
     <aside
-      className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl"
-      style={{ width: collapsed ? 56 : width }}
+      className="absolute right-0 top-0 z-[1000] flex h-full max-w-[calc(100vw-2rem)] flex-col border-l border-neutral-200 bg-white shadow-xl max-sm:inset-0 max-sm:!w-full max-sm:!max-w-none max-sm:border-l-0"
+      style={{ width }}
     >
-      {collapsed ? (
-        <div className="flex h-full flex-col items-center gap-2 p-2">
-          <SidebarCollapseButton
-            collapsed={collapsed}
-            onToggle={() => setCollapsed(false)}
-            title="persona drawer"
-            side="right"
-          />
-          <span
-            className="h-3 w-3 rounded-full"
-            style={{ background: SEGMENT_COLORS[cohort.segment] }}
-          />
-          <MessageCircle
-            className={`h-4 w-4 ${
-              chatOpen && panel === "chat" ? "text-indigo-600" : "text-neutral-300"
-            }`}
-          />
-          <Sparkles
-            className={`h-4 w-4 ${
-              chatOpen && panel === "interaction"
-                ? "text-indigo-600"
-                : "text-neutral-300"
-            }`}
-          />
-          <button
-            type="button"
-            onClick={onClose}
-            className="mt-auto flex h-7 w-7 items-center justify-center rounded-md text-neutral-400 hover:bg-neutral-100 hover:text-neutral-700"
-            title="Close persona drawer"
-            aria-label="Close persona drawer"
-          >
-            <X className="h-4 w-4" />
-          </button>
-        </div>
-      ) : (
-        <>
       <button
         type="button"
         onMouseDown={startResize}
-        className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500"
+        className="absolute -left-3 top-0 flex h-full w-5 cursor-col-resize items-center justify-center text-neutral-300 hover:text-neutral-500 max-sm:hidden"
         title="Resize drawer"
         aria-label="Resize persona drawer"
       >
@@ -651,12 +619,6 @@ export default function CohortDrawer({
         >
           <Sparkles className="h-3.5 w-3.5" /> Interact
         </button>
-        <SidebarCollapseButton
-          collapsed={collapsed}
-          onToggle={() => setCollapsed(true)}
-          title="persona drawer"
-          side="right"
-        />
         <button onClick={onClose} className="text-neutral-400 hover:text-neutral-700">
           <X className="h-4 w-4" />
         </button>
@@ -850,7 +812,15 @@ export default function CohortDrawer({
                   ))}
                 </ul>
               )}
-              {chatLoading && (
+              {chatStreaming !== null && chatStreaming !== "" && (
+                <div className="mt-2 flex justify-start">
+                  <div className="max-w-[90%] rounded-lg border border-indigo-100 bg-indigo-50/50 px-2.5 py-2 text-[11px] leading-snug text-neutral-700">
+                    {chatStreaming}
+                    <span className="ml-0.5 inline-block animate-pulse">▍</span>
+                  </div>
+                </div>
+              )}
+              {chatLoading && (chatStreaming === null || chatStreaming === "") && (
                 <div className="mt-2 flex items-center gap-1 text-[10px] text-indigo-500">
                   <Loader2 className="h-3 w-3 animate-spin" />
                   Simulating response…
@@ -1110,8 +1080,6 @@ export default function CohortDrawer({
           </button>
         )}
       </div>
-        </>
-      )}
     </aside>
   );
 }

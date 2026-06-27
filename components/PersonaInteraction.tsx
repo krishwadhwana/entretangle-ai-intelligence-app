@@ -5,6 +5,7 @@ import { Loader2, Send, Sparkles, Flag, Plus, Search, X, MapPin } from "lucide-r
 import type { PersonaConversation } from "@/lib/schema";
 import { classifySentiment, SENTIMENT_META } from "@/lib/vote";
 import { providerErrorMessage } from "@/lib/providerErrors";
+import { postSSE } from "@/lib/sseClient";
 
 // A persona the picker can choose — carries its cohort context (label, region,
 // segment) so you can pull someone in from another ring of the country.
@@ -63,6 +64,8 @@ export default function PersonaInteraction({
   const [loading, setLoading] = useState<Loading>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState("");
+  // Live reply prose while a turn streams in (cleared once the turn lands).
+  const [streamingText, setStreamingText] = useState<string | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<SentimentFilter>("all");
   const [region, setRegion] = useState<string>("all");
@@ -144,8 +147,25 @@ export default function PersonaInteraction({
     }
     void post({ action: "start", participantIds: selected, topic }, "start");
   };
-  const reply = (personaId: string) =>
-    convo && void post({ action: "reply", conversationId: convo.id, personaId }, personaId);
+  // Reply streams: tokens render live in a transient bubble, then the saved
+  // conversation replaces it. Falls back cleanly if streaming errors out.
+  const reply = (personaId: string) => {
+    if (!convo) return;
+    setLoading(personaId);
+    setError(null);
+    setStreamingText("");
+    void postSSE<PersonaConversation>(
+      `/api/runs/${runId}/persona-interaction?stream=1`,
+      { action: "reply", conversationId: convo.id, personaId },
+      (text) => setStreamingText(text)
+    )
+      .then((data) => setConvo(data))
+      .catch((e) => setError(providerErrorMessage(e, "request failed")))
+      .finally(() => {
+        setStreamingText(null);
+        setLoading(null);
+      });
+  };
   const inject = () => {
     const n = note.trim();
     if (!n || !convo) return;
@@ -374,7 +394,23 @@ export default function PersonaInteraction({
             })}
           </ul>
         )}
-        {busy && loading !== "inject" && (
+        {streamingText !== null && (
+          <div className="mt-2 flex justify-start">
+            <div className="max-w-[90%] rounded-lg border border-indigo-100 bg-indigo-50/50 px-2.5 py-2 text-[11px] leading-snug text-neutral-700">
+              {streamingText ? (
+                <p>
+                  {streamingText}
+                  <span className="ml-0.5 inline-block animate-pulse">▍</span>
+                </p>
+              ) : (
+                <span className="flex items-center gap-1 text-[10px] text-indigo-500">
+                  <Loader2 className="h-3 w-3 animate-spin" /> Thinking…
+                </span>
+              )}
+            </div>
+          </div>
+        )}
+        {busy && streamingText === null && loading !== "inject" && (
           <div className="mt-2 flex items-center gap-1 text-[10px] text-indigo-500">
             <Loader2 className="h-3 w-3 animate-spin" /> Generating…
           </div>

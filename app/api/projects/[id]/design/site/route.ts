@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { requireProjectForApi } from "@/lib/apiAuth";
 import { deployStaticSite, vercelDeployEnabled } from "@/lib/deploy/vercel";
+import { hydrateSiteFiles } from "@/lib/design/assetStorage";
 import { enqueueProjectJob } from "@/lib/jobs";
 import { toProviderErrorPayload } from "@/lib/providerErrors";
 import {
@@ -73,15 +74,18 @@ export async function POST(
     if (!site) {
       return NextResponse.json({ error: "site not found" }, { status: 404 });
     }
+    // The site's html/files now live in object storage — pull the real bytes
+    // back before publishing to Vercel.
+    const { html, files } = await hydrateSiteFiles(site);
     try {
       const { url } = await deployStaticSite(
         `${project.name}-${site.brandName}`,
-        site.files.length
-          ? site.files.map((file) => ({
+        files.length
+          ? files.map((file) => ({
               path: file.path,
               content: file.content,
             }))
-          : site.html
+          : html
       );
       const updated = await setSiteDeployUrl(params.id, site.id, url);
       return NextResponse.json({ site: updated });

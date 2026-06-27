@@ -4,6 +4,11 @@ import { callExecutor } from "./llm";
 import { getCostUsd, getTokensUsed } from "./usage";
 import { isRunCancelledError, throwIfRunCancelled } from "./jobs";
 import { providerErrorMessage } from "./providerErrors";
+import {
+  encodeLowerStringArrayField,
+  encodeStringArrayField,
+  parseBlockParamsField,
+} from "./dbJson";
 import type { RunEmitter } from "./events";
 import type { ClientProfile, Conclusion, ExecutorOutput } from "./schema";
 
@@ -51,7 +56,7 @@ export async function executeBlock(
 
     // Real mode streams log lines live (Shot 7); mock mode and web-grounded
     // desks replay logs with 400–700ms artificial pacing (SPEC §4.3).
-    const params = JSON.parse(block.params) as Record<string, number | string>;
+    const params = parseBlockParamsField(block.params);
     const webGrounded = params.webSearch === 1 || params.webSearch === "true";
     let streamedCount = 0;
     const producer = produce
@@ -89,8 +94,8 @@ export async function executeBlock(
           claim: c.claim,
           value: c.value,
           confidence: c.confidence,
-          entities: JSON.stringify(c.entities.map((e) => e.toLowerCase())),
-          sources: JSON.stringify(c.sources),
+          entities: encodeLowerStringArrayField(c.entities),
+          sources: encodeStringArrayField(c.sources),
         },
       });
       conclusions.push({
@@ -106,7 +111,7 @@ export async function executeBlock(
 
     await prisma.block.update({
       where: { id: blockId },
-      data: { state: "concluded", logs: JSON.stringify(output.logs) },
+      data: { state: "concluded", logs: encodeStringArrayField(output.logs) },
     });
     await emitter.emit({ type: "block_concluded", blockId, conclusions });
     // Live token + cost counters for the top bar (SPEC §10, SPEC-V2 §2).

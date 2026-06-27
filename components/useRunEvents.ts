@@ -176,6 +176,30 @@ export function canvasReducer(
           : [...next.cohortOrder, event.cohort.id],
       };
     }
+    case "cohort_personas": {
+      const c = next.cohorts[event.cohortId];
+      if (!c) return next;
+      // Append only personas we don't already hold (a replay/overlap or two
+      // concurrent batches of the same cohort must not double-count).
+      const seen = new Set(c.personas.map((p) => p.id));
+      const personas = [
+        ...c.personas,
+        ...event.personas.filter((p) => !seen.has(p.id)),
+      ];
+      return {
+        ...next,
+        cohorts: {
+          ...next.cohorts,
+          [c.id]: {
+            ...c,
+            // Keep a finished cohort finished; otherwise it's mid-simulation.
+            state: c.state === "done" ? c.state : "simulating",
+            stats: event.stats,
+            personas,
+          },
+        },
+      };
+    }
     case "cohort_simulated": {
       const c = next.cohorts[event.cohortId];
       if (!c) return next;
@@ -285,8 +309,10 @@ const EVENT_TYPES = [
   "cost_used",
   "heartbeat",
   "cohort_spawned",
+  "cohort_personas",
   "cohort_simulated",
   "cohort_failed",
+  "persona_updated",
   "audience_aggregated",
   "conclusion_query",
   "run_error",

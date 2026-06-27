@@ -1,7 +1,6 @@
 import { randomUUID } from "crypto";
-import { mkdir, readFile, rm, writeFile } from "fs/promises";
-import path from "path";
 import type { ProductImageRef, WebsiteAnalysis } from "./schema";
+import { deleteObject, getObject, putObject } from "./storage";
 
 export const MAX_PRODUCT_IMAGES = 12;
 export const MAX_PRODUCT_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -53,21 +52,16 @@ export function productImageUrl(projectId: string, imageId: string): string {
   )}/product-images/${encodeURIComponent(imageId)}`;
 }
 
-export function productImageStoragePath(
+// Object-storage key for a product image (S3/R2 key, or local-fallback path
+// under data/uploads/). Slash-delimited so it maps cleanly onto both.
+export function productImageStorageKey(
   projectId: string,
   imageId: string,
   mimeType: string
 ): string {
   const ext = productImageExtension(mimeType);
   if (!ext) throw new Error(`unsupported image type: ${mimeType}`);
-  return path.join(
-    process.cwd(),
-    "data",
-    "uploads",
-    "product-images",
-    projectId,
-    `${imageId}.${ext}`
-  );
+  return `product-images/${projectId}/${imageId}.${ext}`;
 }
 
 export async function saveProductImageFile(
@@ -76,25 +70,31 @@ export async function saveProductImageFile(
   mimeType: string,
   buffer: Buffer
 ): Promise<void> {
-  const filePath = productImageStoragePath(projectId, imageId, mimeType);
-  await mkdir(path.dirname(filePath), { recursive: true });
-  await writeFile(filePath, buffer);
+  await putObject(
+    productImageStorageKey(projectId, imageId, mimeType),
+    buffer,
+    mimeType
+  );
 }
 
 export async function readProductImageFile(
   projectId: string,
   image: ProductImageRef
 ): Promise<Buffer> {
-  return readFile(productImageStoragePath(projectId, image.id, image.mimeType));
+  const stored = await getObject(
+    productImageStorageKey(projectId, image.id, image.mimeType)
+  );
+  if (!stored) throw new Error("image file missing");
+  return stored.body;
 }
 
 export async function deleteProductImageFile(
   projectId: string,
   image: ProductImageRef
 ): Promise<void> {
-  await rm(productImageStoragePath(projectId, image.id, image.mimeType), {
-    force: true,
-  });
+  await deleteObject(
+    productImageStorageKey(projectId, image.id, image.mimeType)
+  );
 }
 
 export function safeProductImageName(name: string): string {

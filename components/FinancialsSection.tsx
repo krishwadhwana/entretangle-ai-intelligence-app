@@ -1026,7 +1026,7 @@ export default function FinancialsSection({
             </section>
 
             {/* Unit economics + break-even + runway */}
-            <section className="grid gap-3 sm:grid-cols-3">
+            <section className="grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Stat label="Blended CAC" n={model.unitEconomics.blendedCac} currency={currency} />
               <Stat label="LTV" n={model.unitEconomics.ltv} currency={currency} />
               <Stat label="LTV : CAC" n={model.unitEconomics.ltvCacRatio} currency={currency} />
@@ -1050,7 +1050,7 @@ export default function FinancialsSection({
                   <Wallet className="h-4 w-4 text-indigo-500" /> Assumptions you can
                   override
                 </h3>
-                <div className="mt-3 grid gap-3 sm:grid-cols-3">
+                <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <NumField
                     label="Fixed costs / mo"
                     value={inputs.fixedCostsPerMonth}

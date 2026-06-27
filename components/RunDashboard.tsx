@@ -26,19 +26,15 @@ import {
   MapPin,
   Search,
   X,
+  MoreHorizontal,
 } from "lucide-react";
 import { useRunEvents } from "./useRunEvents";
+import ScrollRow from "./ui/ScrollRow";
+import PortalMenu from "./ui/PortalMenu";
+import ErrorBoundary from "./ui/ErrorBoundary";
 import PanelStrip, { ConclusionWorkspace, DomainWorkspace } from "./PanelStrip";
-import NetworkView from "./NetworkView";
-import KnowHowWorkspace from "./KnowHowWorkspace";
-import InsightsView from "./InsightsView";
-import PlaybookView from "./PlaybookView";
-import OwnerDashboard from "./OwnerDashboard";
-import LaunchSimulation from "./LaunchSimulation";
 import DossierExportMenu from "./DossierExportMenu";
 import { providerErrorMessage } from "@/lib/providerErrors";
-import ExportViability from "./ExportViability";
-import CohortDrawer from "./CohortDrawer";
 import { ProjectSelector } from "./AppHeader";
 import { searchKnownLocalities } from "@/lib/localityAnchors";
 
@@ -51,6 +47,25 @@ const MapView = dynamic(() => import("./MapView"), {
     </div>
   ),
 });
+
+// Each main view is rendered only when its `view` is active, so code-split them
+// out of the dashboard's initial bundle. This keeps recharts (Insights, Launch),
+// @xyflow/react (Network) and the heavy owner-facing sections (DesignStudio,
+// InvestorOS, Financials via OwnerDashboard) off the critical path until opened.
+const viewLoading = () => (
+  <div className="flex h-full items-center justify-center text-xs text-neutral-400">
+    <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
+    Loading…
+  </div>
+);
+const NetworkView = dynamic(() => import("./NetworkView"), { loading: viewLoading });
+const KnowHowWorkspace = dynamic(() => import("./KnowHowWorkspace"), { loading: viewLoading });
+const InsightsView = dynamic(() => import("./InsightsView"), { loading: viewLoading });
+const PlaybookView = dynamic(() => import("./PlaybookView"), { loading: viewLoading });
+const OwnerDashboard = dynamic(() => import("./OwnerDashboard"), { loading: viewLoading });
+const LaunchSimulation = dynamic(() => import("./LaunchSimulation"), { loading: viewLoading });
+const ExportViability = dynamic(() => import("./ExportViability"), { loading: viewLoading });
+const CohortDrawer = dynamic(() => import("./CohortDrawer"), { ssr: false });
 
 type SiblingRun = {
   id: string;
@@ -877,128 +892,215 @@ export default function RunDashboard({
 
   return (
     <div className="flex h-full flex-col">
-      <header className="flex flex-wrap items-center gap-4 border-b border-neutral-200 px-4 py-2.5">
-        <a href="/" className="text-sm font-semibold tracking-tight">
-          EntreTangle
-        </a>
-        <a
-          href={projectWorkspaceHref}
-          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400"
-        >
-          <ArrowLeft className="h-3 w-3" /> Workspace
-        </a>
-        <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
-        <p
-          className="min-w-0 max-w-md flex-1 truncate text-xs text-neutral-500"
-          title={brief}
-        >
-          {brief}
-        </p>
-        <span className="rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
-          {replaying ? "Replaying…" : state.phaseLabel}
-        </span>
-        {siblingRuns.length > 1 && (
-          <RunSwitcher runId={runId} siblings={siblingRuns} />
-        )}
-        <button
-          onClick={() => {
-            setAudienceBranchError(null);
-            setAudienceBranchOpen(true);
-          }}
-          disabled={!canBranchAudience}
-          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 disabled:opacity-40"
-          title={
-            canBranchAudience
-              ? "Create an audience-variant branch"
-              : "Available after an audience has simulated"
-          }
-        >
-          <GitBranchPlus className="h-3 w-3" /> Audience branch
-        </button>
-        <DossierExportMenu
-          projectId={projectId}
-          busy={dossierBusy}
-          disabled={!state.finalReport && !state.aggregate}
-          filename={`${runId}-dossier`}
-          title="Run dossier"
-          sourceType="run"
-          sourceId={runId}
-          onBuildDossier={buildRunDossierForExport}
-          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
-        />
-        {!isExportRun && canLaunch ? (
-          <button
-            onClick={() => openExportModal("United States")}
-            disabled={exportBusy}
-            className="flex items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:border-indigo-500 disabled:opacity-60"
-            title="Carry this run forward into another market (landed cost, pricing & viability)"
+      <header className="border-b border-neutral-200">
+        <div className="flex flex-wrap items-center gap-2 px-3 py-2 lg:gap-4 lg:px-4 lg:py-2.5">
+          <a
+            href="/"
+            className="hidden shrink-0 text-sm font-semibold tracking-tight sm:inline"
           >
-            {exportBusy ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Ship className="h-3 w-3" />
-            )}
-            Test in another market
-          </button>
-        ) : null}
-        <span
-          className="flex items-center gap-1 text-[11px] text-neutral-500"
-          title="simulated personas"
-        >
-          <Users className="h-3.5 w-3.5" />
-          {personaCount.toLocaleString()}
-        </span>
-        <span
-          className="flex items-center gap-1 text-[11px] text-neutral-500"
-          title={projectUsage ? "total project LLM spend" : "current run LLM spend"}
-        >
-          <Coins className="h-3.5 w-3.5" />
-          {totalTokensUsed.toLocaleString()} tok · ${totalCostUsd.toFixed(2)}
-        </span>
-        {(resumable || resuming) && (
-          <button
-            onClick={onResume}
-            disabled={resuming}
-            className="flex items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
-            title="Continue this run from the last saved work — re-runs only unfinished cohorts and reuses completed desks"
+            EntreTangle
+          </a>
+          <a
+            href={projectWorkspaceHref}
+            className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400"
           >
-            {resuming ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Play className="h-3 w-3" />
-            )}
-            {resuming
-              ? "Continuing..."
-              : state.status === "cancelled"
-                ? "Resume run"
-                : "Continue run"}
-          </button>
-        )}
-        {(cancellable || cancelling || state.status === "cancelling") && (
-          <button
-            onClick={onCancel}
-            disabled={cancelling || state.status === "cancelling"}
-            className="flex items-center gap-1 rounded-lg border border-red-300 px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:border-red-400 disabled:opacity-60"
-            title="Cancel this run before the next expensive step starts"
+            <ArrowLeft className="h-3 w-3" />
+            <span className="hidden sm:inline">Workspace</span>
+          </a>
+          <ProjectSelector selectedProjectId={projectId} menuAlign="left" />
+          <p
+            className="hidden min-w-0 max-w-md flex-1 truncate text-xs text-neutral-500 lg:block"
+            title={brief}
           >
-            {cancelling || state.status === "cancelling" ? (
-              <Loader2 className="h-3 w-3 animate-spin" />
-            ) : (
-              <Square className="h-3 w-3" />
-            )}
-            {cancelling || state.status === "cancelling"
-              ? "Cancelling..."
-              : "Cancel"}
-          </button>
-        )}
-        <button
-          onClick={replay}
-          disabled={replaying}
-          className="flex items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 disabled:opacity-40"
-          title="Replay the run from the event log"
-        >
-          <RotateCcw className="h-3 w-3" /> Replay
-        </button>
+            {brief}
+          </p>
+          <span className="shrink-0 rounded-full border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600">
+            {replaying ? "Replaying…" : state.phaseLabel}
+          </span>
+          {siblingRuns.length > 1 && (
+            <RunSwitcher runId={runId} siblings={siblingRuns} />
+          )}
+
+          {/* Compact persona/spend chip — mobile only (full versions live in
+              the desktop group / overflow menu below). */}
+          <span
+            className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-500 lg:hidden"
+            title="personas"
+          >
+            <Users className="h-3.5 w-3.5" />
+            {personaCount.toLocaleString()}
+          </span>
+
+          {/* Resume / Cancel stay inline at every width — they are the urgent,
+              conditional run controls. */}
+          {(resumable || resuming) && (
+            <button
+              onClick={onResume}
+              disabled={resuming}
+              className="flex shrink-0 items-center gap-1 rounded-lg bg-indigo-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-indigo-500 disabled:opacity-60"
+              title="Continue this run from the last saved work — re-runs only unfinished cohorts and reuses completed desks"
+            >
+              {resuming ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Play className="h-3 w-3" />
+              )}
+              {resuming
+                ? "Continuing..."
+                : state.status === "cancelled"
+                  ? "Resume run"
+                  : "Continue run"}
+            </button>
+          )}
+          {(cancellable || cancelling || state.status === "cancelling") && (
+            <button
+              onClick={onCancel}
+              disabled={cancelling || state.status === "cancelling"}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-red-300 px-2.5 py-1 text-[11px] font-semibold text-red-600 hover:border-red-400 disabled:opacity-60"
+              title="Cancel this run before the next expensive step starts"
+            >
+              {cancelling || state.status === "cancelling" ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Square className="h-3 w-3" />
+              )}
+              {cancelling || state.status === "cancelling"
+                ? "Cancelling..."
+                : "Cancel"}
+            </button>
+          )}
+
+          {/* Secondary actions: inline on desktop, collapsed into the ⋯ menu on
+              mobile. `lg:contents` lets these flow into the bar at lg+ without
+              an extra wrapper box. */}
+          <div className="hidden lg:contents">
+            <button
+              onClick={() => {
+                setAudienceBranchError(null);
+                setAudienceBranchOpen(true);
+              }}
+              disabled={!canBranchAudience}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 disabled:opacity-40"
+              title={
+                canBranchAudience
+                  ? "Create an audience-variant branch"
+                  : "Available after an audience has simulated"
+              }
+            >
+              <GitBranchPlus className="h-3 w-3" /> Audience branch
+            </button>
+            <DossierExportMenu
+              projectId={projectId}
+              busy={dossierBusy}
+              disabled={!state.finalReport && !state.aggregate}
+              filename={`${runId}-dossier`}
+              title="Run dossier"
+              sourceType="run"
+              sourceId={runId}
+              onBuildDossier={buildRunDossierForExport}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-semibold text-neutral-700 hover:border-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+            />
+            {!isExportRun && canLaunch ? (
+              <button
+                onClick={() => openExportModal("United States")}
+                disabled={exportBusy}
+                className="flex shrink-0 items-center gap-1 rounded-lg border border-indigo-300 px-2.5 py-1 text-[11px] font-semibold text-indigo-700 hover:border-indigo-500 disabled:opacity-60"
+                title="Carry this run forward into another market (landed cost, pricing & viability)"
+              >
+                {exportBusy ? (
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                ) : (
+                  <Ship className="h-3 w-3" />
+                )}
+                Test in another market
+              </button>
+            ) : null}
+            <span
+              className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-500"
+              title="simulated personas"
+            >
+              <Users className="h-3.5 w-3.5" />
+              {personaCount.toLocaleString()}
+            </span>
+            <span
+              className="flex shrink-0 items-center gap-1 text-[11px] text-neutral-500"
+              title={
+                projectUsage
+                  ? "total project LLM spend"
+                  : "current run LLM spend"
+              }
+            >
+              <Coins className="h-3.5 w-3.5" />
+              {totalTokensUsed.toLocaleString()} tok · $
+              {totalCostUsd.toFixed(2)}
+            </span>
+            <button
+              onClick={replay}
+              disabled={replaying}
+              className="flex shrink-0 items-center gap-1 rounded-lg border border-neutral-300 px-2.5 py-1 text-[11px] font-medium text-neutral-600 hover:border-indigo-400 disabled:opacity-40"
+              title="Replay the run from the event log"
+            >
+              <RotateCcw className="h-3 w-3" /> Replay
+            </button>
+          </div>
+
+          {/* Mobile overflow menu (portaled so it escapes any clipping). */}
+          <div className="ml-auto shrink-0 lg:hidden">
+            <PortalMenu
+              align="right"
+              panelClassName="w-60"
+              buttonTitle="More actions"
+              buttonClassName="flex h-7 w-8 items-center justify-center rounded-lg border border-neutral-300 text-neutral-600 hover:border-indigo-400"
+              button={<MoreHorizontal className="h-4 w-4" />}
+            >
+              {(close) => (
+                <>
+                  <button
+                    onClick={() => {
+                      close();
+                      setAudienceBranchError(null);
+                      setAudienceBranchOpen(true);
+                    }}
+                    disabled={!canBranchAudience}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                  >
+                    <GitBranchPlus className="h-3.5 w-3.5 shrink-0" /> Audience
+                    branch
+                  </button>
+                  {!isExportRun && canLaunch ? (
+                    <button
+                      onClick={() => {
+                        close();
+                        openExportModal("United States");
+                      }}
+                      disabled={exportBusy}
+                      className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                    >
+                      <Ship className="h-3.5 w-3.5 shrink-0" /> Test in another
+                      market
+                    </button>
+                  ) : null}
+                  <button
+                    onClick={() => {
+                      close();
+                      replay();
+                    }}
+                    disabled={replaying}
+                    className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-xs text-neutral-700 hover:bg-neutral-50 disabled:opacity-40"
+                  >
+                    <RotateCcw className="h-3.5 w-3.5 shrink-0" /> Replay
+                  </button>
+                  <div className="my-1 border-t border-neutral-100" />
+                  <div className="flex items-center gap-2 px-2.5 py-1.5 text-[11px] text-neutral-500">
+                    <Coins className="h-3.5 w-3.5 shrink-0" />
+                    {totalTokensUsed.toLocaleString()} tok · $
+                    {totalCostUsd.toFixed(2)}
+                  </div>
+                </>
+              )}
+            </PortalMenu>
+          </div>
+        </div>
       </header>
 
       {/* Live progress while the simulation is working */}
@@ -1131,7 +1233,7 @@ export default function RunDashboard({
 
       <div className="relative flex-1">
         {(ownerMounted || view === "owner") && (
-          <div className={view === "owner" ? "" : "hidden"}>
+          <div className={view === "owner" ? "h-full" : "hidden"}>
             <OwnerDashboard
               key={runId}
               runId={runId}
@@ -1140,6 +1242,7 @@ export default function RunDashboard({
             />
           </div>
         )}
+        <ErrorBoundary resetKey={view}>
         {view === "domain" && activePanel && activePanel !== "conclusion" ? (
           <DomainWorkspace
             domain={activePanel}
@@ -1212,6 +1315,7 @@ export default function RunDashboard({
             onSelectCohort={setSelectedCohortId}
           />
         )}
+        </ErrorBoundary>
 
         {selectedCohort && (
           <CohortDrawer
