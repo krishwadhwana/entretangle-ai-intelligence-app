@@ -11,6 +11,7 @@ import { tiktokShopConnector, tiktokAdsConnector } from "./connectors/tiktok";
 import { amazonConnector, etsyConnector } from "./connectors/marketplaces";
 import { faireConnector } from "./connectors/faire";
 import { klaviyoConnector } from "./connectors/klaviyo";
+import { salesforceConnector } from "./connectors/salesforce";
 import { unifiedConnector } from "./connectors/unified";
 
 const CONNECTORS: Connector[] = [
@@ -26,6 +27,7 @@ const CONNECTORS: Connector[] = [
   stripeConnector,
   klaviyoConnector,
   quickbooksConnector,
+  salesforceConnector,
   unifiedConnector,
 ];
 

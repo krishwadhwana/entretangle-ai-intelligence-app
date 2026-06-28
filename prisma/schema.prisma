@@ -108,9 +108,116 @@ model Project {
   jobs              RunJob[]
   simulationRunRows ProjectSimulationRun[]
   integrations      Integration[]
+  dimensions        ProjectDimension[]
+  manufacturers     Manufacturer[]
 
   @@index([ownerId, updatedAt])
   @@map("projects")
+}
+
+// A potential manufacturer/supplier for the venture's product. The sourcing
+// table: filled manually or by an agent that scrapes/contacts directories
+// (Alibaba, IndiaMART, ThomasNet, …) for MOQ, sample price, lead time and
+// payment terms, then tracked through a sourcing pipeline.
+model Manufacturer {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  name          String
+  products      String? // what they make / the product line quoted
+  region        String? // Asia | Europe | North America | …
+  country       String?
+  website       String?
+  // Where this row came from: manual | alibaba | indiamart | thomasnet | …
+  source        String   @default("manual")
+  sourceUrl     String?  @map("source_url") // listing/profile link
+  contactName   String?  @map("contact_name")
+  email         String?
+  phone         String?
+  moq           Int? // minimum order quantity
+  moqUnit       String   @default("units") @map("moq_unit")
+  samplePrice   Float?   @map("sample_price")
+  unitPrice     Float?   @map("unit_price") // price/unit at MOQ
+  currency      String   @default("USD")
+  leadTimeDays  Int?     @map("lead_time_days") // sample/production turnaround
+  paymentTerms  String?  @map("payment_terms")
+  // lead | contacted | quoted | sampling | approved | rejected
+  status        String   @default("lead")
+  verified      Boolean  @default(false) // e.g. Alibaba Verified Supplier
+  rating        Int? // 0..5 internal rating
+  notes         String?  @db.Text
+  sortOrder     Int      @default(0) @map("sort_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+  @@index([projectId, sortOrder])
+  @@map("manufacturers")
+}
+
+// A scored dimension of a venture's progression (idea, planning, business
+// plan, company registration, lab report, money-vs-output meter, …). The
+// founder-facing tracker: how solid is each part of the venture, scored
+// 0..scoreMax, with status, notes, ETA, money spent and evidence links.
+// Self-referential via parentId so a dimension can host nested *scenarios*
+// (e.g. Company Registration → "SF for investment" 100/100, "India for the
+// Indian market" 100/100, "SF parent + Indian subsidiary" 200/200).
+model ProjectDimension {
+  id         String    @id @default(cuid())
+  projectId  String    @map("project_id")
+  parentId   String?   @map("parent_id")
+  key        String // stable slug, unique within a project
+  label      String
+  // Grouping for the UI: "venture" | "company" | "supply" | custom.
+  group      String    @default("venture")
+  // "score" = a 0..scoreMax solidity score; "meter" = a 0..100 percentage band
+  // (the money-invested-vs-output meter).
+  kind       String    @default("score")
+  isCustom   Boolean   @default(false) @map("is_custom")
+  isScenario Boolean   @default(false) @map("is_scenario")
+  score      Int? // current value; null = not scored yet
+  scoreMax   Int       @default(100) @map("score_max")
+  // not_started | in_progress | blocked | done
+  status     String    @default("not_started")
+  notes      String?   @db.Text
+  eta        DateTime? // e.g. lab report "ETA 2 weeks"
+  moneySpent Float?    @map("money_spent")
+  currency   String    @default("INR")
+  // JSONB: [{ label, url }] — sourced evidence behind the score, matching the
+  // app's sourced-vs-estimate discipline.
+  evidence   Json      @default("[]")
+  sortOrder  Int       @default(0) @map("sort_order")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+
+  project  Project                 @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent   ProjectDimension?       @relation("DimensionChildren", fields: [parentId], references: [id], onDelete: Cascade)
+  children ProjectDimension[]      @relation("DimensionChildren")
+  history  ProjectDimensionEvent[]
+
+  @@unique([projectId, key])
+  @@index([projectId, sortOrder])
+  @@index([parentId])
+  @@map("project_dimensions")
+}
+
+// Append-only history of a dimension's score/status/spend changes so the UI can
+// plot progression over time. Written on every meaningful update.
+model ProjectDimensionEvent {
+  id          String   @id @default(cuid())
+  dimensionId String   @map("dimension_id")
+  score       Int?
+  scoreMax    Int?     @map("score_max")
+  status      String?
+  note        String?  @db.Text
+  moneySpent  Float?   @map("money_spent")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  dimension ProjectDimension @relation(fields: [dimensionId], references: [id], onDelete: Cascade)
+
+  @@index([dimensionId, createdAt])
+  @@map("project_dimension_events")
 }
 
 // One completed simulation snapshot, extracted out of Project.simulationRuns

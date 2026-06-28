@@ -137,6 +137,12 @@ export const config = {
         clientId: process.env.QUICKBOOKS_CLIENT_ID || "",
         clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || "",
       },
+      salesforce: {
+        clientId: process.env.SALESFORCE_CLIENT_ID || "",
+        clientSecret: process.env.SALESFORCE_CLIENT_SECRET || "",
+        // login.salesforce.com (prod/dev orgs) or test.salesforce.com (sandbox).
+        loginUrl: process.env.SALESFORCE_LOGIN_URL || "https://login.salesforce.com",
+      },
       tiktokShop: {
         appKey: process.env.TIKTOK_SHOP_APP_KEY || "",
         appSecret: process.env.TIKTOK_SHOP_APP_SECRET || "",

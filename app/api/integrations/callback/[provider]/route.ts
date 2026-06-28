@@ -68,6 +68,9 @@ export async function GET(
       if (accounts.length) {
         externalAccountId = accounts[0].id;
         displayName = accounts[0].name;
+        // Provider-specific account details (e.g. Salesforce instance URL) the
+        // sync needs later. No-op for connectors that return no metadata.
+        if (accounts[0].metadata) metadata = { ...metadata, ...accounts[0].metadata };
       }
     }
 

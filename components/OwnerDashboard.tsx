@@ -11,6 +11,8 @@ import {
   ShieldCheck,
   Palette,
   Plug,
+  Gauge,
+  Factory,
 } from "lucide-react";
 import type {
   BrandSocialSection as BrandSocialState,
@@ -29,16 +31,20 @@ import FounderStorySection from "./FounderStorySection";
 import InspirationSection from "./InspirationSection";
 import InvestorOSSection from "./InvestorOSSection";
 import IntegrationsSection from "./IntegrationsSection";
+import ProgressionPanel from "./ProgressionPanel";
+import ManufacturerTable from "./ManufacturerTable";
 
 // The Owner Dashboard is an extensible home for owner-facing tools. The left
 // rail is data-driven so new sections (suppliers, launch checklist) slot in.
 type SectionId =
   | "investor"
+  | "progression"
   | "founderStory"
   | "brandSocial"
   | "designStudio"
   | "financials"
   | "integrations"
+  | "manufacturers"
   | "inspiration";
 type OwnerDashboardRunSlice = {
   founderStory: FounderStoryState | null;
@@ -49,11 +55,13 @@ type OwnerDashboardRunSlice = {
 
 const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
   { id: "investor", label: "0 to 100", icon: ShieldCheck },
+  { id: "progression", label: "Progression", icon: Gauge },
   { id: "financials", label: "Financials", icon: TrendingUp },
   { id: "founderStory", label: "Founder Story", icon: UserRound },
   { id: "brandSocial", label: "Brand & Social", icon: Share2 },
   { id: "designStudio", label: "Design Studio", icon: Palette },
   { id: "integrations", label: "Integrations", icon: Plug },
+  { id: "manufacturers", label: "Manufacturers", icon: Factory },
   { id: "inspiration", label: "Inspiration", icon: Sparkles },
 ];
 
@@ -271,8 +279,26 @@ export default function OwnerDashboard({
                 sourceRunId={runId}
               />
             </div>
+            <div className={section === "progression" ? "" : "hidden"}>
+              {projectId ? (
+                <div className="p-4">
+                  <ProgressionPanel projectId={projectId} />
+                </div>
+              ) : (
+                <NoProject />
+              )}
+            </div>
             <div className={section === "integrations" ? "" : "hidden"}>
               <IntegrationsSection projectId={projectId} />
+            </div>
+            <div className={section === "manufacturers" ? "" : "hidden"}>
+              {projectId ? (
+                <div className="p-4">
+                  <ManufacturerTable projectId={projectId} />
+                </div>
+              ) : (
+                <NoProject />
+              )}
             </div>
             <div className={section === "inspiration" ? "" : "hidden"}>
               <InspirationSection
@@ -288,6 +314,17 @@ export default function OwnerDashboard({
           </>
         )}
       </div>
+    </div>
+  );
+}
+
+// Shown when a section needs a saved project but the run isn't linked to one
+// yet (e.g. an ad-hoc run). The progression tracker + sourcing table are
+// per-project, so they need a project to attach to.
+function NoProject() {
+  return (
+    <div className="flex h-full items-center justify-center p-8 text-center text-xs text-neutral-400">
+      Save this run to a project to use this section.
     </div>
   );
 }

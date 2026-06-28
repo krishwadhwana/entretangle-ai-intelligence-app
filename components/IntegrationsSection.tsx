@@ -19,6 +19,7 @@ import {
   BookOpen,
   Boxes,
   Mail,
+  Users,
   TrendingUp,
   TrendingDown,
   Lightbulb,
@@ -114,6 +115,7 @@ const CATEGORY_ICON: Record<string, typeof Plug> = {
   payments: CreditCard,
   accounting: BookOpen,
   marketing: Mail,
+  crm: Users,
 };
 const PALETTE = ["#0ea5e9", "#6366f1", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6"];
 

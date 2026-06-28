@@ -20,6 +20,7 @@ export type IntegrationProvider =
   | "etsy"
   | "faire"
   | "klaviyo"
+  | "salesforce"
   | "unified";
 
 export type IntegrationCategory =
@@ -28,7 +29,8 @@ export type IntegrationCategory =
   | "analytics"
   | "payments"
   | "accounting"
-  | "marketing";
+  | "marketing"
+  | "crm";
 
 // Canonical metric names. Connectors map their native fields onto these so
 // reconciliation can compare like-for-like across providers. Keep this list and
