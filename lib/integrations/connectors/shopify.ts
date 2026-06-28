@@ -1,12 +1,13 @@
 // ---------------------------------------------------------------------------
-// Shopify connector (Phase 1 — full live). The reference connector other
-// providers copy.
+// Shopify connector (full live, OAuth install flow — same self-serve model as
+// the other connectors). The merchant types their shop domain, clicks Connect,
+// approves on Shopify's own consent screen, and their offline Admin API token
+// comes back and is stored per-integration. No env editing per customer; the
+// only one-time setup is the platform's Shopify app (SHOPIFY_API_KEY/SECRET).
 //
-// Auth: an Admin API access token from a custom app in the founder's Shopify
-// admin (Settings → Apps → Develop apps). This is the fastest path to live —
-// no OAuth app review — so it's modeled as an `apiKey` connector: the founder
-// pastes their shop domain + Admin API token. (A public OAuth app could be
-// added later behind the same interface.)
+// Shopify is per-shop: the authorize + token endpoints live on the merchant's
+// own *.myshopify.com domain, so the shop domain is threaded through
+// connect → authorize → callback (AuthorizeArgs.shopDomain / exchangeCode ctx).
 //
 // Sync: pulls orders in the window and aggregates them, in code, into daily
 // normalized metrics — orders, revenue, units, refunds, refund_amount,
@@ -16,14 +17,24 @@
 import { config } from "../../config";
 import { log } from "../../log";
 import type {
+  AuthorizeArgs,
   Connector,
   NormalizedMetric,
   SyncContext,
   TokenSet,
 } from "../types";
+import { buildAuthorizeUrl } from "./oauth";
 import { genSeries } from "../mock";
 
 const API_VERSION = "2024-10";
+
+/** Normalize "my-store", "my-store.myshopify.com", "https://…" → host only. */
+export function normalizeShopDomain(input: string): string {
+  let d = input.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  if (!d) return "";
+  if (!d.includes(".")) d = `${d}.myshopify.com`;
+  return d.toLowerCase();
+}
 
 function shopBase(domain: string): string {
   const clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
@@ -48,11 +59,14 @@ function dayOf(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
 
+const SCOPES = ["read_orders", "read_products", "read_customers"];
+
 export const shopifyConnector: Connector = {
   provider: "shopify",
   category: "commerce",
   label: "Shopify",
-  authType: "apiKey",
+  authType: "oauth2",
+  scopes: SCOPES,
   metrics: [
     "orders",
     "revenue",
@@ -64,36 +78,44 @@ export const shopifyConnector: Connector = {
   ],
 
   isConfigured() {
-    // apiKey connectors are configured per-integration (the founder's token),
-    // not via global env. The job decides live-vs-mock by whether an access
-    // token is present on the Integration row (ctx.accessToken).
-    return true;
+    const c = config.integrations.shopify;
+    return Boolean(c.apiKey && c.apiSecret);
   },
 
-  async connectWithKey(input) {
-    const shopDomain = (input.shopDomain || "").trim();
-    const token = (input.accessToken || "").trim();
-    if (!shopDomain || !token) {
-      throw new Error("shopDomain and accessToken are required");
-    }
-    // Validate by fetching the shop record.
-    const res = await fetch(`${shopBase(shopDomain)}/shop.json`, {
-      headers: { "X-Shopify-Access-Token": token },
+  authorizeUrl(args: AuthorizeArgs): string {
+    const shop = normalizeShopDomain(args.shopDomain ?? "");
+    if (!shop) throw new Error("a shop domain is required to connect Shopify");
+    // Per-shop authorize endpoint on the merchant's own domain.
+    return buildAuthorizeUrl(`https://${shop}/admin/oauth/authorize`, {
+      client_id: config.integrations.shopify.apiKey,
+      scope: SCOPES.join(","),
+      redirect_uri: args.redirectUri,
+      state: args.state,
+    });
+  },
+
+  async exchangeCode(
+    code: string,
+    _redirectUri: string,
+    ctx?: { shopDomain?: string },
+  ): Promise<TokenSet> {
+    const shop = normalizeShopDomain(ctx?.shopDomain ?? "");
+    if (!shop) throw new Error("missing shop domain for Shopify token exchange");
+    const res = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        client_id: config.integrations.shopify.apiKey,
+        client_secret: config.integrations.shopify.apiSecret,
+        code,
+      }),
     });
     if (!res.ok) {
-      throw new Error(
-        `Shopify rejected the credentials (HTTP ${res.status}). Check the shop domain and Admin API token.`,
-      );
+      throw new Error(`Shopify token exchange failed (HTTP ${res.status})`);
     }
-    const body = (await res.json()) as {
-      shop: { name: string; myshopify_domain: string; currency: string };
-    };
-    return {
-      token: { accessToken: token },
-      externalAccountId: body.shop.myshopify_domain,
-      displayName: body.shop.name,
-      metadata: { shopDomain, currency: body.shop.currency },
-    };
+    const body = (await res.json()) as { access_token: string; scope?: string };
+    // Shopify offline tokens don't expire and have no refresh token.
+    return { accessToken: body.access_token, scope: body.scope ?? null };
   },
 
   async sync(ctx: SyncContext): Promise<NormalizedMetric[]> {

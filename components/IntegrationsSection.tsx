@@ -18,6 +18,7 @@ import {
   CreditCard,
   BookOpen,
   Boxes,
+  Mail,
   TrendingUp,
   TrendingDown,
   Lightbulb,
@@ -48,6 +49,7 @@ type CatalogItem = {
   category: string;
   authType: "oauth2" | "apiKey";
   metrics: string[];
+  connectFields: { name: string; label: string; placeholder?: string }[] | null;
 };
 type Integration = {
   id: string;
@@ -59,6 +61,7 @@ type Integration = {
   lastSyncedAt: string | null;
   lastError: string | null;
   metricCount: number;
+  demo: boolean;
 };
 type Kpi = {
   key: string;
@@ -109,6 +112,7 @@ const CATEGORY_ICON: Record<string, typeof Plug> = {
   analytics: BarChart3,
   payments: CreditCard,
   accounting: BookOpen,
+  marketing: Mail,
 };
 const PALETTE = ["#0ea5e9", "#6366f1", "#f59e0b", "#10b981", "#ec4899", "#8b5cf6"];
 
@@ -145,9 +149,6 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
   const [report, setReport] = useState<ReconReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState<string | null>(null);
-  const [shopifyOpen, setShopifyOpen] = useState(false);
-  const [shopDomain, setShopDomain] = useState("");
-  const [shopToken, setShopToken] = useState("");
 
   const load = useCallback(async () => {
     if (!projectId) return;
@@ -193,26 +194,28 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
   const connected = (provider: string) => integrations.find((i) => i.provider === provider);
   const anyConnected = integrations.length > 0;
 
-  const connectOAuthOrMock = (provider: string) => {
+  const connectOAuth = (provider: string) => {
+    // Full-page redirect: live → provider consent screen, demo → connect + back.
     window.location.href = `/api/projects/${projectId}/integrations/connect/${provider}`;
   };
-  const connectShopify = async () => {
+  const connectShopify = (domain: string) => {
+    const shop = domain.trim();
+    if (!projectId || !shop) return;
+    window.location.href = `/api/projects/${projectId}/integrations/connect/shopify?shop=${encodeURIComponent(shop)}`;
+  };
+  const connectWithKey = async (provider: string, values: Record<string, string>) => {
     if (!projectId) return;
-    setBusy("shopify");
-    const res = await fetch(`/api/projects/${projectId}/integrations/connect/shopify`, {
+    setBusy(provider);
+    const res = await fetch(`/api/projects/${projectId}/integrations/connect/${provider}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ shopDomain, accessToken: shopToken }),
+      body: JSON.stringify(values),
     });
     setBusy(null);
-    if (res.ok) {
-      setShopifyOpen(false);
-      setShopDomain("");
-      setShopToken("");
-      load();
-    } else {
+    if (res.ok) load();
+    else {
       const { error } = await res.json().catch(() => ({ error: "failed" }));
-      alert(`Shopify connect failed: ${error}`);
+      alert(`Connect failed: ${error}`);
     }
   };
   const sync = async (integrationId: string) => {
@@ -287,7 +290,12 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
       </header>
 
       {tab === "overview" && (
-        <OverviewTab overview={overview} onConnect={() => setTab("sources")} hasSources={anyConnected} />
+        <OverviewTab
+          overview={overview}
+          onConnect={() => setTab("sources")}
+          hasSources={anyConnected}
+          demo={integrations.some((i) => i.demo)}
+        />
       )}
       {tab === "plan" && <ReconciliationPanel report={report} />}
       {tab === "sources" && (
@@ -297,16 +305,9 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
           busy={busy}
           onSync={sync}
           onDisconnect={disconnect}
-          onConnectProvider={connectOAuthOrMock}
-          shopify={{
-            open: shopifyOpen,
-            setOpen: setShopifyOpen,
-            domain: shopDomain,
-            setDomain: setShopDomain,
-            token: shopToken,
-            setToken: setShopToken,
-            connect: connectShopify,
-          }}
+          onConnectOAuth={connectOAuth}
+          onConnectShopify={connectShopify}
+          onConnectKey={connectWithKey}
         />
       )}
     </div>
@@ -318,10 +319,12 @@ function OverviewTab({
   overview,
   onConnect,
   hasSources,
+  demo,
 }: {
   overview: Overview | null;
   onConnect: () => void;
   hasSources: boolean;
+  demo: boolean;
 }) {
   if (!overview || !overview.hasData) {
     return (
@@ -344,6 +347,18 @@ function OverviewTab({
   const cur = overview.currency;
   return (
     <div className="space-y-6">
+      {demo && (
+        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
+          <AlertCircle className="h-4 w-4 shrink-0" />
+          <span>
+            Showing <span className="font-semibold">sample demo data</span> — connect a live account
+            to replace it with your real numbers.
+          </span>
+          <button onClick={onConnect} className="ml-auto shrink-0 font-medium underline">
+            Connect a source
+          </button>
+        </div>
+      )}
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {overview.kpis.map((k) => (
@@ -500,7 +515,23 @@ function KpiCard({ kpi, currency }: { kpi: Kpi; currency: string }) {
 }
 
 function srcLabel(p: string): string {
-  return ({ shopify: "Shopify", meta_ads: "Meta", google_ads: "Google", ga4: "GA4", stripe: "Stripe", quickbooks: "QuickBooks", unified: "Other" } as Record<string, string>)[p] ?? p;
+  return (
+    {
+      shopify: "Shopify",
+      meta_ads: "Meta",
+      google_ads: "Google",
+      ga4: "GA4",
+      stripe: "Stripe",
+      quickbooks: "QuickBooks",
+      tiktok_shop: "TikTok Shop",
+      tiktok_ads: "TikTok Ads",
+      amazon: "Amazon",
+      etsy: "Etsy",
+      faire: "Faire",
+      klaviyo: "Klaviyo",
+      unified: "Other",
+    } as Record<string, string>
+  )[p] ?? p;
 }
 
 function InsightCard({ insight }: { insight: Insight }) {
@@ -571,33 +602,42 @@ function DonutLegend({ title, data, currency }: { title: string; data: ChannelSl
 }
 
 // --- Sources ----------------------------------------------------------------
-type ShopifyForm = {
-  open: boolean;
-  setOpen: (v: boolean | ((p: boolean) => boolean)) => void;
-  domain: string;
-  setDomain: (v: string) => void;
-  token: string;
-  setToken: (v: string) => void;
-  connect: () => void;
-};
-
 function SourcesTab({
   catalog,
   connected,
   busy,
   onSync,
   onDisconnect,
-  onConnectProvider,
-  shopify,
+  onConnectOAuth,
+  onConnectShopify,
+  onConnectKey,
 }: {
   catalog: CatalogItem[];
   connected: (p: string) => Integration | undefined;
   busy: string | null;
   onSync: (id: string) => void;
   onDisconnect: (id: string) => void;
-  onConnectProvider: (p: string) => void;
-  shopify: ShopifyForm;
+  onConnectOAuth: (p: string) => void;
+  onConnectShopify: (domain: string) => void;
+  onConnectKey: (p: string, values: Record<string, string>) => void;
 }) {
+  // Which card's inline form is open, and its field values.
+  const [openForm, setOpenForm] = useState<string | null>(null);
+  const [fields, setFields] = useState<Record<string, string>>({});
+
+  // Providers with an inline form: Shopify (shop domain) or apiKey connectors.
+  const hasInlineForm = (item: CatalogItem) =>
+    item.provider === "shopify" || item.authType === "apiKey";
+
+  const onConnectClick = (item: CatalogItem) => {
+    if (hasInlineForm(item)) {
+      setFields({});
+      setOpenForm((p) => (p === item.provider ? null : item.provider));
+    } else {
+      onConnectOAuth(item.provider);
+    }
+  };
+
   return (
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {catalog.map((item) => {
@@ -615,7 +655,14 @@ function SourcesTab({
                   <div className="text-[11px] capitalize text-neutral-400">{item.category}</div>
                 </div>
               </div>
-              {conn && <StatusBadge status={conn.status} />}
+              <div className="flex items-center gap-1.5">
+                {conn?.demo && (
+                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
+                    Demo
+                  </span>
+                )}
+                {conn && <StatusBadge status={conn.status} />}
+              </div>
             </div>
 
             {conn ? (
@@ -648,37 +695,55 @@ function SourcesTab({
             ) : (
               <div className="mt-3">
                 <button
-                  onClick={() => (item.provider === "shopify" ? shopify.setOpen((v) => !v) : onConnectProvider(item.provider))}
+                  onClick={() => onConnectClick(item)}
                   className="rounded-md border border-neutral-200 px-2.5 py-1 text-[11px] font-medium text-neutral-700 hover:bg-neutral-50"
                 >
                   Connect
                 </button>
                 <div className="mt-2 text-[10px] text-neutral-400">Tracks: {item.metrics.map(metricLabel).join(", ")}</div>
 
-                {item.provider === "shopify" && shopify.open && (
+                {openForm === item.provider && item.provider === "shopify" && (
                   <div className="mt-3 space-y-2 rounded-lg bg-neutral-50 p-3">
                     <input
-                      value={shopify.domain}
-                      onChange={(e) => shopify.setDomain(e.target.value)}
+                      value={fields.shop ?? ""}
+                      onChange={(e) => setFields({ shop: e.target.value })}
+                      onKeyDown={(e) => e.key === "Enter" && onConnectShopify(fields.shop ?? "")}
                       placeholder="your-store.myshopify.com"
                       className="w-full rounded-md border border-neutral-200 px-2 py-1 text-xs"
                     />
-                    <input
-                      value={shopify.token}
-                      onChange={(e) => shopify.setToken(e.target.value)}
-                      placeholder="Admin API access token"
-                      className="w-full rounded-md border border-neutral-200 px-2 py-1 text-xs"
-                    />
                     <button
-                      onClick={shopify.connect}
-                      disabled={busy === "shopify"}
-                      className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                      onClick={() => onConnectShopify(fields.shop ?? "")}
+                      className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[11px] font-medium text-white"
                     >
-                      {busy === "shopify" && <Loader2 className="h-3 w-3 animate-spin" />}
                       Connect store
                     </button>
                     <p className="text-[10px] text-neutral-400">
-                      Shopify admin → Apps → Develop apps, grant <code>read_orders</code>, paste the Admin API token. (Demo mode connects sample data.)
+                      Enter your store domain — you&apos;ll approve access on Shopify&apos;s own screen. (Demo mode connects sample data.)
+                    </p>
+                  </div>
+                )}
+
+                {openForm === item.provider && item.authType === "apiKey" && (
+                  <div className="mt-3 space-y-2 rounded-lg bg-neutral-50 p-3">
+                    {(item.connectFields ?? []).map((f) => (
+                      <input
+                        key={f.name}
+                        value={fields[f.name] ?? ""}
+                        onChange={(e) => setFields((p) => ({ ...p, [f.name]: e.target.value }))}
+                        placeholder={f.placeholder ? `${f.label} — ${f.placeholder}` : f.label}
+                        className="w-full rounded-md border border-neutral-200 px-2 py-1 text-xs"
+                      />
+                    ))}
+                    <button
+                      onClick={() => onConnectKey(item.provider, fields)}
+                      disabled={busy === item.provider}
+                      className="inline-flex items-center gap-1 rounded-md bg-neutral-900 px-2.5 py-1 text-[11px] font-medium text-white disabled:opacity-50"
+                    >
+                      {busy === item.provider && <Loader2 className="h-3 w-3 animate-spin" />}
+                      Connect
+                    </button>
+                    <p className="text-[10px] text-neutral-400">
+                      Paste your {item.label} API key. (Demo mode connects sample data.)
                     </p>
                   </div>
                 )}

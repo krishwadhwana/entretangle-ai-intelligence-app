@@ -30,28 +30,30 @@ export async function GET(
       ? referer
       : `${req.nextUrl.origin}/?integration_connected=${params.provider}`;
 
-  // apiKey providers (Shopify) are connected via POST with a token — unless
-  // we're mocking, in which case GET one-click connects a demo account.
-  if (connector.authType === "apiKey" && !shouldMock(params.provider)) {
-    return NextResponse.json(
-      { error: "POST shop credentials to connect this provider" },
-      { status: 400 },
-    );
-  }
-
   if (shouldMock(params.provider)) {
     await connectMock(params.id, params.provider);
     return NextResponse.redirect(backTo);
+  }
+
+  // Shopify's authorize endpoint is per-shop, so we need the shop domain first.
+  const shopDomain = req.nextUrl.searchParams.get("shop") ?? undefined;
+  if (params.provider === "shopify" && !shopDomain) {
+    return NextResponse.json(
+      { error: "shop domain required (pass ?shop=your-store.myshopify.com)" },
+      { status: 400 },
+    );
   }
 
   const state = signState({
     projectId: params.id,
     provider: params.provider,
     nonce: crypto.randomBytes(8).toString("hex"),
+    shopDomain,
   });
   const url = connector.authorizeUrl!({
     state,
     redirectUri: redirectUriFor(params.provider),
+    shopDomain,
   });
   return NextResponse.redirect(url);
 }

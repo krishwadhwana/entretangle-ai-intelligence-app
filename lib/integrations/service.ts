@@ -22,6 +22,8 @@ export function signState(payload: {
   projectId: string;
   provider: string;
   nonce: string;
+  /** Per-shop providers (Shopify) carry the merchant's shop domain. */
+  shopDomain?: string;
 }): string {
   const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const mac = crypto
@@ -33,7 +35,7 @@ export function signState(payload: {
 
 export function verifyState(
   state: string,
-): { projectId: string; provider: string; nonce: string } | null {
+): { projectId: string; provider: string; nonce: string; shopDomain?: string } | null {
   const [body, mac] = state.split(".");
   if (!body || !mac) return null;
   const expected = crypto
@@ -68,6 +70,8 @@ export type IntegrationDTO = {
   lastSyncedAt: string | null;
   lastError: string | null;
   metricCount: number;
+  /** True when this is a demo connection (seeded sample data, not a live account). */
+  demo: boolean;
 };
 
 export async function listIntegrations(
@@ -88,6 +92,7 @@ export async function listIntegrations(
     lastSyncedAt: r.lastSyncedAt?.toISOString() ?? null,
     lastError: r.lastError,
     metricCount: r._count.metrics,
+    demo: (r.metadata as { mock?: boolean } | null)?.mock === true,
   }));
 }
 

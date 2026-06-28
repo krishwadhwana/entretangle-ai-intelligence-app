@@ -7,14 +7,24 @@ import { metaAdsConnector } from "./connectors/metaAds";
 import { ga4Connector, googleAdsConnector } from "./connectors/google";
 import { stripeConnector } from "./connectors/stripe";
 import { quickbooksConnector } from "./connectors/quickbooks";
+import { tiktokShopConnector, tiktokAdsConnector } from "./connectors/tiktok";
+import { amazonConnector, etsyConnector } from "./connectors/marketplaces";
+import { faireConnector } from "./connectors/faire";
+import { klaviyoConnector } from "./connectors/klaviyo";
 import { unifiedConnector } from "./connectors/unified";
 
 const CONNECTORS: Connector[] = [
   shopifyConnector,
+  tiktokShopConnector,
+  amazonConnector,
+  etsyConnector,
+  faireConnector,
   metaAdsConnector,
+  tiktokAdsConnector,
   googleAdsConnector,
   ga4Connector,
   stripeConnector,
+  klaviyoConnector,
   quickbooksConnector,
   unifiedConnector,
 ];
@@ -40,6 +50,7 @@ export const CATALOG = CONNECTORS.map((c) => ({
   category: c.category,
   authType: c.authType,
   metrics: c.metrics,
+  connectFields: c.connectFields ?? null,
 }));
 
 export type IntegrationCatalogItem = (typeof CATALOG)[number];

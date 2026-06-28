@@ -44,13 +44,26 @@ export async function GET(
   const connector = getConnector(params.provider);
   if (!connector?.exchangeCode) return fail("unknown provider");
 
+  // Shopify is per-shop: the shop comes from the signed state (or the `shop`
+  // query Shopify appends), and is needed for the token exchange.
+  const shopDomain = parsed.shopDomain ?? url.searchParams.get("shop") ?? undefined;
+
   try {
-    const token = await connector.exchangeCode(code, redirectUriFor(params.provider));
+    const token = await connector.exchangeCode(
+      code,
+      redirectUriFor(params.provider),
+      { shopDomain },
+    );
 
     // Pick the default external account (ad account / GA4 property / realm).
     let externalAccountId = realmId ?? params.provider;
     let displayName = connector.label;
-    if (!realmId && connector.listExternalAccounts) {
+    let metadata: Record<string, unknown> = realmId ? { realmId } : {};
+    if (params.provider === "shopify" && shopDomain) {
+      externalAccountId = shopDomain;
+      displayName = shopDomain;
+      metadata = { shopDomain };
+    } else if (!realmId && connector.listExternalAccounts) {
       const accounts = await connector.listExternalAccounts(token).catch(() => []);
       if (accounts.length) {
         externalAccountId = accounts[0].id;
@@ -64,7 +77,7 @@ export async function GET(
       token,
       externalAccountId,
       displayName,
-      metadata: realmId ? { realmId } : {},
+      metadata,
     });
     await enqueueBackfill(parsed.projectId, res.id);
   } catch (e) {

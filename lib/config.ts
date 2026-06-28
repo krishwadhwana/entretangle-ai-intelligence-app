@@ -128,6 +128,24 @@ export const config = {
         clientId: process.env.QUICKBOOKS_CLIENT_ID || "",
         clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || "",
       },
+      tiktokShop: {
+        appKey: process.env.TIKTOK_SHOP_APP_KEY || "",
+        appSecret: process.env.TIKTOK_SHOP_APP_SECRET || "",
+      },
+      tiktokAds: {
+        appId: process.env.TIKTOK_ADS_APP_ID || "",
+        appSecret: process.env.TIKTOK_ADS_APP_SECRET || "",
+      },
+      amazon: {
+        clientId: process.env.AMAZON_LWA_CLIENT_ID || "",
+        clientSecret: process.env.AMAZON_LWA_CLIENT_SECRET || "",
+      },
+      etsy: {
+        clientId: process.env.ETSY_CLIENT_ID || "",
+        clientSecret: process.env.ETSY_CLIENT_SECRET || "",
+      },
+      // Faire + Klaviyo authenticate per-account with an API key the customer
+      // pastes — no platform-wide OAuth app, so nothing to configure here.
       unified: {
         provider: process.env.UNIFIED_API_PROVIDER || "",
         apiKey: process.env.UNIFIED_API_KEY || "",

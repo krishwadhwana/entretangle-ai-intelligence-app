@@ -14,6 +14,12 @@ export type IntegrationProvider =
   | "ga4"
   | "stripe"
   | "quickbooks"
+  | "tiktok_shop"
+  | "tiktok_ads"
+  | "amazon"
+  | "etsy"
+  | "faire"
+  | "klaviyo"
   | "unified";
 
 export type IntegrationCategory =
@@ -21,7 +27,8 @@ export type IntegrationCategory =
   | "ads"
   | "analytics"
   | "payments"
-  | "accounting";
+  | "accounting"
+  | "marketing";
 
 // Canonical metric names. Connectors map their native fields onto these so
 // reconciliation can compare like-for-like across providers. Keep this list and
@@ -74,6 +81,9 @@ export type AuthorizeArgs = {
   /** Signed state we round-trip through the provider for CSRF + projectId. */
   state: string;
   redirectUri: string;
+  /** Shopify's authorize + token endpoints are per-shop, so the shop domain
+   *  the merchant typed is threaded through connect → authorize → callback. */
+  shopDomain?: string;
 };
 
 export type SyncContext = {
@@ -99,13 +109,20 @@ export interface Connector {
   scopes?: string[];
   /** The canonical metrics this connector can produce. */
   metrics: MetricName[];
+  /** For apiKey connectors: the fields the UI should collect to connect. */
+  connectFields?: { name: string; label: string; placeholder?: string }[];
 
   /** True when real credentials are configured (else the job uses mockSync). */
   isConfigured(): boolean;
 
   // --- OAuth2 lifecycle (omit/throw for apiKey connectors) ---
   authorizeUrl?(args: AuthorizeArgs): string;
-  exchangeCode?(code: string, redirectUri: string): Promise<TokenSet>;
+  /** `ctx.shopDomain` is supplied for per-shop providers (Shopify). */
+  exchangeCode?(
+    code: string,
+    redirectUri: string,
+    ctx?: { shopDomain?: string },
+  ): Promise<TokenSet>;
   refreshToken?(refreshToken: string): Promise<TokenSet>;
   /** Provider sub-accounts to choose from after auth (optional). */
   listExternalAccounts?(token: TokenSet): Promise<ExternalAccount[]>;

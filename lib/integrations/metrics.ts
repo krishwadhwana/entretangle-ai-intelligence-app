@@ -12,18 +12,31 @@
 import { prisma } from "../db";
 import type { MetricName } from "./types";
 
-// Providers that legitimately add together (multi-network ad spend, reach).
+// Ad metrics legitimately add across networks (Meta + Google + TikTok spend).
 const ADDITIVE = new Set<MetricName>(["ad_spend", "impressions", "clicks", "conversions"]);
 
-// For non-additive metrics, the source we trust first when several report it.
+// Distinct sales channels — their orders/revenue/units are different money and
+// SUM (a multichannel seller on Shopify + TikTok Shop + Amazon + Etsy + Faire).
+const COMMERCE_CHANNELS = new Set(["shopify", "tiktok_shop", "amazon", "etsy", "faire", "unified", "klaviyo"]);
+// Metrics that sum across the commerce channels above (then fall back to
+// PRIORITY when no channel reports them).
+const CHANNEL_METRICS = new Set<MetricName>([
+  "revenue",
+  "orders",
+  "units",
+  "new_customers",
+  "returning_customers",
+  "refunds",
+  "refund_amount",
+]);
+
+// For everything else, the single source we trust first when several report it
+// (avoids double-counting overlapping money, e.g. Stripe processing Shopify).
 const PRIORITY: Partial<Record<MetricName, string[]>> = {
-  revenue: ["shopify", "stripe", "quickbooks", "ga4", "unified"],
-  orders: ["shopify", "unified"],
-  units: ["shopify", "unified"],
-  new_customers: ["shopify", "stripe", "unified"],
-  returning_customers: ["shopify"],
-  refunds: ["shopify", "stripe"],
-  refund_amount: ["shopify", "stripe"],
+  revenue: ["stripe", "quickbooks", "ga4"],
+  new_customers: ["stripe"],
+  refunds: ["stripe"],
+  refund_amount: ["stripe"],
   cogs: ["quickbooks", "shopify"],
   sessions: ["ga4"],
   mrr: ["stripe"],
@@ -70,6 +83,9 @@ function resolveMetric(
   let providers: string[];
   if (ADDITIVE.has(metric)) {
     providers = [...byProvider.keys()];
+  } else if (CHANNEL_METRICS.has(metric) && [...byProvider.keys()].some((p) => COMMERCE_CHANNELS.has(p))) {
+    // Sum the distinct sales channels that reported it.
+    providers = [...byProvider.keys()].filter((p) => COMMERCE_CHANNELS.has(p));
   } else {
     const order = PRIORITY[metric] ?? [...byProvider.keys()];
     const chosen = order.find((p) => byProvider.has(p)) ?? [...byProvider.keys()][0];
@@ -139,6 +155,12 @@ const PROVIDER_LABEL: Record<string, string> = {
   ga4: "GA4",
   stripe: "Stripe",
   quickbooks: "QuickBooks",
+  tiktok_shop: "TikTok Shop",
+  tiktok_ads: "TikTok Ads",
+  amazon: "Amazon",
+  etsy: "Etsy",
+  faire: "Faire",
+  klaviyo: "Klaviyo",
   unified: "Other",
 };
 
