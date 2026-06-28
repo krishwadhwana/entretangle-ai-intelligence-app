@@ -21,7 +21,9 @@
     "intel:companies": "tsx scripts/intel/refresh-companies.ts",
     "intel:founders": "tsx scripts/intel/refresh-founders.ts",
     "migrate:assets": "tsx scripts/migrate-assets-to-r2.ts",
-    "backfill:simulation-runs": "tsx scripts/backfill-simulation-runs.ts"
+    "backfill:simulation-runs": "tsx scripts/backfill-simulation-runs.ts",
+    "check:reconciliation": "tsx scripts/reconciliation-check.ts",
+    "integrations:sync": "tsx scripts/sync-integrations.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1075.0",

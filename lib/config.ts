@@ -91,4 +91,47 @@ export const config = {
       webSearchPerCall: floatEnv("PRICE_WEB_SEARCH", 0.01),
     };
   },
+  // --- Business integrations (connected accounts) ---
+  // The base URL providers redirect back to after OAuth. Must exactly match the
+  // redirect URI registered in each provider's developer app. Defaults to the
+  // auth base so dev "just works".
+  get integrationsRedirectBase() {
+    return (
+      process.env.INTEGRATIONS_REDIRECT_BASE ||
+      process.env.NEXTAUTH_URL ||
+      "http://localhost:3000"
+    );
+  },
+  // Per-provider OAuth/API credentials. A connector is "configured" (and so
+  // pulls LIVE data instead of seeded mock data) only when its creds are set.
+  get integrations() {
+    return {
+      shopify: {
+        apiKey: process.env.SHOPIFY_API_KEY || "",
+        apiSecret: process.env.SHOPIFY_API_SECRET || "",
+      },
+      metaAds: {
+        appId: process.env.META_APP_ID || process.env.FACEBOOK_CLIENT_ID || "",
+        appSecret:
+          process.env.META_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET || "",
+      },
+      google: {
+        clientId: process.env.GOOGLE_CLIENT_ID || "",
+        clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+        adsDeveloperToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "",
+      },
+      stripe: {
+        clientId: process.env.STRIPE_CLIENT_ID || "",
+        secretKey: process.env.STRIPE_SECRET_KEY || "",
+      },
+      quickbooks: {
+        clientId: process.env.QUICKBOOKS_CLIENT_ID || "",
+        clientSecret: process.env.QUICKBOOKS_CLIENT_SECRET || "",
+      },
+      unified: {
+        provider: process.env.UNIFIED_API_PROVIDER || "",
+        apiKey: process.env.UNIFIED_API_KEY || "",
+      },
+    };
+  },
 };

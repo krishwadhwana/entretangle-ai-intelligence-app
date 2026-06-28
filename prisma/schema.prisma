@@ -1,5 +1,5 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   // "native" covers local dev; the linux targets cover Railway/containers.
   binaryTargets = ["native", "debian-openssl-3.0.x", "linux-musl-openssl-3.0.x"]
 }
@@ -102,11 +102,12 @@ model Project {
   // benchmark priors with current, cited figures for the venture's market.
   marketData          Json?    @map("market_data")
 
-  owner     User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
-  runs      Run[]
-  documents Document[]
-  jobs      RunJob[]
+  owner             User?                  @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  runs              Run[]
+  documents         Document[]
+  jobs              RunJob[]
   simulationRunRows ProjectSimulationRun[]
+  integrations      Integration[]
 
   @@index([ownerId, updatedAt])
   @@map("projects")
@@ -186,41 +187,41 @@ model Document {
 }
 
 model Run {
-  id               String   @id @default(cuid())
-  ownerId          String?  @map("owner_id")
-  projectId        String?
-  brief            String
-  clientProfile    String // Json (ClientProfile)
-  status           String // RunStatus
-  parentRunId      String?
-  forkPointBlockId String?
+  id                 String   @id @default(cuid())
+  ownerId            String?  @map("owner_id")
+  projectId          String?
+  brief              String
+  clientProfile      String // Json (ClientProfile)
+  status             String // RunStatus
+  parentRunId        String?
+  forkPointBlockId   String?
   // Follow-up simulations: a focus question + extra context steer the run,
   // mode picks full vs. scoped, sourceRunId is the run a scoped run reuses
   // the simulated audience from.
-  focusQuestion     String?
-  additionalContext String?
-  mode              String  @default("full") // "full" | "scoped" | "export"
-  sourceRunId       String?
+  focusQuestion      String?
+  additionalContext  String?
+  mode               String   @default("full") // "full" | "scoped" | "export"
+  sourceRunId        String?
   // Cross-border export run: a dependent run that tests the venture in a new
   // market. parentRunId points at the completed home-market (e.g. India) run
   // whose proven results are carried forward as priors; targetMarket is the
   // destination country (e.g. "United States"). mode === "export".
-  targetMarket      String?
+  targetMarket       String?
   // Per-run audience size chosen in the UI (slider/number). Null → use the
   // TARGET_AUDIENCE_SIZE env default. 0 → research desks only, no audience.
   targetAudienceSize Int?
-  tokensUsed       Int      @default(0)
-  costUsd          Float    @default(0)
-  createdAt        DateTime @default(now())
+  tokensUsed         Int      @default(0)
+  costUsd            Float    @default(0)
+  createdAt          DateTime @default(now())
 
-  owner   User?      @relation(fields: [ownerId], references: [id], onDelete: SetNull)
-  project Project?   @relation(fields: [projectId], references: [id], onDelete: SetNull)
-  blocks  Block[]
-  edges   Edge[]
-  events  RunEvent[]
-  cohorts Cohort[]
-  jobs    RunJob[]
-  launchSims LaunchSimulation[]
+  owner          User?              @relation(fields: [ownerId], references: [id], onDelete: SetNull)
+  project        Project?           @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  blocks         Block[]
+  edges          Edge[]
+  events         RunEvent[]
+  cohorts        Cohort[]
+  jobs           RunJob[]
+  launchSims     LaunchSimulation[]
   launchOutcomes LaunchOutcome[]
 
   @@index([ownerId])
@@ -348,20 +349,20 @@ model Persona {
   quote       String
 
   // Depth fields — the "why" behind intent/WTP, not just the numbers.
-  lifestyle        String @default("") // daily routine, work hours, social habits
-  lifeStage        String @default("") // household / living / family context
-  values           String @default("[]") // Json string[] — decision drivers
-  shoppingHabits   String @default("") // how/where/how often they shop this category
-  priceSensitivity Float  @default(0.5) // 0–1, 1 = extremely price-sensitive
-  reasoning        String @default("") // explicit life -> intent & price-tier chain
+  lifestyle         String @default("") // daily routine, work hours, social habits
+  lifeStage         String @default("") // household / living / family context
+  values            String @default("[]") // Json string[] — decision drivers
+  shoppingHabits    String @default("") // how/where/how often they shop this category
+  priceSensitivity  Float  @default(0.5) // 0–1, 1 = extremely price-sensitive
+  reasoning         String @default("") // explicit life -> intent & price-tier chain
   personality       String @default("") // distinct temperament, flavoured by locality
   personalityTraits String @default("[]") // Json string[] — personality trait tags
 
   // Win-back: a 1:1 chat can move a non-approver's vote. We keep the original
   // pre-chat intent so the UI can show "was X% -> Y%", plus a transcript.
-  intentOriginal Float?    // pre-chat intent, set on the first vote change
+  intentOriginal Float? // pre-chat intent, set on the first vote change
   voteChangedAt  DateTime? // when intent was last changed via win-back chat
-  chatLog        String   @default("[]") // Json — win-back conversation transcript
+  chatLog        String    @default("[]") // Json — win-back conversation transcript
 
   cohort Cohort @relation(fields: [cohortId], references: [id])
 
@@ -374,20 +375,20 @@ model Persona {
 // message every persona then sees), and the discussion can be wrapped up into a
 // synthesized conclusion. Persisted so it survives drawer close / reload.
 model PersonaConversation {
-  id         String   @id @default(cuid())
-  runId      String   @map("run_id")
+  id             String   @id @default(cuid())
+  runId          String   @map("run_id")
   // Json string[] of the 2-4 participant persona ids (source of truth).
-  participantIds String @default("[]") @map("participant_ids")
+  participantIds String   @default("[]") @map("participant_ids")
   // Legacy first-two participants, kept populated for back-compat reads.
-  personaAId String   @map("persona_a_id")
-  personaBId String   @map("persona_b_id")
-  topic      String   @default("")
+  personaAId     String   @map("persona_a_id")
+  personaBId     String   @map("persona_b_id")
+  topic          String   @default("")
   // Json: [{ speaker, personaId|null, role: "persona"|"founder",
   //          content, intentAfter|null, ts }]
-  messages   String   @default("[]")
-  conclusion String?
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
+  messages       String   @default("[]")
+  conclusion     String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
 
   @@index([runId])
   @@map("persona_conversations")
@@ -475,31 +476,31 @@ model IndustryKnowledge {
 // daily news. Tables are global rather than per-project so every venture/run
 // can reuse the same intelligence base.
 model Company {
-  id              String   @id @default(cuid())
-  canonicalName   String   @map("canonical_name")
-  legalName       String?  @map("legal_name")
-  country         String?
-  website         String?
-  investorWebsite String?  @map("investor_website")
-  cik             String?  @unique
-  lei             String?
+  id                  String   @id @default(cuid())
+  canonicalName       String   @map("canonical_name")
+  legalName           String?  @map("legal_name")
+  country             String?
+  website             String?
+  investorWebsite     String?  @map("investor_website")
+  cik                 String?  @unique
+  lei                 String?
   crunchbaseUuid      String?  @unique @map("crunchbase_uuid")
   crunchbasePermalink String?  @unique @map("crunchbase_permalink")
-  sic             String?
-  sicDescription  String?  @map("sic_description")
-  sector          String?
-  description     String   @default("")
-  story           Json?
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
+  sic                 String?
+  sicDescription      String?  @map("sic_description")
+  sector              String?
+  description         String   @default("")
+  story               Json?
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
-  listings      ExchangeListing[]
-  profiles      CompanyProfileSnapshot[]
-  filings       CorporateFiling[]
-  metrics       FinancialMetric[]
-  news          NewsItem[]
-  sourceRecords SourceRecord[]
-  founderRoles  FounderCompanyRole[]
+  listings       ExchangeListing[]
+  profiles       CompanyProfileSnapshot[]
+  filings        CorporateFiling[]
+  metrics        FinancialMetric[]
+  news           NewsItem[]
+  sourceRecords  SourceRecord[]
+  founderRoles   FounderCompanyRole[]
   founderStories FounderStorySnapshot[]
 
   @@index([canonicalName])
@@ -714,4 +715,78 @@ model SourceRecord {
 
   @@index([companyId, source])
   @@map("source_records")
+}
+
+// ---------------------------------------------------------------------------
+// Business integrations — connect a founder's real operational data (sales,
+// ads, payments, accounting) so the simulation can be reconciled against
+// actuals ("Plan vs Actual"). One Integration row = one connected provider
+// account. Tokens are AES-256-GCM encrypted at rest (lib/integrations/crypto).
+// ---------------------------------------------------------------------------
+model Integration {
+  id                String    @id @default(cuid())
+  projectId         String    @map("project_id")
+  provider          String // shopify | meta_ads | google_ads | ga4 | stripe | quickbooks | unified
+  category          String // commerce | ads | analytics | payments | accounting
+  status            String    @default("connected") // connected | error | disconnected | syncing
+  displayName       String?   @map("display_name")
+  externalAccountId String?   @map("external_account_id") // shop domain / ad-account / GA4 property / realm
+  scope             String?
+  accessToken       String?   @map("access_token") @db.Text // encrypted
+  refreshToken      String?   @map("refresh_token") @db.Text // encrypted
+  expiresAt         DateTime? @map("expires_at")
+  metadata          Json      @default("{}") // shopDomain, propertyId, currency, …
+  lastSyncedAt      DateTime? @map("last_synced_at")
+  lastError         String?   @map("last_error")
+  createdAt         DateTime  @default(now()) @map("created_at")
+  updatedAt         DateTime  @updatedAt @map("updated_at")
+
+  project  Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  syncRuns IntegrationSyncRun[]
+  metrics  MetricSnapshot[]
+
+  @@unique([projectId, provider, externalAccountId])
+  @@index([projectId])
+  @@map("integrations")
+}
+
+model IntegrationSyncRun {
+  id              String    @id @default(cuid())
+  integrationId   String    @map("integration_id")
+  type            String // backfill | incremental
+  status          String    @default("running") // running | succeeded | failed
+  startedAt       DateTime  @default(now()) @map("started_at")
+  finishedAt      DateTime? @map("finished_at")
+  recordsIngested Int       @default(0) @map("records_ingested")
+  cursor          Json?
+  error           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId, createdAt])
+  @@map("integration_sync_runs")
+}
+
+// Normalized, provider-agnostic fact table. Every connector writes here;
+// reconciliation reads only here, so it never knows provider-specific shapes.
+model MetricSnapshot {
+  id            String   @id @default(cuid())
+  projectId     String   @map("project_id")
+  integrationId String   @map("integration_id")
+  provider      String
+  metric        String // orders | revenue | units | ad_spend | impressions | new_customers | refunds | mrr | cogs …
+  date          DateTime
+  grain         String   @default("day")
+  value         Float
+  currency      String?
+  dimensions    Json     @default("{}") // { channel, campaign, region, segment, product }
+  dimKey        String   @default("") @map("dim_key") // stable hash of dimensions for idempotent upserts
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@unique([integrationId, metric, date, dimKey])
+  @@index([projectId, metric, date])
+  @@map("metric_snapshots")
 }

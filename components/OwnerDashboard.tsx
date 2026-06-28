@@ -10,6 +10,7 @@ import {
   UserRound,
   ShieldCheck,
   Palette,
+  Plug,
 } from "lucide-react";
 import type {
   BrandSocialSection as BrandSocialState,
@@ -27,6 +28,7 @@ import FinancialsSection from "./FinancialsSection";
 import FounderStorySection from "./FounderStorySection";
 import InspirationSection from "./InspirationSection";
 import InvestorOSSection from "./InvestorOSSection";
+import IntegrationsSection from "./IntegrationsSection";
 
 // The Owner Dashboard is an extensible home for owner-facing tools. The left
 // rail is data-driven so new sections (suppliers, launch checklist) slot in.
@@ -36,6 +38,7 @@ type SectionId =
   | "brandSocial"
   | "designStudio"
   | "financials"
+  | "integrations"
   | "inspiration";
 type OwnerDashboardRunSlice = {
   founderStory: FounderStoryState | null;
@@ -50,6 +53,7 @@ const SECTIONS: { id: SectionId; label: string; icon: typeof Share2 }[] = [
   { id: "founderStory", label: "Founder Story", icon: UserRound },
   { id: "brandSocial", label: "Brand & Social", icon: Share2 },
   { id: "designStudio", label: "Design Studio", icon: Palette },
+  { id: "integrations", label: "Integrations", icon: Plug },
   { id: "inspiration", label: "Inspiration", icon: Sparkles },
 ];
 
@@ -266,6 +270,9 @@ export default function OwnerDashboard({
                 projectId={projectId}
                 sourceRunId={runId}
               />
+            </div>
+            <div className={section === "integrations" ? "" : "hidden"}>
+              <IntegrationsSection projectId={projectId} />
             </div>
             <div className={section === "inspiration" ? "" : "hidden"}>
               <InspirationSection
