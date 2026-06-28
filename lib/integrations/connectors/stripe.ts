@@ -25,7 +25,10 @@ export const stripeConnector: Connector = {
   category: "payments",
   label: "Stripe",
   authType: "oauth2",
-  scopes: ["read_only"],
+  // Stripe gates the read_only scope behind a support request; read_write is the
+  // default every platform can use immediately. We only ever GET (never write),
+  // so the broader grant is unused — it's just what Stripe allows out of the box.
+  scopes: ["read_write"],
   metrics: ["revenue", "refunds", "refund_amount", "new_customers", "mrr", "churn"],
 
   isConfigured() {
@@ -37,7 +40,7 @@ export const stripeConnector: Connector = {
     return buildAuthorizeUrl("https://connect.stripe.com/oauth/authorize", {
       response_type: "code",
       client_id: config.integrations.stripe.clientId,
-      scope: "read_only",
+      scope: "read_write",
       redirect_uri: args.redirectUri,
       state: args.state,
     });
