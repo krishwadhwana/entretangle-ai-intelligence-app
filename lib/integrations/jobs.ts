@@ -1,11 +1,10 @@
 // ---------------------------------------------------------------------------
 // The integration_sync worker job. Runs a connector against its window and
-// lands normalized metrics in MetricSnapshot. Live when the connector is
-// configured and a token is present; otherwise (MOCK_MODE, or no creds yet) it
-// uses the connector's seeded mockSync so the pipeline is always exercisable.
+// lands normalized metrics in MetricSnapshot — always live (real provider
+// data). A connection without a token, or a connector whose live sync isn't
+// implemented yet, fails the job with a clear error rather than fabricating data.
 // ---------------------------------------------------------------------------
 import { prisma } from "../db";
-import { config } from "../config";
 import { log } from "../log";
 import { requireConnector } from "./registry";
 import { getFreshAccessToken, writeMetrics, seedFor } from "./service";
@@ -46,12 +45,9 @@ export async function runIntegrationSyncJob(
 
   try {
     const tok = await getFreshAccessToken(integration.id);
-    // apiKey connectors are "live" when they hold a token; oauth connectors are
-    // live when configured AND holding a token. MOCK_MODE forces mock.
-    const live =
-      !config.mockMode &&
-      connector.isConfigured() &&
-      Boolean(tok.accessToken);
+    if (!tok.accessToken) {
+      throw new Error("integration has no access token — reconnect it");
+    }
 
     const ctx: SyncContext = {
       integrationId: integration.id,
@@ -65,7 +61,7 @@ export async function runIntegrationSyncJob(
       seed: seedFor(integration.id),
     };
 
-    const metrics = live ? await connector.sync(ctx) : connector.mockSync(ctx);
+    const metrics = await connector.sync(ctx);
     const written = await writeMetrics(
       integration.projectId,
       integration.id,
@@ -88,10 +84,9 @@ export async function runIntegrationSyncJob(
     log.info("integration sync complete", {
       integrationId: integration.id,
       provider: integration.provider,
-      mode: live ? "live" : "mock",
       written,
     });
-    return { ok: true, written, mode: live ? "live" : "mock" };
+    return { ok: true, written };
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await prisma.integrationSyncRun.update({

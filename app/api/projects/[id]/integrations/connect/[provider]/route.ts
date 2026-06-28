@@ -7,11 +7,9 @@ import {
   redirectUriFor,
   upsertIntegration,
 } from "@/lib/integrations/service";
-import { shouldMock, connectMock, enqueueBackfill } from "@/lib/integrations/connect";
+import { enqueueBackfill } from "@/lib/integrations/connect";
 
-// GET — start a connection. OAuth providers redirect to the provider's consent
-// screen; in MOCK_MODE / before credentials exist, we create a demo integration
-// immediately and bounce back to the dashboard so the flow is always testable.
+// GET — start an OAuth connection: redirect to the provider's consent screen.
 export async function GET(
   req: NextRequest,
   { params }: { params: { id: string; provider: string } },
@@ -29,10 +27,19 @@ export async function GET(
     referer && referer.startsWith(req.nextUrl.origin)
       ? referer
       : `${req.nextUrl.origin}/?integration_connected=${params.provider}`;
+  const fail = (reason: string) => {
+    const u = new URL(backTo);
+    u.searchParams.set("integration_error", reason);
+    return NextResponse.redirect(u.toString());
+  };
 
-  if (shouldMock(params.provider)) {
-    await connectMock(params.id, params.provider);
-    return NextResponse.redirect(backTo);
+  if (connector.authType === "apiKey") {
+    return NextResponse.json({ error: "connect this provider via POST" }, { status: 400 });
+  }
+  // Real OAuth only — no credentials means the operator hasn't set this provider
+  // up yet (we never fabricate a connection).
+  if (!connector.isConfigured()) {
+    return fail("not_configured");
   }
 
   // Shopify's authorize endpoint is per-shop, so we need the shop domain first.
@@ -58,7 +65,7 @@ export async function GET(
   return NextResponse.redirect(url);
 }
 
-// POST — apiKey connect (e.g. Shopify shop domain + Admin API token).
+// POST — apiKey connect (Faire, Klaviyo): the merchant pastes a key we validate.
 export async function POST(
   req: NextRequest,
   { params }: { params: { id: string; provider: string } },
@@ -68,11 +75,6 @@ export async function POST(
   const connector = getConnector(params.provider);
   if (!connector) {
     return NextResponse.json({ error: "unknown provider" }, { status: 404 });
-  }
-
-  if (shouldMock(params.provider)) {
-    const res = await connectMock(params.id, params.provider);
-    return NextResponse.json({ id: res.id, mock: true });
   }
   if (connector.authType !== "apiKey" || !connector.connectWithKey) {
     return NextResponse.json(
