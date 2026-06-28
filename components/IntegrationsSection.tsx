@@ -295,6 +295,8 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
           overview={overview}
           onConnect={() => setTab("sources")}
           hasSources={anyConnected}
+          syncing={integrations.some((i) => i.status === "syncing")}
+          syncedDays={days}
         />
       )}
       {tab === "plan" && <ReconciliationPanel report={report} />}
@@ -319,18 +321,25 @@ function OverviewTab({
   overview,
   onConnect,
   hasSources,
+  syncing,
+  syncedDays,
 }: {
   overview: Overview | null;
   onConnect: () => void;
   hasSources: boolean;
+  syncing: boolean;
+  syncedDays: number;
 }) {
   if (!overview || !overview.hasData) {
+    const message = !hasSources
+      ? "Connect a source to see your business overview."
+      : syncing
+        ? "Syncing your data…"
+        : `Connected — but no orders, charges or ad activity in the last ${syncedDays} days. New activity will appear here automatically.`;
     return (
       <div className="rounded-xl border border-dashed border-neutral-200 p-10 text-center">
         <Boxes className="mx-auto h-8 w-8 text-neutral-300" />
-        <p className="mt-3 text-sm text-neutral-500">
-          {hasSources ? "Syncing your data…" : "Connect a source to see your business overview."}
-        </p>
+        <p className="mx-auto mt-3 max-w-sm text-sm text-neutral-500">{message}</p>
         {!hasSources && (
           <button
             onClick={onConnect}
