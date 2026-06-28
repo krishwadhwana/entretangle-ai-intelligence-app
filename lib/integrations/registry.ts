@@ -49,11 +49,11 @@ const AVAILABLE = new Set<string>([
   "shopify",
   "stripe",
   "meta_ads",
-  "google_ads",
   "ga4",
 ]);
 
-/** Provider catalog for the UI, in display order. */
+/** Provider catalog for the UI — available providers first, coming-soon after
+ *  (stable sort preserves the order within each group). */
 export const CATALOG = CONNECTORS.map((c) => ({
   provider: c.provider,
   label: c.label,
@@ -62,6 +62,6 @@ export const CATALOG = CONNECTORS.map((c) => ({
   metrics: c.metrics,
   connectFields: c.connectFields ?? null,
   comingSoon: !AVAILABLE.has(c.provider),
-}));
+})).sort((a, b) => Number(a.comingSoon) - Number(b.comingSoon));
 
 export type IntegrationCatalogItem = (typeof CATALOG)[number];
