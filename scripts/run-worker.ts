@@ -1,3 +1,4 @@
+import "./load-env"; // load .env locally before anything reads process.env
 import { randomUUID } from "crypto";
 import type { Prisma } from "@prisma/client";
 import {

@@ -26,19 +26,12 @@ import type {
 import { buildAuthorizeUrl } from "./oauth";
 import { genSeries } from "../mock";
 
-const API_VERSION = "2024-10";
-
 /** Normalize "my-store", "my-store.myshopify.com", "https://…" → host only. */
 export function normalizeShopDomain(input: string): string {
   let d = input.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
   if (!d) return "";
   if (!d.includes(".")) d = `${d}.myshopify.com`;
   return d.toLowerCase();
-}
-
-function shopBase(domain: string): string {
-  const clean = domain.replace(/^https?:\/\//, "").replace(/\/$/, "");
-  return `https://${clean}/admin/api/${API_VERSION}`;
 }
 
 type ShopifyOrder = {
@@ -52,8 +45,60 @@ type ShopifyOrder = {
     refund_line_items: { subtotal: string; quantity: number }[];
     transactions?: { amount: string }[];
   }[];
-  customer?: { id: number } | null;
+  // REST gives a numeric id; GraphQL gives a gid string. Either dedupes fine.
+  customer?: { id: number | string } | null;
 };
+
+// Admin API version for the GraphQL endpoint. New Shopify apps must use GraphQL
+// (REST Admin API is off for apps created after April 2025). Bump as versions
+// roll; Shopify supports each for ~12 months.
+const GRAPHQL_VERSION = "2025-01";
+
+const ORDERS_QUERY = `
+  query Orders($q: String!, $cursor: String) {
+    orders(first: 100, after: $cursor, query: $q, sortKey: CREATED_AT) {
+      edges {
+        cursor
+        node {
+          createdAt
+          currentTotalPriceSet { shopMoney { amount currencyCode } }
+          currentSubtotalLineItemsQuantity
+          customer { id }
+          refunds {
+            createdAt
+            totalRefundedSet { shopMoney { amount } }
+          }
+        }
+      }
+      pageInfo { hasNextPage endCursor }
+    }
+  }`;
+
+type GqlOrderNode = {
+  createdAt: string;
+  currentTotalPriceSet: { shopMoney: { amount: string; currencyCode: string } };
+  currentSubtotalLineItemsQuantity: number;
+  customer: { id: string } | null;
+  refunds: { createdAt: string; totalRefundedSet: { shopMoney: { amount: string } } }[];
+};
+
+/** Map a GraphQL order node onto the REST-shaped ShopifyOrder aggregateOrders expects. */
+function gqlToOrder(n: GqlOrderNode): ShopifyOrder {
+  const money = n.currentTotalPriceSet.shopMoney;
+  return {
+    created_at: n.createdAt,
+    current_total_price: money.amount,
+    total_discounts: "0",
+    currency: money.currencyCode,
+    line_items: [{ quantity: n.currentSubtotalLineItemsQuantity ?? 0 }],
+    refunds: (n.refunds ?? []).map((r) => ({
+      created_at: r.createdAt,
+      refund_line_items: [],
+      transactions: [{ amount: r.totalRefundedSet?.shopMoney?.amount ?? "0" }],
+    })),
+    customer: n.customer ? { id: n.customer.id } : null,
+  };
+}
 
 function dayOf(iso: string): string {
   return new Date(iso).toISOString().slice(0, 10);
@@ -124,24 +169,42 @@ export const shopifyConnector: Connector = {
     if (!ctx.accessToken || !shopDomain) {
       throw new Error("Shopify integration missing token or shop domain");
     }
-    const headers = { "X-Shopify-Access-Token": ctx.accessToken };
+    const endpoint = `https://${normalizeShopDomain(shopDomain)}/admin/api/${GRAPHQL_VERSION}/graphql.json`;
+    const q =
+      `created_at:>='${ctx.since.toISOString()}' ` +
+      `created_at:<='${ctx.until.toISOString()}'`;
     const orders: ShopifyOrder[] = [];
-    // Cursor pagination over the created_at window.
-    let url =
-      `${shopBase(shopDomain)}/orders.json?status=any&limit=250` +
-      `&created_at_min=${ctx.since.toISOString()}` +
-      `&created_at_max=${ctx.until.toISOString()}`;
-    for (let page = 0; page < 40 && url; page++) {
-      const res = await fetch(url, { headers });
+    let cursor: string | null = null;
+    // Cursor pagination over the GraphQL orders connection.
+    for (let page = 0; page < 50; page++) {
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": ctx.accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ query: ORDERS_QUERY, variables: { q, cursor } }),
+      });
       if (!res.ok) {
-        throw new Error(`Shopify orders fetch failed (HTTP ${res.status})`);
+        throw new Error(`Shopify GraphQL orders failed (HTTP ${res.status})`);
       }
-      const body = (await res.json()) as { orders: ShopifyOrder[] };
-      orders.push(...body.orders);
-      // Link header drives cursor pagination.
-      const link = res.headers.get("link") || "";
-      const next = /<([^>]+)>;\s*rel="next"/.exec(link);
-      url = next ? next[1] : "";
+      const body = (await res.json()) as {
+        data?: {
+          orders: {
+            edges: { node: GqlOrderNode }[];
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+          };
+        };
+        errors?: { message: string }[];
+      };
+      if (body.errors?.length) {
+        throw new Error(`Shopify GraphQL error: ${body.errors[0].message}`);
+      }
+      const conn = body.data?.orders;
+      if (!conn) break;
+      for (const e of conn.edges) orders.push(gqlToOrder(e.node));
+      if (!conn.pageInfo.hasNextPage) break;
+      cursor = conn.pageInfo.endCursor;
     }
     return aggregateOrders(orders, ctx);
   },
@@ -175,7 +238,7 @@ export function aggregateOrders(
     returningCustomers: number;
   };
   const byDay = new Map<string, Day>();
-  const seenCustomers = new Set<number>();
+  const seenCustomers = new Set<string>();
   let currency = (ctx.metadata.currency as string) || "USD";
 
   const ensure = (d: string): Day => {
@@ -203,7 +266,7 @@ export function aggregateOrders(
     row.revenue += Number(o.current_total_price || 0);
     row.units += o.line_items.reduce((s, li) => s + (li.quantity || 0), 0);
     // First-vs-repeat from the customer id we've seen in this window.
-    const cid = o.customer?.id;
+    const cid = o.customer?.id != null ? String(o.customer.id) : undefined;
     if (cid != null) {
       if (seenCustomers.has(cid)) row.returningCustomers += 1;
       else {
@@ -238,5 +301,3 @@ export function aggregateOrders(
   log.debug("shopify aggregate", { days: byDay.size, orders: orders.length });
   return out;
 }
-
-void config; // referenced for parity with other connectors; live creds are per-integration

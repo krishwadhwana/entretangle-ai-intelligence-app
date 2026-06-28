@@ -2,6 +2,7 @@
 //   npx tsx scripts/sync-integrations.ts            # all connected
 //   npx tsx scripts/sync-integrations.ts <projectId> # one project
 // The run worker drains the queued integration_sync jobs.
+import "./load-env";
 import { prisma } from "../lib/db";
 import { enqueueProjectJob } from "../lib/jobs";
 import { log } from "../lib/log";
