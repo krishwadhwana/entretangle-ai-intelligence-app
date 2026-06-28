@@ -1,57 +1,56 @@
 // ---------------------------------------------------------------------------
-// Stripe connector. Authenticates with a restricted (read-only) API key the
-// merchant pastes — the simplest path to read your OWN account's revenue, with
-// no Stripe Connect platform setup. Pulls succeeded charges in the window →
-// daily revenue + refunds + new customers; MRR/churn are mock for now (they
-// need subscription enumeration). The key is stored per-integration, encrypted.
-// Needs only the "Charges: Read" permission.
+// Stripe connector. Stripe Connect OAuth (read_only): the merchant clicks
+// Connect and approves on Stripe's own screen — no key pasting. Pulls succeeded
+// charges in the window → daily revenue + refunds + new customers; MRR/churn
+// are mock for now (they need subscription enumeration). The per-account token
+// from OAuth is stored encrypted.
 //
-// (Multi-tenant note: to connect OTHER businesses' accounts later, swap this
-// for Stripe Connect OAuth — the connector interface supports authType oauth2.)
+// One-time operator setup: enable Stripe Connect, then set STRIPE_CLIENT_ID
+// (the ca_… OAuth client id) and STRIPE_SECRET_KEY (used to authenticate the
+// token exchange) in the environment. See docs/integrations-setup.md.
 // ---------------------------------------------------------------------------
-import type { Connector, NormalizedMetric, SyncContext } from "../types";
+import { config } from "../../config";
+import type {
+  AuthorizeArgs,
+  Connector,
+  NormalizedMetric,
+  SyncContext,
+  TokenSet,
+} from "../types";
+import { buildAuthorizeUrl, postTokenForm } from "./oauth";
 import { genSeries } from "../mock";
-
-const STRIPE_API = "https://api.stripe.com/v1";
 
 export const stripeConnector: Connector = {
   provider: "stripe",
   category: "payments",
   label: "Stripe",
-  authType: "apiKey",
+  authType: "oauth2",
+  scopes: ["read_only"],
   metrics: ["revenue", "refunds", "refund_amount", "new_customers", "mrr", "churn"],
-  connectFields: [
-    {
-      name: "secretKey",
-      label: "Stripe restricted key",
-      placeholder: "rk_live_… (grant Charges: Read)",
-    },
-  ],
 
   isConfigured() {
-    return true; // per-account key, validated at connect time
+    const c = config.integrations.stripe;
+    return Boolean(c.clientId && c.secretKey);
   },
 
-  async connectWithKey(input) {
-    const key = (input.secretKey || "").trim();
-    if (!key) throw new Error("Stripe restricted key is required");
-    // Validate (and confirm Charges: Read) with a 1-row charges call.
-    const res = await fetch(`${STRIPE_API}/charges?limit=1`, {
-      headers: { Authorization: `Bearer ${key}` },
+  authorizeUrl(args: AuthorizeArgs): string {
+    return buildAuthorizeUrl("https://connect.stripe.com/oauth/authorize", {
+      response_type: "code",
+      client_id: config.integrations.stripe.clientId,
+      scope: "read_only",
+      redirect_uri: args.redirectUri,
+      state: args.state,
     });
-    if (!res.ok) {
-      throw new Error(
-        `Stripe rejected the key (HTTP ${res.status}). Make sure it has "Charges: Read".`,
-      );
-    }
-    const mode =
-      key.startsWith("rk_live_") || key.startsWith("sk_live_") ? "live" : "test";
-    return {
-      token: { accessToken: key },
-      externalAccountId: "stripe",
-      displayName: `Stripe (${mode})`,
-      metadata: { mode },
-    };
+  },
+
+  async exchangeCode(code: string): Promise<TokenSet> {
+    // Stripe authenticates the token request with the platform secret key; the
+    // returned access_token is scoped to the connected account.
+    return postTokenForm("https://connect.stripe.com/oauth/token", {
+      grant_type: "authorization_code",
+      code,
+      client_secret: config.integrations.stripe.secretKey,
+    });
   },
 
   async sync(ctx: SyncContext): Promise<NormalizedMetric[]> {
