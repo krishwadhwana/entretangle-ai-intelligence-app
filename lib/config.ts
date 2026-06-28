@@ -116,8 +116,17 @@ export const config = {
           process.env.META_APP_SECRET || process.env.FACEBOOK_CLIENT_SECRET || "",
       },
       google: {
-        clientId: process.env.GOOGLE_CLIENT_ID || "",
-        clientSecret: process.env.GOOGLE_CLIENT_SECRET || "",
+        // Dedicated OAuth client for GA4 / Google Ads integrations, kept
+        // separate from the auth (login) client. Falls back to the auth client
+        // if the dedicated one isn't set.
+        clientId:
+          process.env.GOOGLE_INTEGRATIONS_CLIENT_ID ||
+          process.env.GOOGLE_CLIENT_ID ||
+          "",
+        clientSecret:
+          process.env.GOOGLE_INTEGRATIONS_CLIENT_SECRET ||
+          process.env.GOOGLE_CLIENT_SECRET ||
+          "",
         adsDeveloperToken: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || "",
       },
       stripe: {
