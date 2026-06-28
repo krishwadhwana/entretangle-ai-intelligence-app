@@ -16,6 +16,7 @@ import {
   BadgeCheck,
   ExternalLink,
   Factory,
+  Search,
 } from "lucide-react";
 import {
   MANUFACTURER_STATUSES,
@@ -46,6 +47,9 @@ export default function ManufacturerTable({ projectId, projectName }: Props) {
   const [filter, setFilter] = useState<ManufacturerStatus | "all">("all");
   const [adding, setAdding] = useState(false);
   const [newName, setNewName] = useState("");
+  const [sourcing, setSourcing] = useState(false);
+  const [sourceMsg, setSourceMsg] = useState<string | null>(null);
+  const [sourceProgress, setSourceProgress] = useState<{ label: string; detail?: string }[]>([]);
 
   const base = `/api/projects/${projectId}/manufacturers`;
 
@@ -114,6 +118,62 @@ export default function ManufacturerTable({ projectId, projectName }: Props) {
     }
   }, [base, newName, load]);
 
+  // Enqueue a sourcing run (durable worker job) and poll it until it settles,
+  // streaming the job's progress and reloading the table on success.
+  const startSourcing = useCallback(async () => {
+    if (sourcing) return;
+    setSourcing(true);
+    setSourceMsg("Starting sourcing run…");
+    setSourceProgress([]);
+    setError(null);
+    try {
+      const res = await fetch(`${base}/source`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ limit: 12, phase: "discover" }),
+      });
+      if (!res.ok) throw new Error(`Failed to start (${res.status})`);
+      const { jobId } = (await res.json()) as { jobId: string };
+
+      const deadline = Date.now() + 120_000;
+      let settled = false;
+      while (Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const jr = await fetch(`/api/jobs/${jobId}`, { cache: "no-store" });
+        if (!jr.ok) continue;
+        const { job } = await jr.json();
+        const prog = Array.isArray(job?.result?.progress) ? job.result.progress : [];
+        setSourceProgress(prog.map((x: { label: string; detail?: string }) => ({ label: x.label, detail: x.detail })));
+        if (job.status === "succeeded") {
+          const r = job.result ?? {};
+          setSourceMsg(`Added ${r.inserted ?? 0} manufacturers · ${r.skipped ?? 0} duplicates skipped.`);
+          await load();
+          settled = true;
+          break;
+        }
+        if (job.status === "failed") {
+          setSourceMsg(null);
+          setError(job.error || "Sourcing failed");
+          settled = true;
+          break;
+        }
+        if (job.status === "cancelled") {
+          setSourceMsg("Sourcing cancelled.");
+          settled = true;
+          break;
+        }
+      }
+      if (!settled) {
+        setSourceMsg("Still working — make sure the worker process is running (npm run worker).");
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Sourcing failed");
+      setSourceMsg(null);
+    } finally {
+      setSourcing(false);
+    }
+  }, [base, load, sourcing]);
+
   const removeRow = useCallback(
     async (id: string) => {
       mark(id, true);
@@ -159,13 +219,43 @@ export default function ManufacturerTable({ projectId, projectName }: Props) {
           </h2>
           <span className="text-sm text-slate-400">({rows.length})</span>
         </div>
-        <button
-          onClick={() => setAdding((v) => !v)}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
-        >
-          <Plus className="h-4 w-4" /> Add manufacturer
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={startSourcing}
+            disabled={sourcing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            title="Find manufacturers from sourcing sources"
+          >
+            {sourcing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Search className="h-4 w-4" />} Find
+            manufacturers
+          </button>
+          <button
+            onClick={() => setAdding((v) => !v)}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-slate-900 px-3 py-1.5 text-sm font-medium text-white hover:bg-slate-700"
+          >
+            <Plus className="h-4 w-4" /> Add manufacturer
+          </button>
+        </div>
       </div>
+
+      {(sourcing || sourceMsg) && (
+        <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+          <div className="flex items-center gap-1.5 font-medium text-slate-700">
+            {sourcing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {sourcing ? "Sourcing manufacturers…" : sourceMsg}
+          </div>
+          {sourceProgress.length > 0 && (
+            <ul className="mt-1 space-y-0.5">
+              {sourceProgress.map((p, i) => (
+                <li key={i}>
+                  • {p.label}
+                  {p.detail ? ` — ${p.detail}` : ""}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
 
       {/* status filter chips */}
       <div className="flex flex-wrap gap-1.5">

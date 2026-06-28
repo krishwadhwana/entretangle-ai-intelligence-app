@@ -26,7 +26,7 @@ and risk. Triage:
 | Per-project **progression scoring** (idea/planning/business-plan/lab-report/money-vs-output, scenarios) | M | ✅ **Built** (this round) |
 | **Salesforce** integration (OAuth) | S | ✅ **Built**, "coming soon" (not enabled) |
 | **Manufacturer sourcing table** (MOQ, sample price, lead time, payment terms) | M | ✅ **Built** (manual entry) |
-| **Manufacturer sourcing agent** (scrape + contact directories) | L | ⏳ **Spec'd below**, not built |
+| **Manufacturer sourcing agent** | L | 🟡 **First slice built** — 1 licensed source (mock+live) → table, via durable worker (§4.0); rest spec'd in §4 |
 | **Documents marketplace** (NDA-gated, sequential unlock, feedback → personas) | L | ❌ Not started |
 | **Gated networking** (no contact exchange, on-portal Zoom/voice, 5-sec audio delay, AI bypass-detection, violation clause) | XL | 🚫 Deferred — legal/infra |
 | **Git-for-non-tech-projects** + AI/human permissions | XL | 🚫 Deferred |
@@ -173,6 +173,30 @@ for the record under `prisma/migrations/2026062800*` and `*01*`.
 The vision: an agent that **finds and contacts** manufacturers for the venture's
 product, **before and after** the product lab report, and fills the
 `Manufacturer` table.
+
+### 4.0 What's built so far ✅
+
+The **pipeline backbone + first source** are done (mirrors the integrations
+pattern: live when configured, deterministic fixtures otherwise — so it runs
+end-to-end today). Verified end-to-end: insert + within-batch dedupe + dedupe
+vs existing rows + field mapping all work.
+
+- Source contract: [lib/sourcing/types.ts](../lib/sourcing/types.ts) (`SourcingSource`, `SourcingQuery`, `RawManufacturer`, `legalMode`)
+- First source — ImportYeti licensed trade-data feed (live `search()` + deterministic `mockSearch()`): [lib/sourcing/sources/importyeti.ts](../lib/sourcing/sources/importyeti.ts)
+- Registry: [lib/sourcing/registry.ts](../lib/sourcing/registry.ts) (`autoSources()` excludes `manual_only`)
+- Job handler — builds query from the venture profile, runs sources, dedupes (by website host, else name+country), inserts, streams progress: [lib/sourcing/jobs.ts](../lib/sourcing/jobs.ts)
+- Durable worker: `sourcing_search` job type ([lib/jobs.ts](../lib/jobs.ts)) + dispatch in [scripts/run-worker.ts](../scripts/run-worker.ts) (needs `npm run worker` running)
+- Enqueue API: `POST /api/projects/[id]/manufacturers/source` → returns `jobId`, poll `/api/jobs/[id]`
+- UI: **"Find manufacturers"** button + live progress in [components/ManufacturerTable.tsx](../components/ManufacturerTable.tsx)
+- Config/env: `config.sourcing.importyeti` ([lib/config.ts](../lib/config.ts)), `IMPORTYETI_API_URL`/`IMPORTYETI_API_KEY` in [.env.example](../.env.example)
+
+**Still to do** (the rest of §4.3/§4.4): confirm the ImportYeti live response
+mapping against the real licence; add more legally-clean sources (IndiaMART API,
+Alibaba Open Platform, Apollo/ZoomInfo enrichment); LLM query-expansion +
+ranking/fit-scoring into `notes` (follow the `callX` + mock pattern in
+[lib/llm.ts](../lib/llm.ts)); outreach drafts + pipeline automation (human-approved
+send); the post-lab-report refinement pass (`phase: "refine"` is already plumbed
+through the payload).
 
 - **Before the lab report**: cast wide. Learn what manufacturers in the category
   typically do — MOQ, sample prices, turnaround, payment terms — and populate

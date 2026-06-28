@@ -22,7 +22,8 @@ export type RunJobType =
   | "design_logo"
   | "design_collateral"
   | "design_site"
-  | "integration_sync";
+  | "integration_sync"
+  | "sourcing_search";
 export type RunJobStatus =
   | "queued"
   | "running"

@@ -18,6 +18,7 @@ import { prisma } from "../lib/db";
 import { executeRun, resumeRun, addPendingCohorts } from "../lib/orchestrator";
 import { runDesignStudioJob } from "../lib/design/jobs";
 import { runIntegrationSyncJob } from "../lib/integrations/jobs";
+import { runSourcingJob } from "../lib/sourcing/jobs";
 import { currentDeployInfo, deployInfoLabel } from "../lib/deployInfo";
 import { log } from "../lib/log";
 import { metrics, startMetricsFlush } from "../lib/metrics";
@@ -57,6 +58,11 @@ async function runJob(job: ClaimedRunJob): Promise<void> {
   try {
     if (job.type === "integration_sync") {
       const result = await runIntegrationSyncJob(job.payload);
+      await markJobSucceededWithResult(job.id, result as Prisma.InputJsonValue);
+      return;
+    }
+    if (job.type === "sourcing_search") {
+      const result = await runSourcingJob(job.payload, job.id);
       await markJobSucceededWithResult(job.id, result as Prisma.InputJsonValue);
       return;
     }

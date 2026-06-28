@@ -167,4 +167,16 @@ export const config = {
       },
     };
   },
+  // --- Manufacturer sourcing sources (licensed feeds / directory APIs) -------
+  // A source pulls LIVE data only when configured here; otherwise the pipeline
+  // runs deterministic fixtures so it's exercisable end-to-end. See
+  // lib/sourcing/ and docs/venture-platform-handoff.md §4.
+  get sourcing() {
+    return {
+      importyeti: {
+        baseUrl: process.env.IMPORTYETI_API_URL || "",
+        apiKey: process.env.IMPORTYETI_API_KEY || "",
+      },
+    };
+  },
 };
