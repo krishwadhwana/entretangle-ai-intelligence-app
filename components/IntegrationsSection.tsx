@@ -50,6 +50,7 @@ type CatalogItem = {
   authType: "oauth2" | "apiKey";
   metrics: string[];
   connectFields: { name: string; label: string; placeholder?: string }[] | null;
+  comingSoon: boolean;
 };
 type Integration = {
   id: string;
@@ -294,7 +295,6 @@ export default function IntegrationsSection({ projectId }: { projectId: string |
           overview={overview}
           onConnect={() => setTab("sources")}
           hasSources={anyConnected}
-          demo={integrations.some((i) => i.demo)}
         />
       )}
       {tab === "plan" && <ReconciliationPanel report={report} />}
@@ -319,12 +319,10 @@ function OverviewTab({
   overview,
   onConnect,
   hasSources,
-  demo,
 }: {
   overview: Overview | null;
   onConnect: () => void;
   hasSources: boolean;
-  demo: boolean;
 }) {
   if (!overview || !overview.hasData) {
     return (
@@ -347,18 +345,6 @@ function OverviewTab({
   const cur = overview.currency;
   return (
     <div className="space-y-6">
-      {demo && (
-        <div className="flex items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-[12px] text-amber-700">
-          <AlertCircle className="h-4 w-4 shrink-0" />
-          <span>
-            Showing <span className="font-semibold">sample demo data</span> — connect a live account
-            to replace it with your real numbers.
-          </span>
-          <button onClick={onConnect} className="ml-auto shrink-0 font-medium underline">
-            Connect a source
-          </button>
-        </div>
-      )}
       {/* KPI grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {overview.kpis.map((k) => (
@@ -642,9 +628,13 @@ function SourcesTab({
     <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
       {catalog.map((item) => {
         const conn = connected(item.provider);
+        const comingSoon = item.comingSoon && !conn;
         const Icon = providerIcon(item.category);
         return (
-          <div key={item.provider} className="rounded-xl border border-neutral-200 bg-white p-4">
+          <div
+            key={item.provider}
+            className={`rounded-xl border border-neutral-200 bg-white p-4${comingSoon ? " opacity-70" : ""}`}
+          >
             <div className="flex items-start justify-between">
               <div className="flex items-center gap-2.5">
                 <div className="rounded-lg bg-neutral-100 p-2">
@@ -656,9 +646,9 @@ function SourcesTab({
                 </div>
               </div>
               <div className="flex items-center gap-1.5">
-                {conn?.demo && (
-                  <span className="rounded-full bg-amber-50 px-2 py-0.5 text-[10px] font-medium text-amber-600">
-                    Demo
+                {comingSoon && (
+                  <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-[10px] font-medium text-neutral-400">
+                    Coming soon
                   </span>
                 )}
                 {conn && <StatusBadge status={conn.status} />}
@@ -692,6 +682,10 @@ function SourcesTab({
                   </button>
                 </div>
               </div>
+            ) : comingSoon ? (
+              <div className="mt-3 text-[10px] text-neutral-400">
+                Tracks: {item.metrics.map(metricLabel).join(", ")}
+              </div>
             ) : (
               <div className="mt-3">
                 <button
@@ -718,7 +712,7 @@ function SourcesTab({
                       Connect store
                     </button>
                     <p className="text-[10px] text-neutral-400">
-                      Enter your store domain — you&apos;ll approve access on Shopify&apos;s own screen. (Demo mode connects sample data.)
+                      Enter your store domain — you&apos;ll approve access on Shopify&apos;s own screen.
                     </p>
                   </div>
                 )}
@@ -742,9 +736,7 @@ function SourcesTab({
                       {busy === item.provider && <Loader2 className="h-3 w-3 animate-spin" />}
                       Connect
                     </button>
-                    <p className="text-[10px] text-neutral-400">
-                      Paste your {item.label} API key. (Demo mode connects sample data.)
-                    </p>
+                    <p className="text-[10px] text-neutral-400">Paste your {item.label} API key.</p>
                   </div>
                 )}
               </div>

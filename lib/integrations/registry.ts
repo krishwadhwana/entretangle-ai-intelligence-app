@@ -43,7 +43,17 @@ export function requireConnector(provider: string): Connector {
   return c;
 }
 
-/** Provider catalog for the UI — Core 5 (+ aggregator), in display order. */
+// Providers that are live and connectable today. Everything else renders as
+// "Coming soon" in the UI. Flip a provider in here once its setup is ready.
+const AVAILABLE = new Set<string>([
+  "shopify",
+  "stripe",
+  "meta_ads",
+  "google_ads",
+  "ga4",
+]);
+
+/** Provider catalog for the UI, in display order. */
 export const CATALOG = CONNECTORS.map((c) => ({
   provider: c.provider,
   label: c.label,
@@ -51,6 +61,7 @@ export const CATALOG = CONNECTORS.map((c) => ({
   authType: c.authType,
   metrics: c.metrics,
   connectFields: c.connectFields ?? null,
+  comingSoon: !AVAILABLE.has(c.provider),
 }));
 
 export type IntegrationCatalogItem = (typeof CATALOG)[number];
