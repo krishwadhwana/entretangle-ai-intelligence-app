@@ -238,7 +238,11 @@ export default function AppHeader() {
     return null;
   }
 
-  if (status !== "authenticated") {
+  // Open access (temporary): show the header even without a session so the app
+  // stays navigable while the login gate is off. Set NEXT_PUBLIC_OPEN_ACCESS=false
+  // to restore the authenticated-only header.
+  const openAccess = process.env.NEXT_PUBLIC_OPEN_ACCESS !== "false";
+  if (status !== "authenticated" && !openAccess) {
     return null;
   }
 
@@ -277,20 +281,24 @@ export default function AppHeader() {
           New
         </button>
         <ProjectSelector />
-        <div className="hidden max-w-48 items-center gap-1.5 truncate rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-600 sm:flex">
-          <UserCircle className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
-          <span className="truncate" title={session.user?.email ?? ""}>
-            {session.user?.name || session.user?.email || "Account"}
-          </span>
-        </div>
-        <button
-          type="button"
-          onClick={() => void signOut({ callbackUrl: "/login" })}
-          className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50"
-          title="Sign out"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-        </button>
+        {session?.user && (
+          <>
+            <div className="hidden max-w-48 items-center gap-1.5 truncate rounded-lg border border-neutral-200 px-2.5 py-1.5 text-xs text-neutral-600 sm:flex">
+              <UserCircle className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
+              <span className="truncate" title={session.user?.email ?? ""}>
+                {session.user?.name || session.user?.email || "Account"}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={() => void signOut({ callbackUrl: "/login" })}
+              className="rounded-lg border border-neutral-200 p-1.5 text-neutral-500 hover:border-neutral-300 hover:bg-neutral-50"
+              title="Sign out"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </>
+        )}
       </div>
     </header>
   );

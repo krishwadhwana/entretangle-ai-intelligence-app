@@ -127,10 +127,37 @@ export class AuthRequiredError extends Error {
   }
 }
 
+// --- Open access (temporary) ------------------------------------------------
+// While the login gate is disabled, unauthenticated requests resolve to a
+// single shared "guest" account so owner-scoped reads/writes keep working.
+// Restore the login gate by setting OPEN_ACCESS=false (and, for the header,
+// NEXT_PUBLIC_OPEN_ACCESS=false).
+export const OPEN_ACCESS = process.env.OPEN_ACCESS !== "false";
+
+const GUEST_USER_ID = "guest-open-access";
+const GUEST_USER_EMAIL = "guest@entretangle.local";
+
+async function getGuestUser(): Promise<CurrentUser> {
+  // Upsert so the FK-backed ownerId writes in ensure*Access always point at a
+  // real users row — self-healing on a fresh database.
+  const user = await prisma.user.upsert({
+    where: { id: GUEST_USER_ID },
+    update: {},
+    create: { id: GUEST_USER_ID, email: GUEST_USER_EMAIL, name: "Guest" },
+    select: { id: true, email: true, name: true, image: true },
+  });
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    image: user.image,
+  };
+}
+
 export async function getCurrentUser(): Promise<CurrentUser | null> {
   const session = await getServerSession(authOptions);
   const id = session?.user?.id;
-  if (!id) return null;
+  if (!id) return OPEN_ACCESS ? await getGuestUser() : null;
   return {
     id,
     email: session.user.email ?? null,
